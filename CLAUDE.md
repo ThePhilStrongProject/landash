@@ -53,6 +53,33 @@ Sources are globbed by `main/CMakeLists.txt`, so **never add files to a SRCS
 list** — just create the `.c` under `main/` and run `idf.py reconfigure` if the
 build does not pick it up.
 
+## Firmware version
+
+`PROJECT_VER` is deliberately **not** set, so ESP-IDF derives the version from
+git at build time with `git describe --always --tags --dirty`. That value is
+baked into the app descriptor and is what `GET /api/status` returns as `fw`
+and the System tab shows. (`idf` is a different field: the SDK version, which
+only changes when the toolchain does.)
+
+Releases are marked with an annotated tag, so a build reports:
+
+| Repo state | `fw` reads |
+|---|---|
+| exactly on a tag, clean tree | `v0.4.0` |
+| three commits past a tag | `v0.4.0-3-g0fd17ce` |
+| uncommitted changes present | the above plus `-dirty` |
+
+**Commit (and tag) before building the image you intend to keep.** Building
+first stamps the binary with the *previous* commit plus `-dirty`, which is how
+a device ended up reporting `a53e2ce-dirty` while HEAD was two commits further
+on. For throwaway test flashes during development `-dirty` is expected and
+fine.
+
+```bash
+git tag -a v0.5.0 -m "What changed"
+idf.py build && idf.py -p COM4 flash
+```
+
 ## Module map
 
 ```

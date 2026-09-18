@@ -422,6 +422,8 @@ status: {},
 portscan: null,
 links: [],
 linksEditMode: false,
+linksRenamingId: null,
+linksRendered: false,
 sortKey: "name",
 sortDir: "asc",
 filter: "",
@@ -1121,7 +1123,14 @@ fetchDetail();
 }
 function loadLinks(){
 return api("GET","/api/links").then(function(list){
-state.links = list; markPollOk(); renderDashboard();
+markPollOk();
+/* Re-rendering replaces the whole grid, which would rip out an open rename
+   box mid-edit and look like edit mode had exited. Hold off while a rename is
+   in progress, and skip it entirely when the poll brought back nothing new,
+   so the page is not rebuilt every five seconds for no reason. */
+var same = JSON.stringify(list) === JSON.stringify(state.links);
+state.links = list;
+if (state.linksRenamingId == null && (!same || !state.linksRendered)) renderDashboard();
 }).catch(function(e){ markPollFail(); });
 }
 function linkCardHtml(l, i, total){
@@ -1159,6 +1168,7 @@ return "<div class=\"linkcard-wrap\">" + cardTag + editControls + "</div>";
 }
 function renderDashboard(){
 var links = state.links || [];
+state.linksRendered = true;
 $("linkEmpty").hidden = links.length !== 0;
 $("linkEditBtn").hidden = links.length === 0;
 $("linkGrid").innerHTML = links.map(function(l,i){ return linkCardHtml(l, i, links.length); }).join("");
@@ -1210,7 +1220,13 @@ input.type = "text"; input.maxLength = 31; input.className = "nameinput";
 input.value = l.label;
 labelEl.replaceWith(input);
 input.focus(); input.select();
+/* Freezes the periodic refresh until this edit is resolved. */
+state.linksRenamingId = id;
 function finish(save){
+/* Removing the input can fire blur after a key has already finished the
+   edit, so this has to be safe to call twice. */
+if (state.linksRenamingId !== id) return;
+state.linksRenamingId = null;
 if (!save || input.value.trim() === "" || input.value.trim() === l.label){ renderDashboard(); return; }
 api("PATCH","/api/links/"+id, {label: input.value.trim()}).then(function(){
 toast("Renamed", "ok"); loadLinks();
