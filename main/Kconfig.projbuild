@@ -144,4 +144,36 @@ menu "NetDash"
         help
             Factory default only; the running value comes from settings (NVS).
 
+    config NETDASH_PORTSCAN_ENABLED
+        bool "Port scan enabled by default"
+        default y
+        help
+            Factory default only; the running value comes from settings (NVS).
+
+    config NETDASH_PORTSCAN_RATE
+        int "Default port probe rate (probes per second)"
+        range 1 200
+        default 10
+        help
+            Factory default only. This is the rate across the whole device
+            list, not per device. 10/s works through the common-port tier for
+            a typical home network in a couple of minutes, while the full
+            65535-port tier takes days - which is the intent.
+
+    config NETDASH_PORTSCAN_MAX_TIER
+        int "Highest port scan tier (1 common, 2 well-known, 3 all)"
+        range 1 3
+        default 3
+        help
+            Factory default only. Tier 1 probes a curated list of common
+            ports, tier 2 covers 1-1024, tier 3 covers 1025-65535. Each tier
+            completes across every device before the next one starts.
+
+    config NETDASH_PORTSCAN_MAX_OPEN
+        int "Open ports remembered per device"
+        range 4 64
+        default 24
+        help
+            Costs two bytes per port per device in RAM.
+
 endmenu

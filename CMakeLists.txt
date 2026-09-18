@@ -14,9 +14,17 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # already resolved but not yet read. At the default size a /24 sweep found
 # only a handful of the live hosts.
 #
-# ARP_TABLE_SIZE is a plain lwIP option guarded by "#if !defined", so setting
-# it here overrides opt.h. 64 entries costs roughly 1.5 KB of RAM.
+# The table has to be sized for the probe rate, not just for the network. An
+# address that never answers leaves a pending entry for about five seconds, so
+# a sweep at R probes per second keeps roughly 5R of them alive at once. At the
+# default 16/s that is ~80 pending entries, which overruns a 64-entry table and
+# starts evicting resolved hosts again: measured 13-16 of 23 devices found at
+# 64 entries, against 22 at a slower rate. 192 leaves headroom for the rate to
+# be raised as far as ~30/s from the dashboard.
 #
-idf_build_set_property(COMPILE_DEFINITIONS "ARP_TABLE_SIZE=64" APPEND)
+# ARP_TABLE_SIZE is a plain lwIP option guarded by "#if !defined", so setting
+# it here overrides opt.h. 192 entries costs roughly 4.5 KB of RAM.
+#
+idf_build_set_property(COMPILE_DEFINITIONS "ARP_TABLE_SIZE=192" APPEND)
 
 project(netdash)

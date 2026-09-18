@@ -39,3 +39,7 @@ CONFIG_LV_FONT_MONTSERRAT_28=y
 # LVGL's built-in allocator keeps a static pool in DIRAM. The default 64 KB is
 # far more than three label-only pages need on a board with no PSRAM.
 CONFIG_LV_MEM_SIZE=24576
+
+# The port scanner runs a small batch of concurrent TCP connects, which the
+# default budget of 10 cannot cover once the web server has taken its share.
+CONFIG_LWIP_MAX_SOCKETS=16

@@ -45,6 +45,8 @@ static const char *TAG = "device_db";
 static netdash_device_t  s_devices[NETDASH_MAX_DEVICES];
 static bool              s_seen[NETDASH_MAX_DEVICES];      /* seen this sweep */
 static bool              s_persisted[NETDASH_MAX_DEVICES]; /* has an NVS blob */
+/* Parallel to s_devices[]; see the comment on netdash_ports_t in the header. */
+static netdash_ports_t   s_ports[NETDASH_MAX_DEVICES];
 static size_t            s_count;
 static SemaphoreHandle_t s_lock;
 
@@ -99,6 +101,9 @@ void device_db_unlock(void)
 /* Small helpers                                                             */
 /* ------------------------------------------------------------------------- */
 
+/* Defined with the rest of the port-scan code further down. */
+static void ports_restore_locked(int idx);
+
 /* Caller must hold device_db_lock(). Returns -1 when mac is not present. */
 static int find_index_locked(const uint8_t mac[6])
 {
@@ -144,7 +149,9 @@ static bool evict_one_locked(void)
         s_devices[victim]   = s_devices[last];
         s_seen[victim]      = s_seen[last];
         s_persisted[victim] = s_persisted[last];
+        s_ports[victim]     = s_ports[last];   /* parallel array, move together */
     }
+    memset(&s_ports[last], 0, sizeof(s_ports[last]));
     s_count--;
     return true;
 }
@@ -389,6 +396,8 @@ esp_err_t device_db_init(void)
 
                     s_persisted[s_count] = true;
                     s_seen[s_count]      = false;
+                    memset(&s_ports[s_count], 0, sizeof(s_ports[s_count]));
+                    ports_restore_locked((int)s_count);
                     s_count++;
                 } else {
                     ESP_LOGW(TAG, "skipping unreadable blob for key %s", info.key);
@@ -405,6 +414,276 @@ esp_err_t device_db_init(void)
     ESP_LOGI(TAG, "loaded %u persisted device(s), capacity %u",
              (unsigned)loaded, (unsigned)NETDASH_MAX_DEVICES);
     return ESP_OK;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Port scan results                                                         */
+/* ------------------------------------------------------------------------- */
+
+#define PORTS_NVS_NS       "ports"
+#define PORTS_BLOB_VERSION 1
+
+typedef struct __attribute__((packed)) {
+    uint8_t  version;
+    uint8_t  count;
+    uint8_t  tier;
+    int64_t  last_scan;
+    uint16_t ports[NETDASH_MAX_OPEN_PORTS];
+} ports_blob_t;
+
+/*
+ * Ports whose presence tells us something classify.c can use. Everything else
+ * is recorded but does not feed classification.
+ */
+static uint16_t service_bit_for_port(uint16_t port)
+{
+    switch (port) {
+    case 80:
+    case 8080:
+    case 8008:   return NETDASH_SVC_HTTP;
+    case 443:
+    case 8443:   return NETDASH_SVC_HTTPS;
+    case 22:     return NETDASH_SVC_SSH;
+    case 139:
+    case 445:    return NETDASH_SVC_SMB;
+    case 8123:   return NETDASH_SVC_HA;
+    case 5353:   return NETDASH_SVC_SSDP;
+    case 631:
+    case 9100:   return NETDASH_SVC_PRINTER;
+    case 8009:   return NETDASH_SVC_CAST;
+    case 7000:   return NETDASH_SVC_AIRPLAY;
+    default:     return 0;
+    }
+}
+
+/* A small, deliberately incomplete table: the ports a home network explains. */
+const char *netdash_port_service(uint16_t port)
+{
+    switch (port) {
+    case 21:    return "ftp";
+    case 22:    return "ssh";
+    case 23:    return "telnet";
+    case 25:    return "smtp";
+    case 53:    return "dns";
+    case 67:
+    case 68:    return "dhcp";
+    case 80:    return "http";
+    case 110:   return "pop3";
+    case 111:   return "rpcbind";
+    case 123:   return "ntp";
+    case 135:   return "msrpc";
+    case 139:   return "netbios";
+    case 143:   return "imap";
+    case 161:   return "snmp";
+    case 443:   return "https";
+    case 445:   return "smb";
+    case 515:   return "printer";
+    case 548:   return "afp";
+    case 554:   return "rtsp";
+    case 631:   return "ipp";
+    case 993:   return "imaps";
+    case 995:   return "pop3s";
+    case 1400:  return "sonos";
+    case 1883:  return "mqtt";
+    case 1900:  return "ssdp";
+    case 2049:  return "nfs";
+    case 3000:  return "grafana";
+    case 3128:  return "squid";
+    case 3306:  return "mysql";
+    case 3389:  return "rdp";
+    case 5000:  return "upnp";
+    case 5001:  return "synology";
+    case 5432:  return "postgres";
+    case 5353:  return "mdns";
+    case 5357:  return "wsd";
+    case 5900:  return "vnc";
+    case 6379:  return "redis";
+    case 7000:  return "airplay";
+    case 8006:  return "proxmox";
+    case 8008:  return "cast-http";
+    case 8009:  return "cast";
+    case 8080:  return "http-alt";
+    case 8096:  return "jellyfin";
+    case 8123:  return "home-assistant";
+    case 8443:  return "https-alt";
+    case 8883:  return "mqtts";
+    case 9000:  return "portainer";
+    case 9090:  return "cockpit";
+    case 9100:  return "jetdirect";
+    case 32400: return "plex";
+    case 51413: return "transmission";
+    default:    return NULL;
+    }
+}
+
+/* Caller holds the lock. */
+static void ports_persist_locked(int idx)
+{
+    ports_blob_t blob = {
+        .version   = PORTS_BLOB_VERSION,
+        .count     = s_ports[idx].count,
+        .tier      = s_ports[idx].tier,
+        .last_scan = s_ports[idx].last_scan,
+    };
+    memcpy(blob.ports, s_ports[idx].ports, sizeof(blob.ports));
+
+    uint8_t mac[6];
+    memcpy(mac, s_devices[idx].mac, 6);
+
+    char key[13];
+    mac_to_key(mac, key);
+
+    nvs_handle_t h;
+    if (nvs_open(PORTS_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    if (nvs_set_blob(h, key, &blob, sizeof(blob)) == ESP_OK) {
+        nvs_commit(h);
+    }
+    nvs_close(h);
+}
+
+/* Caller holds the lock. Restores a device's ports from NVS, if any. */
+static void ports_restore_locked(int idx)
+{
+    char key[13];
+    mac_to_key(s_devices[idx].mac, key);
+
+    nvs_handle_t h;
+    if (nvs_open(PORTS_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return;
+    }
+
+    ports_blob_t blob;
+    size_t       size = sizeof(blob);
+    if (nvs_get_blob(h, key, &blob, &size) == ESP_OK && size == sizeof(blob) &&
+        blob.version == PORTS_BLOB_VERSION) {
+        s_ports[idx].count = blob.count > NETDASH_MAX_OPEN_PORTS
+                                 ? NETDASH_MAX_OPEN_PORTS
+                                 : blob.count;
+        s_ports[idx].tier      = blob.tier > 3 ? 0 : blob.tier;
+        s_ports[idx].last_scan = blob.last_scan;
+        memcpy(s_ports[idx].ports, blob.ports, sizeof(s_ports[idx].ports));
+
+        /* Re-apply the service bits the stored ports imply. */
+        for (uint8_t i = 0; i < s_ports[idx].count; i++) {
+            s_devices[idx].services |= service_bit_for_port(s_ports[idx].ports[i]);
+        }
+    }
+    nvs_close(h);
+}
+
+bool device_db_get_ports(const uint8_t mac[6], netdash_ports_t *out)
+{
+    if (mac == NULL || out == NULL) {
+        return false;
+    }
+    device_db_lock();
+    const int idx = find_index_locked(mac);
+    if (idx >= 0) {
+        *out = s_ports[idx];
+    }
+    device_db_unlock();
+    return idx >= 0;
+}
+
+bool device_db_add_open_port(const uint8_t mac[6], uint16_t port)
+{
+    if (mac == NULL || port == 0) {
+        return false;
+    }
+
+    bool added = false;
+    device_db_lock();
+    const int idx = find_index_locked(mac);
+    if (idx >= 0) {
+        netdash_ports_t *p = &s_ports[idx];
+
+        /* Insertion sort keeps the list ascending for the UI. */
+        uint8_t at = 0;
+        while (at < p->count && p->ports[at] < port) {
+            at++;
+        }
+        if (at < p->count && p->ports[at] == port) {
+            added = false;                      /* already known */
+        } else if (p->count >= NETDASH_MAX_OPEN_PORTS) {
+            added = false;                      /* list full, drop it */
+        } else {
+            memmove(&p->ports[at + 1], &p->ports[at],
+                    (size_t)(p->count - at) * sizeof(p->ports[0]));
+            p->ports[at] = port;
+            p->count++;
+            added = true;
+
+            const uint16_t bit = service_bit_for_port(port);
+            if (bit != 0 && (s_devices[idx].services & bit) == 0) {
+                s_devices[idx].services |= bit;
+                s_devices[idx].type = classify_device(&s_devices[idx], wifi_mgr_get_gateway());
+            }
+        }
+    }
+    device_db_unlock();
+    return added;
+}
+
+void device_db_set_scan_progress(const uint8_t mac[6], uint8_t scanning_tier,
+                                 uint32_t cursor, uint32_t tier_total)
+{
+    if (mac == NULL) {
+        return;
+    }
+    device_db_lock();
+    const int idx = find_index_locked(mac);
+    if (idx >= 0) {
+        s_ports[idx].scanning_tier = scanning_tier;
+        s_ports[idx].cursor        = cursor;
+        s_ports[idx].tier_total    = tier_total;
+    }
+    device_db_unlock();
+}
+
+void device_db_finish_tier(const uint8_t mac[6], uint8_t tier, int64_t now)
+{
+    if (mac == NULL) {
+        return;
+    }
+    device_db_lock();
+    const int idx = find_index_locked(mac);
+    if (idx >= 0) {
+        if (tier > s_ports[idx].tier) {
+            s_ports[idx].tier = tier;
+        }
+        s_ports[idx].scanning_tier = 0;
+        s_ports[idx].cursor        = 0;
+        s_ports[idx].tier_total    = 0;
+        s_ports[idx].last_scan     = now;
+        ports_persist_locked(idx);
+    }
+    device_db_unlock();
+}
+
+void device_db_clear_ports(const uint8_t mac[6])
+{
+    if (mac == NULL) {
+        return;
+    }
+    device_db_lock();
+    const int idx = find_index_locked(mac);
+    if (idx >= 0) {
+        memset(&s_ports[idx], 0, sizeof(s_ports[idx]));
+
+        char key[13];
+        mac_to_key(mac, key);
+
+        nvs_handle_t h;
+        if (nvs_open(PORTS_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+            if (nvs_erase_key(h, key) == ESP_OK) {
+                nvs_commit(h);
+            }
+            nvs_close(h);
+        }
+    }
+    device_db_unlock();
 }
 
 /* ------------------------------------------------------------------------- */
@@ -482,6 +761,8 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
             memset(d, 0, sizeof(*d));
             memcpy(d->mac, mac, 6);
             d->rtt_ms = -1;
+            memset(&s_ports[idx], 0, sizeof(s_ports[idx]));
+            ports_restore_locked(idx);
 
             const char *vendor = oui_lookup(mac);
             if (vendor != NULL) {
@@ -734,6 +1015,8 @@ esp_err_t device_db_ensure(const uint8_t mac[6])
             memcpy(d->mac, mac, 6);
             d->rtt_ms     = -1;
             d->miss_count = 255; /* offline: it has not actually been seen */
+            memset(&s_ports[idx], 0, sizeof(s_ports[idx]));
+            ports_restore_locked(idx);
 
             const char *vendor = oui_lookup(mac);
             if (vendor != NULL) {

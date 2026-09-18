@@ -158,14 +158,31 @@ Every module is implemented. There are no stubs left.
 
 ## Two traps worth remembering
 
-**The lwIP ARP cache is the scanner's bottleneck.** `ARP_TABLE_SIZE` is raised
-to 64 by a project-wide compile definition in the top-level `CMakeLists.txt`,
-and `scanner.c` harvests the whole table every few probes rather than only at
-the end of a sweep. Both are needed. lwIP recycles the oldest *stable* entry
-before any pending one, so at the stock size of 10 every probe to an address
-that does not answer evicts a host the scanner had already resolved. A /24
-sweep found 6 of 23 devices before this was fixed. If discovery ever goes
-sparse again, look here first.
+**The lwIP ARP cache is the scanner's bottleneck, and it must be sized for the
+probe rate.** `ARP_TABLE_SIZE` is raised to 192 by a project-wide compile
+definition in the top-level `CMakeLists.txt`, and `scanner.c` harvests the
+whole table every few probes rather than only at the end of a sweep. Both are
+needed. lwIP recycles the oldest *stable* entry before any pending one, so
+every probe to an address that does not answer can evict a host the scanner had
+already resolved. At the stock size of 10 a /24 sweep found 6 of 23 devices.
+
+The table size and `hosts_per_sec` are coupled: an address that never answers
+leaves a pending entry for about five seconds, so a sweep at R probes per
+second keeps roughly 5R of them alive at once. Raising the rate without
+raising the table brings the bug straight back. Measured on a /24 with 23
+live hosts:
+
+| Table | Rate | Devices found |
+|---|---|---|
+| 10 | 4/s | 6 |
+| 64 | 4/s | 23 |
+| 64 | 16/s | 13-16 |
+| 192 | 16/s | 23-24 |
+
+**Verify discovery from a cold boot, never from a warm table.** A sweep that
+only has to keep already-online devices online will pass while a sweep that has
+to find them from scratch fails. That is exactly how the 16/s regression got
+through: reboot first, then count.
 
 **The OUI table must be generated with every prefix per vendor.** Sampling a
 handful of blocks per manufacturer looks fine and matches almost nothing real:

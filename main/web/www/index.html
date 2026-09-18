@@ -135,7 +135,7 @@ padding:8px 10px;color:var(--text)}
 .rssi i:nth-child(3){height:8px}.rssi i:nth-child(4){height:11px}
 .rssi i.on{background:var(--accent-2)}
 .lock{color:var(--muted);font-size:.8em}
-.popover{position:fixed;z-index:60;background:var(--surface);border:1px solid var(--border);
+.popover{position:fixed;z-index:90;background:var(--surface);border:1px solid var(--border);
 border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.5);min-width:170px;max-width:240px;
 padding:6px;max-height:60vh;overflow:auto}
 .popover button{display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;
@@ -161,6 +161,41 @@ display:flex;flex-direction:column;gap:8px;width:min(92vw,380px)}
 border-radius:9px;padding:10px 12px;font-size:.85rem;box-shadow:0 6px 20px rgba(0,0,0,.4)}
 .toast.err{border-left-color:var(--danger)}
 .toast.ok{border-left-color:var(--online)}
+.scanpill{padding:6px 16px;font-size:.78rem;color:var(--muted);border-bottom:1px solid var(--border);
+background:rgba(var(--accent-rgb),.06)}
+.drawerback{position:fixed;inset:0;background:rgba(2,4,10,.65);z-index:72;display:flex;justify-content:flex-end}
+.drawer{background:var(--surface);border-left:1px solid var(--border);width:100%;max-width:460px;height:100%;
+overflow:auto;padding:20px;box-shadow:-10px 0 30px rgba(0,0,0,.5);position:relative}
+@media (max-width:720px){
+.drawerback{align-items:flex-end}
+.drawer{max-width:100%;height:92vh;border-left:none;border-top:1px solid var(--border);border-radius:14px 14px 0 0}
+}
+.detailclose{position:absolute;top:14px;right:14px;background:none;border:none;color:var(--muted);
+font-size:1.15rem;padding:4px 6px}
+.detailclose:hover{color:var(--text)}
+.detailhead{display:flex;align-items:center;gap:8px;padding-right:30px;margin-bottom:2px}
+.detailtitle{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.detailtitle .nm{font-size:1.15rem;font-weight:700;overflow-wrap:anywhere}
+.detailsection{margin:20px 0}
+.detailsection h4{margin:0 0 10px;font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:.85rem;margin:0}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;overflow-wrap:anywhere}
+.chiprow{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;background:var(--bg);border:1px solid var(--border);
+border-radius:999px;padding:3px 10px;font-size:.78rem}
+.portchip{display:inline-flex;align-items:baseline;gap:6px;background:var(--bg);border:1px solid var(--border);
+border-radius:8px;padding:4px 9px;font-size:.82rem;color:var(--text)}
+.portchip.link{color:var(--accent-2);border-color:rgba(var(--accent-rgb),.4);text-decoration:none}
+.portchip.link:hover{border-color:var(--accent-2);text-decoration:underline}
+.meter{height:6px;border-radius:3px;background:rgba(var(--accent-rgb),.18);overflow:hidden;margin:8px 0 4px}
+.meterfill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s}
+.detailactions{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+.livedot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);
+animation:pulse 1.4s ease-in-out infinite;margin-left:5px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.field select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;
+padding:8px 10px;color:var(--text)}
 </style>
 </head>
 <body>
@@ -175,6 +210,7 @@ border-radius:9px;padding:10px 12px;font-size:.85rem;box-shadow:0 6px 20px rgba(
 <div class="pillbar" id="pillBar" hidden><div class="pillbarfill" id="pillBarFill"></div></div>
 </div>
 </header>
+<div id="portscanBar" class="scanpill" role="status" hidden><span id="portscanText"></span></div>
 <nav class="tabs" role="tablist" aria-label="Sections">
 <button role="tab" type="button" id="tab-devices" class="tabbtn" aria-selected="true" aria-controls="panel-devices">Devices</button>
 <button role="tab" type="button" id="tab-events" class="tabbtn" aria-selected="false" aria-controls="panel-events">Events</button>
@@ -199,6 +235,7 @@ border-radius:9px;padding:10px 12px;font-size:.85rem;box-shadow:0 6px 20px rgba(
 <th data-col="mac" aria-sort="none"><button class="th-btn" data-key="mac">MAC</button></th>
 <th data-col="vendor" aria-sort="none"><button class="th-btn" data-key="vendor">Vendor</button></th>
 <th data-col="hostname" aria-sort="none"><button class="th-btn" data-key="hostname">Hostname</button></th>
+<th data-col="ports" aria-sort="none"><button class="th-btn" data-key="open_port_count">Open ports</button></th>
 <th data-col="lastseen" aria-sort="none"><button class="th-btn" data-key="last_seen">Last seen</button></th>
 <th data-col="firstseen" aria-sort="none"><button class="th-btn" data-key="first_seen">First seen</button></th>
 <th data-col="actions"><span class="sr-only">Actions</span></th>
@@ -245,6 +282,22 @@ border-radius:9px;padding:10px 12px;font-size:.85rem;box-shadow:0 6px 20px rgba(
 <div class="checkfield">
 <input type="checkbox" id="setPassive"><label for="setPassive" style="margin:0">Passive only (no active sweeps)</label>
 </div>
+<div class="checkfield">
+<input type="checkbox" id="setPortscanEnabled"><label for="setPortscanEnabled" style="margin:0">Enable background port scanning</label>
+</div>
+<div class="field">
+<label for="setPortscanRate">Port scan rate (probes/sec, across all devices)</label>
+<input type="number" id="setPortscanRate" min="1" max="200">
+</div>
+<div class="field">
+<label for="setPortscanMaxTier">Port scan depth</label>
+<select id="setPortscanMaxTier">
+<option value="1">Common ports only (~120 ports, fastest)</option>
+<option value="2">Common ports + all of 1&ndash;1024</option>
+<option value="3">Everything &mdash; all 65535 ports</option>
+</select>
+<div class="hint" style="color:#fecaca">Tier 3 (all 65535 ports) scans every device at the configured rate and can legitimately take several days to finish.</div>
+</div>
 <div class="field">
 <label for="setNtp">NTP server</label>
 <input type="text" id="setNtp" maxlength="63">
@@ -278,6 +331,7 @@ border-radius:9px;padding:10px 12px;font-size:.85rem;box-shadow:0 6px 20px rgba(
 </main>
 <div id="popover" class="popover" role="menu" hidden></div>
 <div id="modalRoot"></div>
+<div id="detailRoot"></div>
 <div id="toasts" aria-live="polite" aria-atomic="false"></div>
 <script>
 (function(){
@@ -292,18 +346,26 @@ nas:"🗄️",tv:"📺",hub:"🏠",phone:"📱",pc:"💻",
 iot:"🔌",printer:"🖨️",cast:"📡",console:"🎮",printer_3d:"🧊"};
 var EV_ICON = {info:"ℹ️",device_new:"✨",device_online:"▲",device_offline:"▼",
 device_ip_changed:"🔀",scan:"🔍",wifi:"📶"};
+var SOURCE_LABEL = {mdns:"mDNS",rdns:"Reverse DNS",nbns:"NetBIOS",ssdp:"SSDP"};
+var SERVICE_LABEL = {http:"HTTP",https:"HTTPS",ssh:"SSH",smb:"SMB",hap:"HomeKit",ha:"Home Assistant",
+cast:"Cast",airplay:"AirPlay",printer:"Printer",ssdp:"SSDP",workstation:"Workstation"};
+var CLICKABLE_PORT_SVC = {http:1,https:1,"http-alt":1,"https-alt":1};
+var PORTSCAN_TIER_LABEL = {0:"Not scanned yet",1:"Common ports",2:"Ports 1–1024",3:"All 65535 ports"};
+var PORTSCAN_TIER_WORD = {1:"common ports",2:"ports 1-1024",3:"all 65535 ports"};
 var state = {
 tab: "devices",
 devices: [],
 devicesByMac: {},
 events: [],
 status: {},
+portscan: null,
 sortKey: "name",
 sortDir: "asc",
 filter: "",
 showHidden: false,
 editingMac: null,
-statusFailStreak: 0
+statusFailStreak: 0,
+detail: { mac: null, data: null, loading: false, error: null, editingName: false, opener: null }
 };
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){
@@ -440,6 +502,20 @@ $("sysInfo").innerHTML = rows.map(function(r){
 return "<dt>" + esc(r[0]) + "</dt><dd>" + r[1] + "</dd>";
 }).join("");
 }
+function loadPortscanStatus(){
+return api("GET","/api/portscan").then(function(p){
+state.portscan = p; renderPortscanBar();
+}).catch(function(){ /* non-critical; leave last known state */ });
+}
+function renderPortscanBar(){
+var p = state.portscan, bar = $("portscanBar");
+if (!p || !p.running){ bar.hidden = true; return; }
+bar.hidden = false;
+var tierWord = PORTSCAN_TIER_WORD[p.tier] || ("tier " + p.tier);
+var idx = (p.device_index||0) + 1;
+$("portscanText").textContent = "Port scan: " + tierWord + ", device " +
+Math.min(idx, p.device_count||idx) + "/" + (p.device_count||0);
+}
 function loadDevices(){
 if (state.editingMac) return Promise.resolve();
 return api("GET","/api/devices?hidden=1").then(function(list){
@@ -461,7 +537,7 @@ return a.display_name.localeCompare(b.display_name);
 var av, bv;
 if (key === "ip"){ av = ipToNum(a.ip); bv = ipToNum(b.ip); }
 else if (key === "online"){ av = a.online?1:0; bv = b.online?1:0; }
-else if (key === "last_seen" || key === "first_seen"){ av = a[key]||0; bv = b[key]||0; }
+else if (key === "last_seen" || key === "first_seen" || key === "open_port_count"){ av = a[key]||0; bv = b[key]||0; }
 else if (key === "name"){ av = a.display_name.toLowerCase(); bv = b.display_name.toLowerCase(); }
 else if (key === "type"){ av = displayType(a); bv = displayType(b); }
 else { av = (a[key]||"").toString().toLowerCase(); bv = (b[key]||"").toString().toLowerCase(); }
@@ -481,13 +557,21 @@ list = sortDevices(list);
 $("devEmpty").hidden = list.length !== 0;
 $("devBody").innerHTML = list.map(rowHtml).join("");
 }
+function portsCellHtml(d){
+var count = d.open_port_count || 0;
+var tier = d.portscan_tier || 0;
+var txt = (count === 0 && tier === 0) ? "—" : String(count);
+var active = d.portscan_active ?
+" <span class=\"livedot\" title=\"Port scan in progress\" aria-hidden=\"true\"></span><span class=\"sr-only\">scanning</span>" : "";
+return "<span class=\"mono\">" + esc(txt) + "</span>" + active;
+}
 function rowHtml(d){
 var type = displayType(d);
 var isNew = d.is_new ? "<span class=\"badge\">NEW</span>" : "";
 var links = "";
 if ((d.services||[]).indexOf("https") !== -1) links += "https";
 else if ((d.services||[]).indexOf("http") !== -1) links += "http";
-return "<tr data-mac=\"" + esc(d.mac) + "\" class=\"devrow\">" +
+return "<tr data-mac=\"" + esc(d.mac) + "\" class=\"devrow\" tabindex=\"0\">" +
 "<td data-col=\"status\"><span class=\"statuscell\"><span class=\"dot" + (d.online?" on":"") + "\"></span>" +
 "<span class=\"sr-only\">" + (d.online?"Online":"Offline") + "</span></span></td>" +
 "<td data-col=\"name\" data-label=\"Name\"><span class=\"namecell\">" +
@@ -501,6 +585,7 @@ return "<tr data-mac=\"" + esc(d.mac) + "\" class=\"devrow\">" +
 "<td data-col=\"mac\" data-label=\"MAC\" class=\"mono muted mobilehidden\">" + esc(d.mac) + "</td>" +
 "<td data-col=\"vendor\" data-label=\"Vendor\" class=\"mobilehidden\">" + esc(d.vendor||"—") + "</td>" +
 "<td data-col=\"hostname\" data-label=\"Hostname\" class=\"mobilehidden\" title=\"sources: " + esc((d.sources||[]).join(", ")||"none") + "\">" + esc(d.hostname||"—") + "</td>" +
+"<td data-col=\"ports\" data-label=\"Open ports\" class=\"mobilehidden\">" + portsCellHtml(d) + "</td>" +
 "<td data-col=\"lastseen\" data-label=\"Last seen\" title=\"" + esc(absTime(d.last_seen)) + "\">" + esc(relTime(d.last_seen)) + "</td>" +
 "<td data-col=\"firstseen\" data-label=\"First seen\" class=\"mobilehidden\" title=\"" + esc(absTime(d.first_seen)) + "\">" + esc(relTime(d.first_seen)) + "</td>" +
 "<td data-col=\"actions\" data-label=\"Actions\" class=\"mobilehidden\">" +
@@ -530,7 +615,8 @@ var row = e.target.closest("tr.devrow");
 if (!row) return;
 var mac = row.dataset.mac, d = state.devicesByMac[mac];
 if (!actBtn){
-if (window.innerWidth <= 720 && !e.target.closest("a,input")) row.classList.toggle("expanded");
+if (e.target.closest("a,input")) return;
+openDetail(mac, row);
 return;
 }
 var act = actBtn.dataset.act;
@@ -538,6 +624,13 @@ if (act === "expand"){ row.classList.toggle("expanded"); return; }
 if (act === "edit"){ startEditName(row, d); return; }
 if (act === "type"){ openTypePopover(actBtn, d); return; }
 if (act === "menu"){ openRowMenu(actBtn, d); return; }
+});
+$("devBody").addEventListener("keydown", function(e){
+if (e.key !== "Enter") return;
+if (e.target.closest("button,a,input")) return;
+var row = e.target.closest("tr.devrow");
+if (!row) return;
+openDetail(row.dataset.mac, row);
 });
 function startEditName(row, d){
 if (!d) return;
@@ -639,6 +732,243 @@ state.devicesByMac[updated.mac] = updated;
 var idx = state.devices.findIndex(function(x){ return x.mac === updated.mac; });
 if (idx !== -1) state.devices[idx] = updated;
 renderDevices();
+if (state.detail.mac === updated.mac && !state.detail.editingName){
+state.detail.data = updated; state.detail.loading = false; state.detail.error = null;
+renderDetailBody();
+}
+}
+var FOCUSABLE_SEL = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),' +
+'textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+var detailKeyHandler = null;
+/* Ports that serve a web interface under a name of their own, so matching on
+   the service string alone would miss them. Value is the scheme to use. */
+var WEB_PORT_SCHEME = {
+443:"https", 8443:"https", 8006:"https", 9090:"https", 5001:"https",
+80:"http", 81:"http", 591:"http", 2082:"http", 2086:"http", 3000:"http",
+5000:"http", 7080:"http", 8000:"http", 8008:"http", 8080:"http", 8081:"http",
+8083:"http", 8086:"http", 8088:"http", 8096:"http", 8112:"http", 8123:"http",
+8200:"http", 8686:"http", 8880:"http", 8888:"http", 9000:"http", 9091:"http",
+32400:"http"
+};
+function portChipHtml(ip, p){
+var svc = p.service;
+var label = svc ? esc(svc) : "";
+var inner = "<span class=\"mono\">" + esc(p.port) + "</span>" + (label ? (" " + label) : "");
+var scheme = WEB_PORT_SCHEME[p.port] || null;
+if (!scheme && svc && CLICKABLE_PORT_SVC[svc]){
+scheme = svc.indexOf("https") === 0 ? "https" : "http";
+}
+if (scheme){
+return "<a class=\"portchip link\" target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+scheme + "://" + esc(ip) + ":" + esc(p.port) + "\">" + inner + "</a>";
+}
+return "<span class=\"portchip\">" + inner + "</span>";
+}
+function detailHtml(d){
+var type = displayType(d);
+var isNew = d.is_new ? "<span class=\"badge\">NEW</span>" : "";
+var sources = (d.sources||[]).map(function(s){
+return "<span class=\"chip\">" + esc(SOURCE_LABEL[s]||s) + "</span>"; }).join("") || "<span class=\"muted\">none</span>";
+var services = (d.services||[]).map(function(s){
+return "<span class=\"chip\">" + esc(SERVICE_LABEL[s]||s) + "</span>"; }).join("") || "<span class=\"muted\">none</span>";
+var rtt = d.rtt_ms === -1 ? "no ICMP reply" : (d.rtt_ms + " ms");
+var ports = d.open_ports || [];
+var portsHtml;
+if (ports.length){
+portsHtml = "<div class=\"chiprow\">" + ports.map(function(p){ return portChipHtml(d.ip, p); }).join("") + "</div>";
+} else if ((d.portscan_tier||0) === 0){
+portsHtml = "<p class=\"muted\" style=\"margin:6px 0\">Not scanned yet.</p>";
+} else {
+portsHtml = "<p class=\"muted\" style=\"margin:6px 0\">No open ports found so far.</p>";
+}
+var tierLabel = PORTSCAN_TIER_LABEL[d.portscan_tier||0] || ("tier " + d.portscan_tier);
+var lastLabel = d.portscan_last ? (esc(relTime(d.portscan_last)) + " &middot; " + esc(absTime(d.portscan_last))) : "never";
+var meterHtml = "";
+if (d.portscan_active && d.portscan_total){
+var pct = Math.round(100 * (d.portscan_done||0) / d.portscan_total);
+meterHtml = "<div class=\"meter\" role=\"progressbar\" aria-valuemin=\"0\" aria-valuemax=\"" + d.portscan_total +
+"\" aria-valuenow=\"" + (d.portscan_done||0) + "\"><div class=\"meterfill\" style=\"width:" + pct + "%\"></div></div>" +
+"<div class=\"muted\" style=\"font-size:.78rem\">Scanning&hellip; " + (d.portscan_done||0) + "/" + d.portscan_total + "</div>";
+} else if (d.portscan_active){
+meterHtml = "<div class=\"muted\" style=\"font-size:.78rem\">Scan in progress&hellip;</div>";
+}
+return "" +
+"<div class=\"detailhead\"><div class=\"detailtitle\">" +
+"<span class=\"dot" + (d.online?" on":"") + "\"></span>" +
+"<span class=\"nm\" id=\"detailName\" title=\"" + esc(d.display_name) + "\">" + esc(d.display_name) + "</span>" +
+"<button type=\"button\" class=\"iconbtn\" id=\"detailEditBtn\" aria-label=\"Edit name\">✎</button>" + isNew +
+"</div></div>" +
+"<div class=\"muted\" style=\"margin:2px 0 16px;font-size:.82rem\">" + (d.online?"Online":"Offline") + "</div>" +
+"<div class=\"detailsection\"><h4>Identity</h4><dl class=\"kv\">" +
+"<dt>IP</dt><dd class=\"mono\">" + esc(d.ip) + "</dd>" +
+"<dt>MAC</dt><dd class=\"mono\">" + esc(d.mac) + "</dd>" +
+"<dt>Vendor</dt><dd>" + esc(d.vendor||"—") + "</dd>" +
+"<dt>Hostname</dt><dd>" + esc(d.hostname||"—") + "</dd>" +
+"<dt>Type</dt><dd><button type=\"button\" class=\"typebtn\" id=\"detailTypeBtn\">" +
+"<span aria-hidden=\"true\">" + TYPE_ICON[type] + "</span>" + esc(TYPE_LABEL[type]||type) + "</button></dd>" +
+"<dt>Nickname</dt><dd>" + esc(d.nickname||"—") + "</dd>" +
+"</dl></div>" +
+"<div class=\"detailsection\"><h4>Discovery</h4><dl class=\"kv\">" +
+"<dt>Sources</dt><dd><div class=\"chiprow\">" + sources + "</div></dd>" +
+"<dt>Services</dt><dd><div class=\"chiprow\">" + services + "</div></dd>" +
+"<dt>First seen</dt><dd>" + esc(relTime(d.first_seen)) + " &middot; " + esc(absTime(d.first_seen)) + "</dd>" +
+"<dt>Last seen</dt><dd>" + esc(relTime(d.last_seen)) + " &middot; " + esc(absTime(d.last_seen)) + "</dd>" +
+"<dt>RTT</dt><dd>" + esc(rtt) + "</dd>" +
+"<dt>Miss count</dt><dd>" + esc(d.miss_count) + "</dd>" +
+"</dl></div>" +
+"<div class=\"detailsection\"><h4>Open ports" + (d.open_port_count?(" (" + d.open_port_count + ")"):"") + "</h4>" + portsHtml + "</div>" +
+"<div class=\"detailsection\"><h4>Port scan status</h4><dl class=\"kv\">" +
+"<dt>Completed</dt><dd>" + esc(tierLabel) + "</dd>" +
+"<dt>Last finished</dt><dd>" + lastLabel + "</dd>" +
+"</dl>" + meterHtml +
+"<div class=\"detailactions\"><button type=\"button\" class=\"btn\" id=\"detailRescanBtn\"" +
+(d.portscan_active?" disabled":"") + ">Rescan ports</button></div>" +
+"</div>" +
+"<div class=\"detailsection\"><h4>Actions</h4><div class=\"detailactions\">" +
+"<button type=\"button\" class=\"btn\" id=\"detailHideBtn\">" + (d.hidden?"Unhide":"Hide") + "</button>" +
+"<button type=\"button\" class=\"btn btn-danger-outline\" id=\"detailDeleteBtn\">Delete&hellip;</button>" +
+"</div></div>";
+}
+function wireDetailBody(d){
+var editBtn = $("detailEditBtn");
+if (editBtn) editBtn.addEventListener("click", function(){ startDetailEditName(d); });
+var typeBtn = $("detailTypeBtn");
+if (typeBtn) typeBtn.addEventListener("click", function(){ openTypePopover(typeBtn, d); });
+var rescanBtn = $("detailRescanBtn");
+if (rescanBtn) rescanBtn.addEventListener("click", function(){ doRescan(d); });
+var hideBtn = $("detailHideBtn");
+if (hideBtn) hideBtn.addEventListener("click", function(){
+api("PATCH","/api/devices/"+d.mac, {hidden: !d.hidden}).then(function(updated){
+applyDeviceUpdate(updated); toast(updated.hidden?"Hidden":"Unhidden", "ok");
+}).catch(toastErr);
+});
+var delBtn = $("detailDeleteBtn");
+if (delBtn) delBtn.addEventListener("click", function(){
+if (!confirm("Delete " + d.display_name + "? It will reappear as new if seen again.")) return;
+api("DELETE","/api/devices/"+d.mac).then(function(){
+state.devices = state.devices.filter(function(x){ return x.mac !== d.mac; });
+delete state.devicesByMac[d.mac];
+renderDevices();
+toast("Deleted", "ok");
+closeDetail();
+}).catch(toastErr);
+});
+}
+function doRescan(d){
+if (!confirm("Rescan ports on " + d.display_name + "? This discards its current port results.")) return;
+api("POST","/api/devices/"+d.mac+"/portscan").then(function(){
+toast("Rescan queued", "ok");
+fetchDetail();
+}).catch(toastErr);
+}
+function startDetailEditName(d){
+state.detail.editingName = true;
+var nameSpan = $("detailName");
+if (!nameSpan) return;
+var input = document.createElement("input");
+input.type = "text"; input.maxLength = 31; input.className = "nameinput";
+input.value = d.nickname || "";
+input.placeholder = d.display_name;
+nameSpan.replaceWith(input);
+input.focus(); input.select();
+function finish(save){
+state.detail.editingName = false;
+if (!save){ renderDetailBody(); return; }
+var val = input.value.trim();
+api("PATCH","/api/devices/"+d.mac, {nickname: val}).then(function(updated){
+applyDeviceUpdate(updated);
+toast("Name saved", "ok");
+}).catch(function(err){ toastErr(err); renderDetailBody(); });
+}
+input.addEventListener("keydown", function(ev){
+if (ev.key === "Enter"){ ev.preventDefault(); finish(true); }
+else if (ev.key === "Escape"){ ev.preventDefault(); finish(false); }
+});
+input.addEventListener("blur", function(){ finish(true); });
+}
+function renderDetailBody(){
+var root = $("detailBody");
+if (!root) return;
+var st = state.detail;
+if (st.loading && !st.data){
+root.innerHTML = "<p class=\"empty\">Loading device&hellip;</p>";
+return;
+}
+if (st.error && !st.data){
+root.innerHTML = "<p class=\"empty\">Couldn't load this device: " + esc(st.error) + "</p>" +
+"<div class=\"detailactions\"><button type=\"button\" class=\"btn\" id=\"detailRetryBtn\">Retry</button></div>";
+var rb = $("detailRetryBtn");
+if (rb) rb.addEventListener("click", function(){ state.detail.loading = true; renderDetailBody(); fetchDetail(); });
+return;
+}
+var d = st.data;
+if (!d){ root.innerHTML = "<p class=\"empty\">Device not found.</p>"; return; }
+root.innerHTML = detailHtml(d) +
+(st.error ? ("<p class=\"empty\" style=\"color:var(--danger)\">" + esc(st.error) + "</p>") : "");
+wireDetailBody(d);
+}
+function fetchDetail(){
+var mac = state.detail.mac;
+if (!mac) return;
+api("GET","/api/devices/"+mac).then(function(d){
+if (state.detail.mac !== mac) return;
+state.detail.data = d; state.detail.loading = false; state.detail.error = null;
+state.devicesByMac[d.mac] = d;
+var idx = state.devices.findIndex(function(x){ return x.mac === d.mac; });
+if (idx !== -1) state.devices[idx] = d;
+if (state.tab === "devices") renderDevices();
+if (!state.detail.editingName) renderDetailBody();
+}).catch(function(err){
+if (state.detail.mac !== mac) return;
+state.detail.loading = false;
+state.detail.error = (err && err.message) || "failed to load device";
+renderDetailBody();
+});
+}
+function closeDetail(){
+if (!state.detail.mac) return;
+var opener = state.detail.opener, mac = state.detail.mac;
+if (detailKeyHandler){ document.removeEventListener("keydown", detailKeyHandler); detailKeyHandler = null; }
+$("detailRoot").innerHTML = "";
+state.detail = { mac: null, data: null, loading: false, error: null, editingName: false, opener: null };
+if (!opener || !document.contains(opener)){
+opener = document.querySelector('tr.devrow[data-mac="' + mac.replace(/"/g,"") + '"]');
+}
+if (opener && document.contains(opener)) opener.focus();
+else $("tab-devices").focus();
+}
+function openDetail(mac, opener){
+closePopover();
+state.detail = { mac: mac, data: state.devicesByMac[mac]||null, loading: true, error: null,
+editingName: false, opener: opener||null };
+var back = document.createElement("div");
+back.className = "drawerback";
+back.innerHTML = "<div class=\"drawer\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Device details\" id=\"detailPanel\">" +
+"<button type=\"button\" class=\"detailclose\" id=\"detailCloseBtn\" aria-label=\"Close\">✕</button>" +
+"<div id=\"detailBody\"></div></div>";
+back.addEventListener("click", function(e){ if (e.target === back) closeDetail(); });
+$("detailRoot").appendChild(back);
+$("detailCloseBtn").addEventListener("click", closeDetail);
+detailKeyHandler = function(ev){
+if (ev.key === "Escape"){
+if (!$("popover").hidden) return;
+closeDetail();
+return;
+}
+if (ev.key === "Tab"){
+var panel = $("detailPanel");
+if (!panel) return;
+var f = panel.querySelectorAll(FOCUSABLE_SEL);
+if (!f.length) return;
+var first = f[0], last = f[f.length-1];
+if (ev.shiftKey && document.activeElement === first){ ev.preventDefault(); last.focus(); }
+else if (!ev.shiftKey && document.activeElement === last){ ev.preventDefault(); first.focus(); }
+}
+};
+document.addEventListener("keydown", detailKeyHandler);
+renderDetailBody();
+$("detailCloseBtn").focus();
+fetchDetail();
 }
 function loadEvents(){
 return api("GET","/api/events").then(function(list){
@@ -665,6 +995,9 @@ $("setApPass").value = s.ap_pass || "";
 $("setScanInterval").value = s.scan_interval_min;
 $("setHostsPerSec").value = s.hosts_per_sec;
 $("setPassive").checked = !!s.passive_only;
+$("setPortscanEnabled").checked = !!s.portscan_enabled;
+$("setPortscanRate").value = s.portscan_rate;
+$("setPortscanMaxTier").value = s.portscan_max_tier;
 $("setNtp").value = s.ntp_server || "";
 $("setTz").value = s.tz || "";
 }).catch(toastErr);
@@ -682,6 +1015,9 @@ ap_pass: $("setApPass").value,
 scan_interval_min: Number($("setScanInterval").value),
 hosts_per_sec: Number($("setHostsPerSec").value),
 passive_only: $("setPassive").checked,
+portscan_enabled: $("setPortscanEnabled").checked,
+portscan_rate: Number($("setPortscanRate").value),
+portscan_max_tier: Number($("setPortscanMaxTier").value),
 ntp_server: $("setNtp").value,
 tz: $("setTz").value
 };
@@ -786,8 +1122,10 @@ toast("Factory reset — the dongle will restart into setup mode", "ok");
 function tick(){
 if (document.hidden) return;
 loadStatus();
+loadPortscanStatus();
 if (state.tab === "devices") loadDevices();
 if (state.tab === "events") loadEvents();
+if (state.detail.mac && !state.detail.editingName) fetchDetail();
 }
 setInterval(tick, 5000);
 var savedTab = "devices";
@@ -796,6 +1134,7 @@ if (TABS.indexOf(savedTab) === -1) savedTab = "devices";
 selectTab(savedTab, true);
 loadStatus();
 loadDevices();
+loadPortscanStatus();
 })();
 </script>
 </body>

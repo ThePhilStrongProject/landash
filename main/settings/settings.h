@@ -25,6 +25,14 @@ typedef struct {
     bool     passive_only;
     char     tz[48];            /* POSIX TZ string                          */
     char     ntp_server[64];
+    /*
+     * Appended in settings blob version 2. New fields are only ever added at
+     * the end, so load_locked() can migrate an older blob by copying it over
+     * the defaults and leaving the tail at its default value.
+     */
+    bool     portscan_enabled;
+    uint16_t portscan_rate;     /* probes per second, whole device sweep    */
+    uint8_t  portscan_max_tier; /* 1 common, 2 well-known, 3 every port     */
 } netdash_settings_t;
 
 /* Loads (or creates) the blob and generates ap_pass on first boot. */

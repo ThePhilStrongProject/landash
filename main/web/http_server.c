@@ -35,6 +35,7 @@
 #include "app_events.h"
 #include "classify.h"
 #include "device_db.h"
+#include "portscan.h"
 #include "scanner.h"
 #include "settings.h"
 #include "wifi_mgr.h"
@@ -139,6 +140,33 @@ static void host_ip_to_str(uint32_t ip, char *out, size_t cap)
 /* ------------------------------------------------------------------------- */
 
 /* Sends obj as the JSON body with the given HTTP status line, then frees obj. */
+/*
+ * Attaches the full open-port list to a device object. Only the single-device
+ * views use it, so the polled list stays small.
+ */
+static void device_add_ports(cJSON *o, const uint8_t mac[6])
+{
+    netdash_ports_t ports;
+    if (o == NULL || !device_db_get_ports(mac, &ports)) {
+        return;
+    }
+
+    cJSON *arr = cJSON_CreateArray();
+    for (uint8_t i = 0; i < ports.count; i++) {
+        cJSON      *entry   = cJSON_CreateObject();
+        const char *service = netdash_port_service(ports.ports[i]);
+
+        cJSON_AddNumberToObject(entry, "port", ports.ports[i]);
+        if (service != NULL) {
+            cJSON_AddStringToObject(entry, "service", service);
+        } else {
+            cJSON_AddNullToObject(entry, "service");
+        }
+        cJSON_AddItemToArray(arr, entry);
+    }
+    cJSON_AddItemToObject(o, "open_ports", arr);
+}
+
 static esp_err_t send_json(httpd_req_t *req, const char *status, cJSON *obj)
 {
     char *text = cJSON_PrintUnformatted(obj);
@@ -443,6 +471,23 @@ static cJSON *device_to_json(const netdash_device_t *d, int64_t now)
     cJSON_AddBoolToObject(o, "hidden", (d->flags & NETDASH_FLAG_HIDDEN) != 0);
     cJSON_AddNumberToObject(o, "rtt_ms", d->rtt_ms);
     cJSON_AddNumberToObject(o, "miss_count", d->miss_count);
+
+    /*
+     * Port-scan summary. The list endpoint is polled every few seconds, so it
+     * carries counts and progress only; the full port array is attached by
+     * device_add_ports() for the single-device view.
+     */
+    netdash_ports_t ports;
+    if (device_db_get_ports(d->mac, &ports)) {
+        cJSON_AddNumberToObject(o, "open_port_count", ports.count);
+        cJSON_AddNumberToObject(o, "portscan_tier", ports.tier);
+        cJSON_AddNumberToObject(o, "portscan_last", (double)ports.last_scan);
+        cJSON_AddBoolToObject(o, "portscan_active", ports.scanning_tier != 0);
+        if (ports.scanning_tier != 0 && ports.tier_total != 0) {
+            cJSON_AddNumberToObject(o, "portscan_done", ports.cursor);
+            cJSON_AddNumberToObject(o, "portscan_total", ports.tier_total);
+        }
+    }
     return o;
 }
 
@@ -723,7 +768,68 @@ static esp_err_t devices_get_handler(httpd_req_t *req)
     if (!device_db_get_by_mac(mac, &d)) {
         return send_json_error(req, "404 Not Found", "device not found");
     }
-    return send_json(req, "200 OK", device_to_json(&d, now_or_zero()));
+    cJSON *o = device_to_json(&d, now_or_zero());
+    device_add_ports(o, mac);
+    return send_json(req, "200 OK", o);
+}
+
+/*
+ * POST /api/devices/{mac}/portscan - forget this device's results and put it
+ * at the head of the queue.
+ */
+static esp_err_t devices_portscan_handler(httpd_req_t *req)
+{
+    char tail[48];
+    if (!extract_tail(req->uri, "/api/devices/", tail, sizeof(tail))) {
+        return send_json_error(req, "404 Not Found", "not found");
+    }
+
+    char *slash = strchr(tail, '/');
+    if (slash == NULL || strcmp(slash, "/portscan") != 0) {
+        return send_json_error(req, "404 Not Found", "not found");
+    }
+    *slash = '\0';
+
+    uint8_t mac[6];
+    if (!parse_mac(tail, mac)) {
+        return send_json_error(req, "400 Bad Request", "bad mac");
+    }
+    netdash_device_t d;
+    if (!device_db_get_by_mac(mac, &d)) {
+        return send_json_error(req, "404 Not Found", "device not found");
+    }
+
+    const esp_err_t err = portscan_rescan_device(mac);
+    if (err != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "rescan failed");
+    }
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    cJSON_AddStringToObject(o, "queued", tail);
+    return send_json(req, "200 OK", o);
+}
+
+/* GET /api/portscan - overall scanner progress. */
+static esp_err_t portscan_status_handler(httpd_req_t *req)
+{
+    portscan_status_t st;
+    portscan_get_status(&st);
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "enabled", st.enabled);
+    cJSON_AddBoolToObject(o, "running", st.running);
+    cJSON_AddNumberToObject(o, "tier", st.tier);
+    cJSON_AddNumberToObject(o, "max_tier", st.max_tier);
+    cJSON_AddNumberToObject(o, "rate", st.rate);
+    cJSON_AddNumberToObject(o, "device_index", st.device_index);
+    cJSON_AddNumberToObject(o, "device_count", st.device_count);
+    cJSON_AddNumberToObject(o, "cursor", st.cursor);
+    cJSON_AddNumberToObject(o, "tier_total", st.tier_total);
+    cJSON_AddNumberToObject(o, "probes", st.probes);
+    cJSON_AddNumberToObject(o, "found", st.found);
+    cJSON_AddNumberToObject(o, "cycle_started", (double)st.cycle_started);
+    return send_json(req, "200 OK", o);
 }
 
 static esp_err_t devices_patch_handler(httpd_req_t *req)
@@ -774,7 +880,9 @@ static esp_err_t devices_patch_handler(httpd_req_t *req)
     if (!device_db_get_by_mac(mac, &updated)) {
         return send_json_error(req, "404 Not Found", "device not found");
     }
-    return send_json(req, "200 OK", device_to_json(&updated, now_or_zero()));
+    cJSON *out = device_to_json(&updated, now_or_zero());
+    device_add_ports(out, mac);
+    return send_json(req, "200 OK", out);
 }
 
 static esp_err_t devices_delete_handler(httpd_req_t *req)
@@ -893,6 +1001,9 @@ static cJSON *settings_to_json(const netdash_settings_t *cfg)
     cJSON_AddBoolToObject(o, "passive_only", cfg->passive_only);
     cJSON_AddStringToObject(o, "tz", cfg->tz);
     cJSON_AddStringToObject(o, "ntp_server", cfg->ntp_server);
+    cJSON_AddBoolToObject(o, "portscan_enabled", cfg->portscan_enabled);
+    cJSON_AddNumberToObject(o, "portscan_rate", cfg->portscan_rate);
+    cJSON_AddNumberToObject(o, "portscan_max_tier", cfg->portscan_max_tier);
     return o;
 }
 
@@ -1007,6 +1118,33 @@ static esp_err_t settings_put_handler(httpd_req_t *req)
         next.passive_only = cJSON_IsTrue(j);
     }
 
+    j = cJSON_GetObjectItemCaseSensitive(json, "portscan_enabled");
+    if (j != NULL) {
+        if (!cJSON_IsBool(j)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "portscan_enabled must be a boolean");
+        }
+        next.portscan_enabled = cJSON_IsTrue(j);
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "portscan_rate");
+    if (j != NULL) {
+        if (!cJSON_IsNumber(j) || j->valueint < 1 || j->valueint > 200) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "portscan_rate must be 1-200");
+        }
+        next.portscan_rate = (uint16_t)j->valueint;
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "portscan_max_tier");
+    if (j != NULL) {
+        if (!cJSON_IsNumber(j) || j->valueint < 1 || j->valueint > 3) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "portscan_max_tier must be 1-3");
+        }
+        next.portscan_max_tier = (uint8_t)j->valueint;
+    }
+
     j = cJSON_GetObjectItemCaseSensitive(json, "tz");
     if (j != NULL) {
         if (!cJSON_IsString(j) || strlen(j->valuestring) > 47) {
@@ -1035,6 +1173,7 @@ static esp_err_t settings_put_handler(httpd_req_t *req)
      * this handler has replied, which is exactly what lets the UI catch the
      * "reconnecting" hint and start polling /api/status for the new IP. */
     wifi_mgr_apply_settings();
+    portscan_settings_changed();
 
     netdash_settings_t saved;
     settings_get(&saved);
@@ -1201,6 +1340,8 @@ static const httpd_uri_t s_uri_handlers[] = {
     {.uri = "/api/devices",              .method = HTTP_GET,    .handler = devices_list_handler},
     {.uri = "/api/devices/export",       .method = HTTP_GET,    .handler = devices_export_handler},
     {.uri = "/api/devices/import",       .method = HTTP_POST,   .handler = devices_import_handler},
+    {.uri = "/api/devices/*/portscan",   .method = HTTP_POST,   .handler = devices_portscan_handler},
+    {.uri = "/api/portscan",             .method = HTTP_GET,    .handler = portscan_status_handler},
     {.uri = "/api/devices/*",            .method = HTTP_GET,    .handler = devices_get_handler},
     {.uri = "/api/devices/*",            .method = HTTP_PATCH,  .handler = devices_patch_handler},
     {.uri = "/api/devices/*",            .method = HTTP_DELETE, .handler = devices_delete_handler},
@@ -1234,7 +1375,8 @@ esp_err_t http_server_init(void)
     config.uri_match_fn     = httpd_uri_match_wildcard;
     config.stack_size       = 8192;
     config.lru_purge_enable = true;
-    config.max_open_sockets = 7;
+    /* Leaves room in the lwIP socket budget for the port scanner's batch. */
+    config.max_open_sockets = 5;
 
     esp_err_t err = httpd_start(&s_server, &config);
     if (err != ESP_OK) {

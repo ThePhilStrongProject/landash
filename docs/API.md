@@ -289,6 +289,91 @@ is a no-op, not an error). 503 when the dongle has no IP, or when
 
 ---
 
+## The port scan
+
+A background TCP connect scan runs in tiers, and finishes a tier across every
+online device before starting the next, so useful results arrive early:
+
+| Tier | Ports | Rough duration for ~20 devices at 10/s |
+|---|---|---|
+| 1 | a curated list of ~120 common ports | a few minutes |
+| 2 | 1-1024 | under an hour |
+| 3 | 1025-65535 | days |
+
+`portscan_rate` is a budget shared by every device, so adding devices makes a
+pass longer rather than making the scan noisier. Results and per-device tier
+progress are stored in flash and survive a reboot. An open port also feeds
+classification: 445 implies SMB, 8123 implies Home Assistant and so on, which
+identifies devices that advertise nothing over mDNS or SSDP.
+
+Only TCP is scanned. UDP is not.
+
+### Port fields on the device object
+
+Present on every device in `GET /api/devices`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `open_port_count` | number | open TCP ports recorded so far |
+| `portscan_tier` | number | highest tier finished for this device, `0` = none yet |
+| `portscan_last` | number | unix seconds a tier last finished, `0` = never |
+| `portscan_active` | bool | a tier is in progress for this device right now |
+| `portscan_done`, `portscan_total` | number | progress within the running tier; present only while `portscan_active` |
+
+`GET /api/devices/{mac}` and `PATCH /api/devices/{mac}` additionally return the
+full list, ascending. `service` is `null` for a port with no well-known name.
+
+```json
+"open_ports": [
+  {"port": 22,   "service": "ssh"},
+  {"port": 445,  "service": "smb"},
+  {"port": 5000, "service": "upnp"},
+  {"port": 7654, "service": null}
+]
+```
+
+---
+
+## GET /api/portscan
+
+Overall scanner progress.
+
+```json
+{
+  "enabled": true,
+  "running": true,
+  "tier": 1,
+  "max_tier": 3,
+  "rate": 10,
+  "device_index": 7,
+  "device_count": 23,
+  "cursor": 48,
+  "tier_total": 120,
+  "probes": 8134,
+  "found": 41,
+  "cycle_started": 1789740000
+}
+```
+
+`device_index` of `device_count` is progress through the device list for the
+current tier; `cursor` of `tier_total` is progress within the device being
+probed right now.
+
+---
+
+## POST /api/devices/{mac}/portscan
+
+Forgets every port result for that device and puts it at the head of the
+queue, starting again at tier 1.
+
+```json
+{"ok": true, "queued": "bc:24:11:3b:e5:96"}
+```
+
+400 for a malformed MAC, 404 when the device is unknown.
+
+---
+
 ## GET /api/events
 
 The ring buffer of the last 100 events, newest first.
@@ -346,9 +431,18 @@ is stored.
   "hosts_per_sec": 4,
   "passive_only": false,
   "tz": "GMT0BST,M3.5.0/1,M10.5.0",
-  "ntp_server": "pool.ntp.org"
+  "ntp_server": "pool.ntp.org",
+  "portscan_enabled": true,
+  "portscan_rate": 10,
+  "portscan_max_tier": 3
 }
 ```
+
+| Field | Type | Notes |
+|---|---|---|
+| `portscan_enabled` | bool | background TCP port scan on or off |
+| `portscan_rate` | number | 1-200 probes per second, shared across every device |
+| `portscan_max_tier` | number | 1 common ports, 2 ports 1-1024, 3 every port |
 
 ## PUT /api/settings
 

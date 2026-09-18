@@ -192,6 +192,55 @@ esp_err_t device_db_ensure(const uint8_t mac[6]);
 void device_db_display_name(const netdash_device_t *dev, char *buf, size_t len);
 
 /* ------------------------------------------------------------------------- */
+/* Port scan results                                                         */
+/* ------------------------------------------------------------------------- */
+
+#define NETDASH_MAX_OPEN_PORTS CONFIG_NETDASH_PORTSCAN_MAX_OPEN
+
+/*
+ * Port data lives in its own array rather than in netdash_device_t, because
+ * that struct is copied by value into every event and out of every read, and
+ * carrying a port list in it would make those copies several times larger.
+ */
+typedef struct {
+    uint16_t ports[NETDASH_MAX_OPEN_PORTS]; /* open TCP ports, ascending    */
+    uint8_t  count;
+    uint8_t  tier;          /* highest tier finished, 0 = none yet          */
+    uint8_t  scanning_tier; /* tier in progress, 0 = idle                   */
+    uint32_t cursor;        /* next index within the tier in progress       */
+    uint32_t tier_total;    /* probes in the tier in progress, 0 = idle     */
+    int64_t  last_scan;     /* unix seconds a tier last finished, 0 = never */
+} netdash_ports_t;
+
+/* Copies the port record for mac into out. False when mac is unknown. */
+bool device_db_get_ports(const uint8_t mac[6], netdash_ports_t *out);
+
+/*
+ * Records an open TCP port. Ignores duplicates, keeps the list ascending and
+ * drops anything past NETDASH_MAX_OPEN_PORTS. Also ORs in the service bit the
+ * port implies (445 means SMB and so on), which lets classify.c identify
+ * devices that advertise nothing over mDNS or SSDP.
+ * Returns true when the port was newly recorded.
+ */
+bool device_db_add_open_port(const uint8_t mac[6], uint16_t port);
+
+/* Updates the progress fields shown by the API. */
+void device_db_set_scan_progress(const uint8_t mac[6], uint8_t scanning_tier,
+                                 uint32_t cursor, uint32_t tier_total);
+
+/*
+ * Marks a tier finished for mac and persists the whole port record.
+ * Clears the in-progress fields.
+ */
+void device_db_finish_tier(const uint8_t mac[6], uint8_t tier, int64_t now);
+
+/* Forgets every port result for mac, in RAM and in NVS (used before a rescan). */
+void device_db_clear_ports(const uint8_t mac[6]);
+
+/* Well-known name for a port, e.g. "https" for 443. NULL when unknown. */
+const char *netdash_port_service(uint16_t port);
+
+/* ------------------------------------------------------------------------- */
 /* Locking                                                                   */
 /* ------------------------------------------------------------------------- */
 

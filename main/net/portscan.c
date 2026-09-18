@@ -1,0 +1,551 @@
+/*
+ * Background TCP port scanner. See portscan.h for the tier model.
+ *
+ * Technique: non-blocking connect() on a small batch of sockets, then one
+ * select() for the whole batch. A connect that completes means the port is
+ * open; ECONNREFUSED means closed and arrives immediately; silence until the
+ * timeout means filtered. Batching keeps throughput reasonable at a low probe
+ * rate, because the timeout, not the pacing, is what costs time.
+ *
+ * Socket budget: lwIP has CONFIG_LWIP_MAX_SOCKETS in total and the web server
+ * reserves most of them, so PS_BATCH is deliberately small. Running out is not
+ * fatal - a failed socket() just ends the batch early and the ports are
+ * retried on the next pass.
+ */
+#include "portscan.h"
+
+#include <errno.h>
+#include <string.h>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+
+#include "esp_log.h"
+#include "esp_timer.h"
+
+#include "lwip/sockets.h"
+
+#include "app_events.h"
+#include "device_db.h"
+#include "settings.h"
+#include "wifi_mgr.h"
+
+static const char *TAG = "portscan";
+
+/* Concurrent connects per batch. Bounded by the lwIP socket budget. */
+#define PS_BATCH            6
+
+/* How long a probe waits before calling the port filtered. A LAN round trip
+ * is single-digit milliseconds, so this is generous. */
+#define PS_TIMEOUT_MS       700
+
+/* Idle poll when there is nothing to do (no Wi-Fi, disabled, no devices). */
+#define PS_IDLE_MS          5000
+
+/* Wait before the first probe after boot, so discovery settles first. */
+#define PS_START_DELAY_MS   30000
+
+#define PS_TIER_COMMON      1
+#define PS_TIER_WELLKNOWN   2
+#define PS_TIER_FULL        3
+
+/*
+ * Tier 1. Chosen for what a home network actually runs: admin interfaces,
+ * file shares, media servers, printers and the usual IoT suspects.
+ */
+static const uint16_t s_common_ports[] = {
+    21, 22, 23, 25, 53, 80, 81, 88, 110, 111, 123, 135, 139, 143, 161, 179,
+    389, 443, 445, 465, 500, 515, 543, 548, 554, 587, 631, 636, 873, 902,
+    993, 995, 1024, 1080, 1194, 1400, 1433, 1521, 1723, 1883, 1900, 2049,
+    2082, 2083, 2086, 2087, 2181, 2375, 2376, 3000, 3001, 3128, 3260, 3306,
+    3389, 3478, 3689, 4000, 4444, 4567, 5000, 5001, 5060, 5061, 5222, 5353,
+    5432, 5555, 5601, 5672, 5683, 5800, 5900, 5901, 6000, 6379, 6667, 7000,
+    7001, 7070, 7777, 8000, 8006, 8008, 8009, 8010, 8060, 8080, 8081, 8083,
+    8086, 8088, 8089, 8096, 8112, 8123, 8181, 8200, 8291, 8443, 8444, 8500,
+    8686, 8765, 8800, 8880, 8883, 8888, 9000, 9001, 9090, 9091, 9100, 9200,
+    9443, 9999, 10000, 11211, 27017, 32400, 32469, 49152, 51413, 62078,
+};
+
+#define PS_COMMON_COUNT (sizeof(s_common_ports) / sizeof(s_common_ports[0]))
+
+/* ------------------------------------------------------------------------- */
+/* State                                                                     */
+/* ------------------------------------------------------------------------- */
+
+static TaskHandle_t      s_task;
+static SemaphoreHandle_t s_state_lock;
+
+static struct {
+    bool     enabled;
+    uint16_t rate;
+    uint8_t  max_tier;
+
+    uint8_t  tier;
+    uint16_t device_index;
+    uint16_t device_count;
+    uint32_t cursor;
+    uint32_t tier_total;
+    bool     running;
+    uint32_t probes;
+    uint32_t found;
+    int64_t  cycle_started;
+
+    /* Set by portscan_rescan_device(); consumed by the task. */
+    bool     jump_valid;
+    uint8_t  jump_mac[6];
+} s_ps;
+
+static void state_lock(void)
+{
+    if (s_state_lock != NULL) {
+        xSemaphoreTake(s_state_lock, portMAX_DELAY);
+    }
+}
+
+static void state_unlock(void)
+{
+    if (s_state_lock != NULL) {
+        xSemaphoreGive(s_state_lock);
+    }
+}
+
+static void reload_settings(void)
+{
+    netdash_settings_t cfg;
+    settings_get(&cfg);
+
+    state_lock();
+    s_ps.enabled  = cfg.portscan_enabled;
+    s_ps.rate     = cfg.portscan_rate > 0 ? cfg.portscan_rate : 1;
+    s_ps.max_tier = cfg.portscan_max_tier;
+    if (s_ps.tier == 0) {
+        s_ps.tier = PS_TIER_COMMON;
+    }
+    if (s_ps.tier > s_ps.max_tier) {
+        s_ps.tier = PS_TIER_COMMON;   /* the user lowered the ceiling */
+    }
+    state_unlock();
+}
+
+/* ------------------------------------------------------------------------- */
+/* Tier arithmetic                                                           */
+/* ------------------------------------------------------------------------- */
+
+static uint32_t tier_total(uint8_t tier)
+{
+    switch (tier) {
+    case PS_TIER_COMMON:    return (uint32_t)PS_COMMON_COUNT;
+    case PS_TIER_WELLKNOWN: return 1024;              /* 1..1024      */
+    case PS_TIER_FULL:      return 65535 - 1024;      /* 1025..65535  */
+    default:                return 0;
+    }
+}
+
+static uint16_t tier_port_at(uint8_t tier, uint32_t index)
+{
+    switch (tier) {
+    case PS_TIER_COMMON:    return s_common_ports[index];
+    case PS_TIER_WELLKNOWN: return (uint16_t)(index + 1);
+    case PS_TIER_FULL:      return (uint16_t)(index + 1025);
+    default:                return 0;
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Probing                                                                   */
+/* ------------------------------------------------------------------------- */
+
+typedef struct {
+    int      fd;
+    uint16_t port;
+} probe_t;
+
+/*
+ * Probes up to count ports on ip. Returns the number actually probed, and adds
+ * every open port it finds to the database.
+ */
+static uint32_t probe_batch(const uint8_t mac[6], uint32_t ip,
+                            uint8_t tier, uint32_t first_index, uint32_t count)
+{
+    probe_t probes[PS_BATCH];
+    uint32_t n = 0;
+
+    if (count > PS_BATCH) {
+        count = PS_BATCH;
+    }
+
+    struct sockaddr_in dst = {
+        .sin_family = AF_INET,
+    };
+    dst.sin_addr.s_addr = htonl(ip);
+
+    for (uint32_t i = 0; i < count; i++) {
+        const uint16_t port = tier_port_at(tier, first_index + i);
+        if (port == 0) {
+            continue;
+        }
+
+        const int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (fd < 0) {
+            /* Out of sockets: work with the batch we have. */
+            break;
+        }
+
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+            close(fd);
+            break;
+        }
+
+        dst.sin_port = htons(port);
+        const int rc = connect(fd, (struct sockaddr *)&dst, sizeof(dst));
+        if (rc == 0) {
+            /* Connected immediately, which on a LAN is entirely possible. */
+            if (device_db_add_open_port(mac, port)) {
+                ESP_LOGI(TAG, "open %u.%u.%u.%u:%u",
+                         (unsigned)(ip >> 24), (unsigned)((ip >> 16) & 0xff),
+                         (unsigned)((ip >> 8) & 0xff), (unsigned)(ip & 0xff),
+                         (unsigned)port);
+                state_lock();
+                s_ps.found++;
+                state_unlock();
+            }
+            close(fd);
+            n++;
+            continue;
+        }
+        if (errno != EINPROGRESS) {
+            close(fd);      /* refused or unreachable: port is not open */
+            n++;
+            continue;
+        }
+
+        probes[n].fd   = fd;
+        probes[n].port = port;
+        n++;
+    }
+
+    /* Nothing left pending: every probe resolved synchronously. */
+    uint32_t pending = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        if (probes[i].fd > 0) {
+            pending++;
+        }
+    }
+    if (pending == 0) {
+        return n;
+    }
+
+    fd_set wset;
+    FD_ZERO(&wset);
+    int maxfd = -1;
+    for (uint32_t i = 0; i < n; i++) {
+        if (probes[i].fd > 0) {
+            FD_SET(probes[i].fd, &wset);
+            if (probes[i].fd > maxfd) {
+                maxfd = probes[i].fd;
+            }
+        }
+    }
+
+    struct timeval tv = {
+        .tv_sec  = PS_TIMEOUT_MS / 1000,
+        .tv_usec = (PS_TIMEOUT_MS % 1000) * 1000,
+    };
+    const int ready = select(maxfd + 1, NULL, &wset, NULL, &tv);
+
+    if (ready > 0) {
+        for (uint32_t i = 0; i < n; i++) {
+            if (probes[i].fd <= 0 || !FD_ISSET(probes[i].fd, &wset)) {
+                continue;
+            }
+            /*
+             * Writable only means the connect finished; SO_ERROR says whether
+             * it succeeded. Without this check a refused port looks open.
+             */
+            int       err = 0;
+            socklen_t len = sizeof(err);
+            if (getsockopt(probes[i].fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0 && err == 0) {
+                if (device_db_add_open_port(mac, probes[i].port)) {
+                    ESP_LOGI(TAG, "open %u.%u.%u.%u:%u",
+                             (unsigned)(ip >> 24), (unsigned)((ip >> 16) & 0xff),
+                             (unsigned)((ip >> 8) & 0xff), (unsigned)(ip & 0xff),
+                             (unsigned)probes[i].port);
+                    state_lock();
+                    s_ps.found++;
+                    state_unlock();
+                }
+            }
+        }
+    }
+
+    for (uint32_t i = 0; i < n; i++) {
+        if (probes[i].fd > 0) {
+            close(probes[i].fd);
+        }
+    }
+    return n;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Device selection                                                          */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Finds the next online device that has not finished `tier`, starting at
+ * *index. Fills mac and ip, advances *index past it. False when the tier is
+ * complete for every device.
+ */
+static bool next_device_for_tier(uint8_t tier, uint16_t *index,
+                                 uint8_t mac[6], uint32_t *ip, uint16_t *total)
+{
+    bool found = false;
+
+    device_db_lock();
+    const size_t count = device_db_count();
+    if (total != NULL) {
+        *total = (uint16_t)count;
+    }
+
+    for (size_t i = *index; i < count; i++) {
+        netdash_device_t dev;
+        if (!device_db_get_at(i, &dev)) {
+            break;
+        }
+        if (!netdash_device_online(&dev) || dev.ip == 0) {
+            continue;
+        }
+
+        netdash_ports_t ports;
+        bool            have = device_db_get_ports(dev.mac, &ports);
+        if (have && ports.tier >= tier) {
+            continue;   /* already finished this tier */
+        }
+
+        memcpy(mac, dev.mac, 6);
+        *ip    = dev.ip;
+        *index = (uint16_t)i;
+        found  = true;
+        break;
+    }
+    device_db_unlock();
+    return found;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Task                                                                      */
+/* ------------------------------------------------------------------------- */
+
+static void portscan_task(void *arg)
+{
+    (void)arg;
+
+    vTaskDelay(pdMS_TO_TICKS(PS_START_DELAY_MS));
+
+    uint8_t  mac[6]  = {0};
+    uint32_t ip      = 0;
+    bool     have_dev = false;
+
+    for (;;) {
+        reload_settings();
+
+        state_lock();
+        const bool     enabled  = s_ps.enabled;
+        const uint16_t rate     = s_ps.rate;
+        const uint8_t  tier     = s_ps.tier;
+        const uint8_t  max_tier = s_ps.max_tier;
+        state_unlock();
+
+        const wifi_mgr_mode_t mode = wifi_mgr_get_mode();
+        if (!enabled || (mode != WIFI_MGR_MODE_STA && mode != WIFI_MGR_MODE_APSTA)) {
+            have_dev = false;
+            state_lock();
+            s_ps.running = false;
+            state_unlock();
+            vTaskDelay(pdMS_TO_TICKS(PS_IDLE_MS));
+            continue;
+        }
+
+        /* A rescan request jumps the queue. */
+        state_lock();
+        const bool jump = s_ps.jump_valid;
+        if (jump) {
+            memcpy(mac, s_ps.jump_mac, 6);
+            s_ps.jump_valid = false;
+            s_ps.cursor     = 0;
+            have_dev        = false;
+        }
+        state_unlock();
+
+        if (!have_dev) {
+            state_lock();
+            uint16_t index = s_ps.device_index;
+            state_unlock();
+
+            uint16_t count = 0;
+            if (!next_device_for_tier(tier, &index, mac, &ip, &count)) {
+                /* Tier finished for every device: advance, or start over. */
+                state_lock();
+                const uint8_t next = (s_ps.tier >= max_tier) ? PS_TIER_COMMON
+                                                             : (uint8_t)(s_ps.tier + 1);
+                if (next == PS_TIER_COMMON) {
+                    s_ps.cycle_started = 0;   /* a fresh cycle begins */
+                }
+                ESP_LOGI(TAG, "tier %u complete across %u device(s), moving to tier %u",
+                         (unsigned)s_ps.tier, (unsigned)count, (unsigned)next);
+                s_ps.tier         = next;
+                s_ps.device_index = 0;
+                s_ps.cursor       = 0;
+                s_ps.running      = false;
+                state_unlock();
+
+                if (next == PS_TIER_COMMON) {
+                    /*
+                     * A full pass just wrapped. Clearing the recorded tier
+                     * would mean rescanning immediately, so instead wait out
+                     * one idle period and let the freshness of the results
+                     * come from the rescan endpoint or a device reappearing.
+                     */
+                    vTaskDelay(pdMS_TO_TICKS(PS_IDLE_MS));
+                }
+                continue;
+            }
+
+            state_lock();
+            s_ps.device_index = index;
+            s_ps.device_count = count;
+            s_ps.tier_total   = tier_total(tier);
+            if (!jump) {
+                s_ps.cursor = 0;
+            }
+            if (s_ps.cycle_started == 0) {
+                s_ps.cycle_started = (int64_t)time(NULL);
+            }
+            state_unlock();
+            have_dev = true;
+        }
+
+        state_lock();
+        const uint32_t cursor = s_ps.cursor;
+        const uint32_t total  = s_ps.tier_total;
+        s_ps.running          = true;
+        state_unlock();
+
+        if (cursor >= total) {
+            device_db_finish_tier(mac, tier, (int64_t)time(NULL));
+            state_lock();
+            s_ps.device_index++;   /* move past the device just finished */
+            s_ps.cursor = 0;
+            state_unlock();
+            have_dev = false;
+            continue;
+        }
+
+        const int64_t  t0     = esp_timer_get_time();
+        const uint32_t probed = probe_batch(mac, ip, tier, cursor, total - cursor);
+
+        if (probed == 0) {
+            /* Could not get a socket; back off briefly and retry. */
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        state_lock();
+        s_ps.cursor += probed;
+        s_ps.probes += probed;
+        const uint32_t new_cursor = s_ps.cursor;
+        state_unlock();
+
+        device_db_set_scan_progress(mac, tier, new_cursor, total);
+
+        /*
+         * Pace to the configured probes per second. The batch already took
+         * some time, usually the select() timeout, so only sleep the balance.
+         */
+        const int64_t want_us  = ((int64_t)probed * 1000000) / (rate > 0 ? rate : 1);
+        const int64_t spent_us = esp_timer_get_time() - t0;
+        if (want_us > spent_us) {
+            vTaskDelay(pdMS_TO_TICKS((uint32_t)((want_us - spent_us) / 1000)));
+        } else {
+            taskYIELD();
+        }
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Public API                                                                */
+/* ------------------------------------------------------------------------- */
+
+esp_err_t portscan_init(void)
+{
+    if (s_task != NULL) {
+        return ESP_OK;
+    }
+    if (s_state_lock == NULL) {
+        s_state_lock = xSemaphoreCreateMutex();
+        if (s_state_lock == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    s_ps.tier = PS_TIER_COMMON;
+    reload_settings();
+
+    if (xTaskCreate(portscan_task, "netdash_ports", 4096, NULL, 2, &s_task) != pdPASS) {
+        ESP_LOGE(TAG, "task creation failed");
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGI(TAG, "port scanner started (%u common ports, tiers up to %u)",
+             (unsigned)PS_COMMON_COUNT, (unsigned)s_ps.max_tier);
+    return ESP_OK;
+}
+
+void portscan_get_status(portscan_status_t *out)
+{
+    if (out == NULL) {
+        return;
+    }
+    memset(out, 0, sizeof(*out));
+
+    state_lock();
+    out->enabled       = s_ps.enabled;
+    out->running       = s_ps.running;
+    out->tier          = s_ps.tier;
+    out->max_tier      = s_ps.max_tier;
+    out->rate          = s_ps.rate;
+    out->device_index  = s_ps.device_index;
+    out->device_count  = s_ps.device_count;
+    out->cursor        = s_ps.cursor;
+    out->tier_total    = s_ps.tier_total;
+    out->probes        = s_ps.probes;
+    out->found         = s_ps.found;
+    out->cycle_started = s_ps.cycle_started;
+    state_unlock();
+}
+
+esp_err_t portscan_rescan_device(const uint8_t mac[6])
+{
+    if (mac == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    device_db_clear_ports(mac);
+
+    state_lock();
+    memcpy(s_ps.jump_mac, mac, 6);
+    s_ps.jump_valid = true;
+    s_ps.tier       = PS_TIER_COMMON;
+    s_ps.cursor     = 0;
+    state_unlock();
+
+    ESP_LOGI(TAG, "rescan queued for %02x:%02x:%02x:%02x:%02x:%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    return ESP_OK;
+}
+
+void portscan_settings_changed(void)
+{
+    reload_settings();
+}

@@ -27,6 +27,19 @@ MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
 TYPES = {"unknown", "router", "mesh_node", "switch", "nas", "tv", "hub", "phone",
          "pc", "iot", "printer", "cast", "console", "printer_3d"}
 
+# well-known ports for the mock port scanner; None means "open, unknown service"
+PORT_SERVICE = {
+    21: "ftp", 22: "ssh", 23: "telnet", 25: "smtp", 53: "dns", 80: "http",
+    110: "pop3", 143: "imap", 443: "https", 445: "smb", 587: "smtp",
+    631: "ipp", 3000: "http-alt", 3389: "rdp", 5000: "http-alt",
+    5001: "https-alt", 8080: "http-alt", 8123: "http-alt", 8443: "https-alt",
+    9100: "printer",
+}
+
+
+def ports_json(ports):
+    return [{"port": p, "service": PORT_SERVICE.get(p)} for p in sorted(ports)]
+
 START = time.time()
 NOW0 = time.time()
 
@@ -47,66 +60,87 @@ def seed_devices():
     d = {}
 
     def add(mac, ip, hostname, vendor, dtype, services, sources, first_seen, last_seen,
-             nickname="", type_override=None, hidden=False, rtt_ms=1, miss_count=0):
+             nickname="", type_override=None, hidden=False, rtt_ms=1, miss_count=0,
+             ports=(), tier=0, scan_last=None, active=False, done=0, total=0):
+        if scan_last is None:
+            scan_last = ago(1800) if tier > 0 else 0
         d[mac] = {
             "mac": mac, "ip": ip, "hostname": hostname, "vendor": vendor,
             "type": dtype, "type_override": type_override, "services": services,
             "sources": sources, "first_seen": first_seen, "last_seen": last_seen,
             "nickname": nickname, "hidden": hidden, "rtt_ms": rtt_ms,
             "miss_count": miss_count,
+            "open_ports": ports_json(ports), "portscan_tier": tier,
+            "portscan_last": scan_last, "portscan_active": active,
+            "portscan_done": done, "portscan_total": total,
         }
 
     add("bc:ae:c5:11:22:01", "192.168.1.1", "RT-AX59U-9A20", "ASUSTek COMPUTER INC.",
         "router", ["http", "https", "ssdp"], ["rdns", "ssdp"],
-        ago(120 * 86400), ago(5), nickname="Living Room Router", rtt_ms=1)
+        ago(120 * 86400), ago(5), nickname="Living Room Router", rtt_ms=1,
+        ports=[53, 80, 443], tier=3, scan_last=ago(2 * 86400))
 
     add("bc:ae:c5:11:22:02", "192.168.1.3", "RT-AX59U-9A20-2G", "ASUSTek COMPUTER INC.",
         "mesh_node", ["http", "ssdp"], ["ssdp"],
-        ago(118 * 86400), ago(8), nickname="Upstairs Node", rtt_ms=3)
+        ago(118 * 86400), ago(8), nickname="Upstairs Node", rtt_ms=3,
+        ports=[80], tier=1)
 
     add("bc:ae:c5:11:22:03", "192.168.1.4", "RT-AX59U-9A20-3G", "ASUSTek COMPUTER INC.",
         "mesh_node", ["http", "ssdp"], ["ssdp"],
-        ago(118 * 86400), ago(11), nickname="Garage Node", rtt_ms=4)
+        ago(118 * 86400), ago(11), nickname="Garage Node", rtt_ms=4,
+        ports=[80], tier=1)
 
     add("00:0d:b9:41:5a:7c", "192.168.1.10", "truenas", "", "nas",
         ["smb", "http", "https", "ssh"], ["rdns", "mdns"],
-        ago(300 * 86400), ago(3), nickname="TrueNAS", rtt_ms=1)
+        ago(300 * 86400), ago(3), nickname="TrueNAS", rtt_ms=1,
+        ports=[22, 80, 443, 445, 5000], tier=2, scan_last=ago(3600))
 
     add("dc:a6:32:88:01:cc", "192.168.1.11", "openmediavault", "Raspberry Pi Trading Ltd",
         "nas", ["smb", "http", "ssh"], ["mdns", "rdns"],
-        ago(210 * 86400), ago(6), nickname="OMV Backup NAS", rtt_ms=2)
+        ago(210 * 86400), ago(6), nickname="OMV Backup NAS", rtt_ms=2,
+        ports=[22, 80, 443, 445, 5000], tier=1)
 
     add("dc:a6:32:88:02:dd", "192.168.1.12", "homeassistant", "Raspberry Pi Trading Ltd",
         "hub", ["ha", "http", "https"], ["mdns"],
-        ago(260 * 86400), ago(2), nickname="Home Assistant", rtt_ms=2)
+        ago(260 * 86400), ago(2), nickname="Home Assistant", rtt_ms=2,
+        ports=[22, 8123], tier=1)
 
     add("a8:23:fe:cc:10:01", "192.168.1.20", "", "LG Electronics", "tv",
         ["cast", "ssdp"], ["ssdp"],
-        ago(400 * 86400), ago(600), nickname="Living Room TV", rtt_ms=6)
+        ago(400 * 86400), ago(600), nickname="Living Room TV", rtt_ms=6,
+        ports=[3000, 8080], tier=1)
 
     add("a8:23:fe:cc:10:02", "192.168.1.21", "", "LG Electronics", "tv",
         ["cast", "ssdp"], ["ssdp"],
-        ago(390 * 86400), ago(30000), nickname="Bedroom TV", rtt_ms=-1, miss_count=4)
+        ago(390 * 86400), ago(30000), nickname="Bedroom TV", rtt_ms=-1, miss_count=4,
+        ports=[], tier=1, scan_last=ago(50000))  # scanned, nothing open (offline now)
 
     add("28:80:88:2a:33:01", "192.168.1.2", "", "Netgear", "switch", [], [],
-        ago(500 * 86400), ago(9), nickname="Netgear 8-port Switch", rtt_ms=-1)
+        ago(500 * 86400), ago(9), nickname="Netgear 8-port Switch", rtt_ms=-1,
+        ports=[], tier=0)  # not scanned yet
 
     add("f0:18:98:77:ab:11", "192.168.1.30", "Phils-iPhone", "Apple, Inc.", "phone",
-        [], ["nbns"], ago(600 * 86400), ago(45), nickname="Phil's iPhone", rtt_ms=12)
+        [], ["nbns"], ago(600 * 86400), ago(45), nickname="Phil's iPhone", rtt_ms=12,
+        ports=[], tier=0)  # not scanned yet
 
     add("e4:5f:01:9b:44:22", "192.168.1.31", "galaxy-s23", "Samsung Electronics Co.,Ltd",
         "phone", [], ["mdns"], ago(210 * 86400), ago(5400),
-        nickname="", rtt_ms=-1, miss_count=6)
+        nickname="", rtt_ms=-1, miss_count=6,
+        ports=[], tier=1)  # scanned, nothing open
 
     add("f4:5c:89:12:9e:33", "192.168.1.40", "Phils-MacBook-Pro", "Apple, Inc.", "pc",
         ["workstation", "ssh"], ["nbns", "mdns"], ago(700 * 86400), ago(20),
-        nickname="Phil's MacBook", rtt_ms=2)
+        nickname="Phil's MacBook", rtt_ms=2,
+        ports=[22], tier=1)
 
     add("9c:b6:d0:55:6f:44", "192.168.1.41", "DESKTOP-7QK2P9", "Dell Inc.", "pc",
-        ["workstation"], ["nbns"], ago(500 * 86400), ago(30), nickname="Office PC", rtt_ms=3)
+        ["workstation"], ["nbns"], ago(500 * 86400), ago(30), nickname="Office PC", rtt_ms=3,
+        ports=[3389], tier=1, scan_last=ago(4000),
+        active=True, done=340, total=1024)  # scan in progress (tier 2 under way)
 
     add("7c:9e:bd:aa:11:99", "192.168.1.157", "", "Espressif Inc.", "unknown", [], [],
-        ago(600), ago(5), nickname="", rtt_ms=8)
+        ago(600), ago(5), nickname="", rtt_ms=8,
+        ports=[], tier=0)  # brand new, not scanned yet
 
     return d
 
@@ -143,9 +177,14 @@ SETTINGS = {
     "passive_only": False,
     "tz": "GMT0BST,M3.5.0/1,M10.5.0",
     "ntp_server": "pool.ntp.org",
+    "portscan_enabled": True,
+    "portscan_rate": 20,
+    "portscan_max_tier": 3,
 }
 
 STATUS_EXTRA = {"scanning": False, "scan_done": 0, "scan_total": 0, "last_sweep": ago(120)}
+PORTSCAN_CYCLE_STARTED = ago(4000)
+PORTSCAN_PROBES = 18342
 
 WIFI_NETWORKS = [
     {"ssid": "MyHomeWiFi", "rssi": -48, "auth": "wpa2_psk", "channel": 6},
@@ -176,7 +215,7 @@ def display_name(rec):
 
 def device_json(rec):
     online = rec["miss_count"] == 0
-    return {
+    out = {
         "mac": rec["mac"],
         "ip": rec["ip"],
         "display_name": display_name(rec),
@@ -194,7 +233,21 @@ def device_json(rec):
         "hidden": rec["hidden"],
         "rtt_ms": rec["rtt_ms"],
         "miss_count": rec["miss_count"],
+        "open_port_count": len(rec["open_ports"]),
+        "portscan_tier": rec["portscan_tier"],
+        "portscan_last": int(rec["portscan_last"]),
+        "portscan_active": rec["portscan_active"],
     }
+    if rec["portscan_active"]:
+        out["portscan_done"] = rec["portscan_done"]
+        out["portscan_total"] = rec["portscan_total"]
+    return out
+
+
+def device_json_enriched(rec):
+    out = device_json(rec)
+    out["open_ports"] = rec["open_ports"]
+    return out
 
 
 def run_fake_sweep():
@@ -282,6 +335,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._get_events(qs)
             if path == "/api/settings":
                 return self._get_settings()
+            if path == "/api/portscan":
+                return self._get_portscan()
         if path.startswith("/api/"):
             return self._error(404, "unknown endpoint")
         return self._send_html()
@@ -300,6 +355,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json(200, {"ok": True})
             if path == "/api/system/factory-reset":
                 return self._factory_reset()
+            m = re.match(r"^/api/devices/([0-9a-f:]+)/portscan$", path)
+            if m:
+                return self._rescan_device(m.group(1))
         return self._error(404, "unknown endpoint")
 
     def do_PATCH(self):
@@ -360,7 +418,7 @@ class Handler(BaseHTTPRequestHandler):
         rec = DEVICES.get(mac)
         if not rec:
             return self._error(404, "device not found")
-        self._send_json(200, device_json(rec))
+        self._send_json(200, device_json_enriched(rec))
 
     def _patch_device(self, mac):
         rec = DEVICES.get(mac)
@@ -386,7 +444,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body["hidden"], bool):
                 return self._error(400, "hidden must be a bool")
             rec["hidden"] = body["hidden"]
-        self._send_json(200, device_json(rec))
+        self._send_json(200, device_json_enriched(rec))
 
     def _delete_device(self, mac):
         if mac not in DEVICES:
@@ -421,6 +479,8 @@ class Handler(BaseHTTPRequestHandler):
                     "type": "unknown", "services": [], "sources": [],
                     "first_seen": 0, "last_seen": 0, "rtt_ms": -1, "miss_count": 255,
                     "type_override": None, "nickname": "", "hidden": False,
+                    "open_ports": [], "portscan_tier": 0, "portscan_last": 0,
+                    "portscan_active": False, "portscan_done": 0, "portscan_total": 0,
                 }
                 DEVICES[mac] = rec
             if "nickname" in item and isinstance(item["nickname"], str):
@@ -448,6 +508,45 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(503, "passive_only is enabled")
         run_fake_sweep()
         self._send_json(200, {"ok": True, "scanning": True})
+
+    def _get_portscan(self):
+        items = sorted(DEVICES.values(), key=lambda r: tuple(int(x) for x in r["ip"].split(".")))
+        active_idx, active_rec = None, None
+        for i, r in enumerate(items):
+            if r["portscan_active"]:
+                active_idx, active_rec = i, r
+                break
+        running = active_rec is not None and SETTINGS["portscan_enabled"]
+        tier = (active_rec["portscan_tier"] + 1) if active_rec else 1
+        tier = min(tier, SETTINGS["portscan_max_tier"])
+        found = sum(len(r["open_ports"]) for r in items)
+        out = {
+            "enabled": SETTINGS["portscan_enabled"],
+            "running": running,
+            "tier": tier,
+            "max_tier": SETTINGS["portscan_max_tier"],
+            "rate": SETTINGS["portscan_rate"],
+            "device_index": active_idx if active_idx is not None else 0,
+            "device_count": len(items),
+            "cursor": active_rec["portscan_done"] if active_rec else 0,
+            "tier_total": active_rec["portscan_total"] if active_rec else 0,
+            "probes": PORTSCAN_PROBES,
+            "found": found,
+            "cycle_started": PORTSCAN_CYCLE_STARTED,
+        }
+        self._send_json(200, out)
+
+    def _rescan_device(self, mac):
+        rec = DEVICES.get(mac)
+        if not rec:
+            return self._error(404, "device not found")
+        rec["open_ports"] = []
+        rec["portscan_tier"] = 0
+        rec["portscan_last"] = 0
+        rec["portscan_active"] = False
+        rec["portscan_done"] = 0
+        rec["portscan_total"] = 0
+        self._send_json(200, {"ok": True, "queued": mac})
 
     def _wifi_scan(self):
         time.sleep(0.4)
@@ -506,6 +605,20 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body["passive_only"], bool):
                 return bad("passive_only must be a bool")
             SETTINGS["passive_only"] = body["passive_only"]
+        if "portscan_enabled" in body:
+            if not isinstance(body["portscan_enabled"], bool):
+                return bad("portscan_enabled must be a bool")
+            SETTINGS["portscan_enabled"] = body["portscan_enabled"]
+        if "portscan_rate" in body:
+            v = body["portscan_rate"]
+            if not isinstance(v, (int, float)) or not (1 <= v <= 200):
+                return bad("portscan_rate out of range")
+            SETTINGS["portscan_rate"] = int(v)
+        if "portscan_max_tier" in body:
+            v = body["portscan_max_tier"]
+            if not isinstance(v, (int, float)) or int(v) not in (1, 2, 3):
+                return bad("portscan_max_tier out of range")
+            SETTINGS["portscan_max_tier"] = int(v)
         if "tz" in body:
             v = body["tz"]
             if not isinstance(v, str) or len(v) > 47:

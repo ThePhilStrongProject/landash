@@ -6,6 +6,7 @@
  */
 #include "settings.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -21,7 +22,7 @@ static const char *TAG = "settings";
 #define SETTINGS_NS      "cfg"
 #define SETTINGS_KEY     "blob"
 #define SETTINGS_VER_KEY "ver"
-#define SETTINGS_VERSION 1
+#define SETTINGS_VERSION 2
 
 #define AP_PASS_LEN 8
 
@@ -93,6 +94,9 @@ static void apply_defaults(netdash_settings_t *cfg)
     cfg->scan_interval_min = CONFIG_NETDASH_SCAN_INTERVAL_MIN;
     cfg->hosts_per_sec     = CONFIG_NETDASH_SCAN_HOSTS_PER_SEC;
     cfg->passive_only      = false;
+    cfg->portscan_enabled  = CONFIG_NETDASH_PORTSCAN_ENABLED;
+    cfg->portscan_rate     = CONFIG_NETDASH_PORTSCAN_RATE;
+    cfg->portscan_max_tier = CONFIG_NETDASH_PORTSCAN_MAX_TIER;
 }
 
 static void clamp(netdash_settings_t *cfg)
@@ -123,6 +127,16 @@ static void clamp(netdash_settings_t *cfg)
         cfg->hosts_per_sec = 1;
     } else if (cfg->hosts_per_sec > 64) {
         cfg->hosts_per_sec = 64;
+    }
+    if (cfg->portscan_rate < 1) {
+        cfg->portscan_rate = 1;
+    } else if (cfg->portscan_rate > 200) {
+        cfg->portscan_rate = 200;
+    }
+    if (cfg->portscan_max_tier < 1) {
+        cfg->portscan_max_tier = 1;
+    } else if (cfg->portscan_max_tier > 3) {
+        cfg->portscan_max_tier = 3;
     }
     /* WPA2 needs 8..63 characters; anything shorter would fail to start. */
     if (strlen(cfg->ap_pass) < 8) {
@@ -171,16 +185,62 @@ static esp_err_t load_locked(bool *out_dirty)
     } else if (err != ESP_OK) {
         ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
     } else {
-        uint16_t ver  = 0;
-        size_t   size = sizeof(s_cfg);
+        uint16_t ver    = 0;
+        size_t   stored = 0;
 
         if (nvs_get_u16(h, SETTINGS_VER_KEY, &ver) != ESP_OK) {
             ver = 0;
         }
-        esp_err_t rerr = nvs_get_blob(h, SETTINGS_KEY, &s_cfg, &size);
-        if (rerr != ESP_OK || size != sizeof(s_cfg) || ver != SETTINGS_VERSION) {
+
+        /* Ask for the stored size first so an older, shorter blob can be
+           migrated rather than thrown away along with the Wi-Fi password. */
+        esp_err_t rerr = nvs_get_blob(h, SETTINGS_KEY, NULL, &stored);
+
+        if (rerr == ESP_OK && ver == SETTINGS_VERSION && stored == sizeof(s_cfg)) {
+            size_t size = sizeof(s_cfg);
+            rerr = nvs_get_blob(h, SETTINGS_KEY, &s_cfg, &size);
+            if (rerr != ESP_OK) {
+                ESP_LOGW(TAG, "settings read failed (%s), resetting", esp_err_to_name(rerr));
+                apply_defaults(&s_cfg);
+                dirty = true;
+            }
+        } else if (rerr == ESP_OK && stored > 0 && stored < sizeof(s_cfg)) {
+            /*
+             * An older, shorter layout. Fields are only ever appended, so the
+             * stored bytes line up with the head of the current struct: copy
+             * them over the defaults and let the new tail keep its default.
+             */
+            uint8_t *scratch = calloc(1, stored);
+            size_t   size    = stored;
+
+            if (scratch != NULL && nvs_get_blob(h, SETTINGS_KEY, scratch, &size) == ESP_OK &&
+                size == stored) {
+                memcpy(&s_cfg, scratch, stored);
+
+                /*
+                 * The old layout may have ended in a padding byte, which the
+                 * copy above would have dropped onto the first appended field.
+                 * Re-apply the defaults for everything added after v1 so the
+                 * new fields never inherit a stale pad byte.
+                 */
+                netdash_settings_t fresh;
+                apply_defaults(&fresh);
+                s_cfg.portscan_enabled  = fresh.portscan_enabled;
+                s_cfg.portscan_rate     = fresh.portscan_rate;
+                s_cfg.portscan_max_tier = fresh.portscan_max_tier;
+
+                ESP_LOGW(TAG, "migrated settings from v%u (%u bytes) to v%u (%u bytes)",
+                         (unsigned)ver, (unsigned)stored,
+                         (unsigned)SETTINGS_VERSION, (unsigned)sizeof(s_cfg));
+            } else {
+                ESP_LOGW(TAG, "settings migration failed, resetting");
+                apply_defaults(&s_cfg);
+            }
+            free(scratch);
+            dirty = true;   /* rewrite in the current layout */
+        } else {
             ESP_LOGW(TAG, "stored settings unusable (err=%s size=%u ver=%u), resetting",
-                     esp_err_to_name(rerr), (unsigned)size, (unsigned)ver);
+                     esp_err_to_name(rerr), (unsigned)stored, (unsigned)ver);
             apply_defaults(&s_cfg);
             dirty = true;
         }

@@ -27,6 +27,7 @@
 #include "disc_ssdp.h"
 #include "display.h"
 #include "http_server.h"
+#include "portscan.h"
 #include "scanner.h"
 #include "settings.h"
 #include "wifi_mgr.h"
@@ -70,6 +71,7 @@ void app_main(void)
     ESP_ERROR_CHECK(disc_ssdp_init());
     ESP_ERROR_CHECK(disc_rdns_init());
     ESP_ERROR_CHECK(disc_nbns_init());
+    ESP_ERROR_CHECK(portscan_init());
 
     ESP_LOGI(TAG, "boot complete, free heap %" PRIu32 " bytes", esp_get_free_heap_size());
 
