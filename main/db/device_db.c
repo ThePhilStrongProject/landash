@@ -516,6 +516,92 @@ const char *netdash_port_service(uint16_t port)
     }
 }
 
+/*
+ * Service ids are lowercase because they go out over JSON, but a dashboard
+ * tile wants them written the way a person would. Most are handled by the
+ * title-case fallback; this table is only for the ones that would come out
+ * wrong, which is almost entirely acronyms.
+ */
+static const struct {
+    const char *id;
+    const char *label;
+} s_service_labels[] = {
+    { "http",           "HTTP" },
+    { "https",          "HTTPS" },
+    { "http-alt",       "HTTP" },
+    { "https-alt",      "HTTPS" },
+    { "ssh",            "SSH" },
+    { "smb",            "SMB" },
+    { "ftp",            "FTP" },
+    { "dns",            "DNS" },
+    { "dhcp",           "DHCP" },
+    { "ntp",            "NTP" },
+    { "smtp",           "SMTP" },
+    { "imap",           "IMAP" },
+    { "imaps",          "IMAPS" },
+    { "pop3",           "POP3" },
+    { "pop3s",          "POP3S" },
+    { "snmp",           "SNMP" },
+    { "rdp",            "RDP" },
+    { "vnc",            "VNC" },
+    { "ipp",            "IPP" },
+    { "nfs",            "NFS" },
+    { "afp",            "AFP" },
+    { "mqtt",           "MQTT" },
+    { "mqtts",          "MQTTS" },
+    { "ssdp",           "SSDP" },
+    { "mdns",           "mDNS" },
+    { "rtsp",           "RTSP" },
+    { "upnp",           "UPnP" },
+    { "netbios",        "NetBIOS" },
+    { "msrpc",          "MSRPC" },
+    { "rpcbind",        "RPCbind" },
+    { "wsd",            "WSD" },
+    { "mysql",          "MySQL" },
+    { "postgres",       "Postgres" },
+    { "home-assistant", "Home Assistant" },
+    { "cast",           "Cast" },
+    { "cast-http",      "Cast" },
+    { "airplay",        "AirPlay" },
+    { "jetdirect",      "JetDirect" },
+    { "proxmox",        "Proxmox" },
+    { "synology",       "Synology" },
+};
+
+void netdash_service_label(const char *service, char *out, size_t cap)
+{
+    if (out == NULL || cap == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (service == NULL || service[0] == '\0') {
+        return;
+    }
+
+    for (size_t i = 0; i < sizeof(s_service_labels) / sizeof(s_service_labels[0]); i++) {
+        if (strcmp(service, s_service_labels[i].id) == 0) {
+            strncpy(out, s_service_labels[i].label, cap - 1);
+            out[cap - 1] = '\0';
+            return;
+        }
+    }
+
+    /* Fallback: "grafana" -> "Grafana", and a hyphen becomes a word break. */
+    size_t o     = 0;
+    bool   start = true;
+    for (size_t i = 0; service[i] != '\0' && o + 1 < cap; i++) {
+        char c = service[i];
+        if (c == '-' || c == '_') {
+            out[o++] = ' ';
+            start    = true;
+            continue;
+        }
+        out[o++] = start ? (char)toupper((unsigned char)c) : c;
+        start    = false;
+    }
+    out[o] = '\0';
+}
+
 /* Caller holds the lock. */
 static void ports_persist_locked(int idx)
 {

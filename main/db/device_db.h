@@ -240,6 +240,13 @@ void device_db_clear_ports(const uint8_t mac[6]);
 /* Well-known name for a port, e.g. "https" for 443. NULL when unknown. */
 const char *netdash_port_service(uint16_t port);
 
+/*
+ * Human-facing form of a service id, for a label rather than a JSON field:
+ * "smb" becomes "SMB", "home-assistant" becomes "Home Assistant", "portainer"
+ * becomes "Portainer". Always NUL-terminates out.
+ */
+void netdash_service_label(const char *service, char *out, size_t cap);
+
 /* ------------------------------------------------------------------------- */
 /* Locking                                                                   */
 /* ------------------------------------------------------------------------- */

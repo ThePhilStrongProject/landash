@@ -586,8 +586,11 @@ device that is merely switched off does not lose its shortcut.
 ```
 
 `scheme` and `label` are optional. `scheme` defaults by port (443, 8443, 8006,
-9090 and 5001 give `https`, anything else `http`) and `label` defaults to the
-device's current display name. Returns the created link object.
+9090 and 5001 give `https`, anything else `http`). `label` defaults to
+`"<device> - <Service>"`, for example `"truenas - Portainer"`, using the
+well-known name of the port written for a person to read; a port with no
+known service falls back to its number, as in `"truenas - 4000"`. Returns the
+created link object.
 
 **`label` is at most 31 characters.** A longer one is rejected with 400 rather
 than truncated, so the stored label is always exactly what was asked for. The

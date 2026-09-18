@@ -1261,6 +1261,24 @@ list.querySelectorAll("button[data-mac]").forEach(function(b){
 b.addEventListener("click", function(){ selectDevice(b.dataset.mac); });
 });
 }
+/* Mirrors the firmware's default label: "<device> - <Service>". Acronyms that
+   title-casing would mangle are listed; everything else is title-cased. */
+var selectedPorts = {};
+var SERVICE_LABEL_FIX = {http:"HTTP",https:"HTTPS","http-alt":"HTTP","https-alt":"HTTPS",
+ssh:"SSH",smb:"SMB",ftp:"FTP",dns:"DNS",dhcp:"DHCP",ntp:"NTP",smtp:"SMTP",imap:"IMAP",
+imaps:"IMAPS",pop3:"POP3",pop3s:"POP3S",snmp:"SNMP",rdp:"RDP",vnc:"VNC",ipp:"IPP",
+nfs:"NFS",afp:"AFP",mqtt:"MQTT",mqtts:"MQTTS",ssdp:"SSDP",mdns:"mDNS",rtsp:"RTSP",
+upnp:"UPnP",netbios:"NetBIOS",msrpc:"MSRPC",rpcbind:"RPCbind",wsd:"WSD",mysql:"MySQL",
+postgres:"Postgres","home-assistant":"Home Assistant",cast:"Cast","cast-http":"Cast",
+airplay:"AirPlay",jetdirect:"JetDirect",proxmox:"Proxmox",synology:"Synology"};
+function serviceLabel(svc){
+if (!svc) return "";
+if (SERVICE_LABEL_FIX[svc]) return SERVICE_LABEL_FIX[svc];
+return svc.replace(/[-_]/g," ").replace(/[a-z]/g, function(c){ return c.toUpperCase(); });
+}
+function defaultLinkLabel(deviceName, port, svc){
+return deviceName + " - " + (svc ? serviceLabel(svc) : String(port));
+}
 function selectDevice(mac){
 selectedMac = mac;
 var d = state.devicesByMac[mac];
@@ -1269,6 +1287,7 @@ list.innerHTML = "";
 root.querySelector("#linkPortField").hidden = false;
 root.querySelector("#linkLabelField").hidden = false;
 root.querySelector("#linkLabel").placeholder = d.display_name;
+selectedPorts = {};
 var presets = root.querySelector("#linkPortPresets");
 presets.innerHTML = "<span class=\"muted\" style=\"font-size:.78rem\">Loading open ports&hellip;</span>";
 updateSubmitState();
@@ -1276,11 +1295,12 @@ api("GET","/api/devices/"+mac).then(function(full){
 if (selectedMac !== mac) return;
 var ports = full.open_ports || [];
 presets.innerHTML = ports.length ? ports.map(function(p){
+selectedPorts[p.port] = p.service || "";
 var lbl = p.service ? (p.port+" ("+p.service+")") : String(p.port);
 return "<button type=\"button\" class=\"btn small\" data-port=\""+p.port+"\">"+esc(lbl)+"</button>";
 }).join("") : "<span class=\"muted\" style=\"font-size:.78rem\">No open ports found yet &mdash; enter one manually.</span>";
 presets.querySelectorAll("button[data-port]").forEach(function(b){
-b.addEventListener("click", function(){ portInput.value = b.dataset.port; updateSubmitState(); });
+b.addEventListener("click", function(){ portInput.value = b.dataset.port; refreshLabelHint(); updateSubmitState(); });
 });
 }).catch(function(){ presets.innerHTML = ""; });
 }
@@ -1291,7 +1311,15 @@ root.querySelector("#linkLabelField").hidden = true;
 renderList(search.value);
 updateSubmitState();
 });
-portInput.addEventListener("input", updateSubmitState);
+function refreshLabelHint(){
+var lblInput = root.querySelector("#linkLabel");
+var d = selectedMac ? state.devicesByMac[selectedMac] : null;
+if (!d) return;
+var port = Number(portInput.value);
+lblInput.placeholder = port ? defaultLinkLabel(d.display_name, port, selectedPorts[port])
+: d.display_name;
+}
+portInput.addEventListener("input", function(){ refreshLabelHint(); updateSubmitState(); });
 submitBtn.addEventListener("click", function(){
 var port = Number(portInput.value);
 var label = root.querySelector("#linkLabel").value.trim();

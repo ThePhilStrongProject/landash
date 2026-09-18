@@ -1485,7 +1485,43 @@ static esp_err_t links_post_handler(httpd_req_t *req)
         strncpy(label, j_label->valuestring, sizeof(label) - 1);
         label[sizeof(label) - 1] = 0;
     } else {
-        device_db_display_name(&dev, label, sizeof(label));
+        /*
+         * Default to "<device> - <service>", e.g. "truenas - Portainer", which
+         * is what tells two tiles on the same box apart. A port with no known
+         * service falls back to its number. This one is generated rather than
+         * supplied, so truncating it is right where rejecting user input is
+         * not.
+         */
+        char name[32];
+        device_db_display_name(&dev, name, sizeof(name));
+
+        char        suffix[24];
+        const char *svc = netdash_port_service(port);
+        if (svc != NULL) {
+            netdash_service_label(svc, suffix, sizeof(suffix));
+        } else {
+            snprintf(suffix, sizeof(suffix), "%u", (unsigned)port);
+        }
+
+        /*
+         * Joined by hand rather than with snprintf("%s - %s"): the compiler
+         * cannot prove the two parts fit and the build treats a possible
+         * truncation as an error. Running out of room here is fine - the
+         * device name is the useful half, so it is what survives.
+         */
+        size_t n = 0;
+        for (size_t i = 0; name[i] != 0 && n + 1 < sizeof(label); i++) {
+            label[n++] = name[i];
+        }
+        if (n + 3 < sizeof(label)) {
+            label[n++] = ' ';
+            label[n++] = '-';
+            label[n++] = ' ';
+            for (size_t i = 0; suffix[i] != 0 && n + 1 < sizeof(label); i++) {
+                label[n++] = suffix[i];
+            }
+        }
+        label[n] = 0;
     }
     cJSON_Delete(json);
 
