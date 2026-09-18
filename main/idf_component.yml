@@ -1,0 +1,17 @@
+## NetDash managed component dependencies.
+##
+## Versions are pinned to exactly what dependencies.lock resolved at scaffold
+## time so every work package builds against an identical tree. To bump one,
+## change it here and run `idf.py update-dependencies`, then commit the new
+## dependencies.lock.
+dependencies:
+  idf:
+    version: ">=5.5"
+  lvgl/lvgl:
+    version: "==9.6.0~1"
+  espressif/esp_lvgl_port:
+    version: "==2.9.0"
+  espressif/mdns:
+    version: "==1.13.1"
+  espressif/button:
+    version: "==4.2.1"

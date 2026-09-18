@@ -1,0 +1,41 @@
+# NetDash project defaults. Run `idf.py set-target esp32c6` once; sdkconfig is
+# generated from this file and is intentionally not committed.
+
+CONFIG_IDF_TARGET="esp32c6"
+
+# --- Flash / partitions -----------------------------------------------------
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# --- Console: USB Serial/JTAG so `idf.py monitor` works over the USB-A plug --
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- System -----------------------------------------------------------------
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# --- HTTP server ------------------------------------------------------------
+# max_uri_handlers is NOT a Kconfig symbol in IDF 5.5; it is a runtime field of
+# httpd_config_t. See NETDASH_HTTPD_MAX_URI_HANDLERS in main/web/http_server.h.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+
+# --- Networking -------------------------------------------------------------
+CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES=y
+CONFIG_LWIP_LOCAL_HOSTNAME="netdash"
+CONFIG_ESP_WIFI_NVS_ENABLED=y
+
+# --- LVGL -------------------------------------------------------------------
+# With esp_lvgl_port the LVGL build configuration comes from Kconfig, not from
+# an lv_conf.h, so the fonts and the heap size are set here. Owned by WP2.
+CONFIG_LV_COLOR_DEPTH_16=y
+
+# Built-in Montserrat sizes used by main/ui/display.c.
+CONFIG_LV_FONT_MONTSERRAT_12=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+
+# LVGL's built-in allocator keeps a static pool in DIRAM. The default 64 KB is
+# far more than three label-only pages need on a board with no PSRAM.
+CONFIG_LV_MEM_SIZE=24576

@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetDash</title>
+<style>
+:root{
+--bg:#05080f; --surface:#0c1220; --border:#1e293b;
+--accent:#3b82f6; --accent-rgb:59,130,246;
+--accent-2:#60a5fa;
+--text:#f1f5f9; --muted:#94a3b8;
+--online:#22c55e; --online-rgb:34,197,94;
+--new:#38bdf8; --new-rgb:56,189,248;
+--danger:#ef4444; --danger-rgb:239,68,68;
+color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);overflow-x:hidden;
+font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+body{min-height:100vh}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--accent-2)}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+clip:rect(0,0,0,0);white-space:nowrap;border:0}
+:focus-visible{outline:2px solid var(--accent-2);outline-offset:2px}
+.banner{background:rgba(var(--danger-rgb),.15);color:#fecaca;border-bottom:1px solid var(--danger);
+padding:8px 16px;font-size:.85rem;text-align:center}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+padding:12px 16px;border-bottom:1px solid var(--border);
+background:linear-gradient(180deg,rgba(var(--accent-rgb),.10),transparent 70%);flex-wrap:wrap}
+.brand{display:flex;align-items:baseline;gap:10px;min-width:0;flex:1 1 auto}
+.logo{font-weight:800;letter-spacing:.12em;color:var(--accent-2);font-size:1.05rem;white-space:nowrap;flex:none}
+.hostip{color:var(--muted);font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.statuspill{display:flex;flex-direction:column;gap:4px;align-items:flex-end;min-width:0;flex:none;max-width:100%}
+.pilltext{display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--muted);white-space:nowrap;
+overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:100%}
+.pillbar{width:140px;height:4px;border-radius:2px;background:rgba(var(--accent-rgb),.18);overflow:hidden}
+.pillbarfill{height:100%;background:var(--accent);border-radius:2px;transition:width .3s}
+.tabs{display:flex;gap:2px;padding:0 12px;border-bottom:1px solid var(--border);overflow-x:auto}
+.tabbtn{background:none;border:none;padding:12px 14px;color:var(--muted);font-weight:600;
+border-bottom:2px solid transparent;white-space:nowrap}
+.tabbtn[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
+.tabbtn:hover{color:var(--text)}
+main{padding:16px;max-width:1180px;margin:0 auto}
+section[role="tabpanel"][hidden]{display:none}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+.tile .label{color:var(--muted);font-size:.78rem}
+.tile .value{font-size:1.6rem;font-weight:600;margin-top:2px}
+.tile .sub{color:var(--muted);font-size:.75rem;margin-top:2px}
+.tile.accent .value{color:var(--new)}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.toolbar input[type=search]{flex:1;min-width:180px;background:var(--surface);border:1px solid var(--border);
+border-radius:8px;padding:8px 10px;color:var(--text)}
+.switch{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.85rem;white-space:nowrap}
+.btn{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;
+padding:8px 14px;font-weight:600;font-size:.85rem}
+.btn:hover{border-color:var(--accent-2)}
+.btn-accent{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-accent:hover{background:var(--accent-2);border-color:var(--accent-2)}
+.btn-danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.btn-danger-outline{border-color:var(--danger);color:#fecaca}
+.btn:disabled{opacity:.55;cursor:default}
+.btn.small{padding:4px 9px;font-size:.75rem}
+.tablewrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px}
+table{width:100%;border-collapse:collapse;background:var(--surface)}
+th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--border);font-size:.85rem}
+tbody tr:last-child td{border-bottom:none}
+thead th{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.th-btn{background:none;border:none;padding:0;color:inherit;font:inherit;font-weight:700;
+display:flex;align-items:center;gap:4px;width:100%;text-align:left}
+th[aria-sort="ascending"] .th-btn::after{content:"\2191"}
+th[aria-sort="descending"] .th-btn::after{content:"\2193"}
+tbody tr:hover{background:rgba(var(--accent-rgb),.06)}
+.mono{font-family:ui-monospace,Consolas,"SF Mono",Menlo,monospace;font-size:.82rem}
+.muted{color:var(--muted)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}
+.dot.on{background:var(--online)}
+.statuscell{display:flex;align-items:center;gap:7px}
+.badge{display:inline-block;font-size:.68rem;font-weight:700;padding:1px 6px;border-radius:999px;
+background:rgba(var(--new-rgb),.18);color:var(--new);margin-left:6px;vertical-align:middle}
+.namecell{display:flex;align-items:center;gap:6px;min-width:0}
+.namecell .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.iconbtn{background:none;border:1px solid transparent;border-radius:6px;padding:3px 5px;color:var(--muted);
+line-height:1;flex:none}
+.iconbtn:hover{border-color:var(--border);color:var(--text)}
+.typebtn{background:none;border:1px solid var(--border);border-radius:8px;padding:3px 8px;color:var(--text);
+font-size:.82rem;display:inline-flex;align-items:center;gap:5px}
+.typebtn:hover{border-color:var(--accent-2)}
+.nameinput{background:var(--bg);border:1px solid var(--accent-2);border-radius:6px;padding:3px 6px;
+color:var(--text);width:100%;max-width:180px}
+.expandbtn{display:none;background:none;border:none;color:var(--muted);margin-left:auto;padding:2px 6px}
+.empty{color:var(--muted);padding:20px;text-align:center}
+@media (max-width:480px){.tiles{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:720px){
+#devTable thead{display:none}
+#devTable,#devTable tbody,#devTable tr{display:block;width:100%}
+#devBody tr{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+padding:10px 12px;margin:0 0 10px}
+#devBody td{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;
+padding:4px 0;border:none;font-size:.85rem;overflow-wrap:anywhere;text-align:right}
+#devBody td.mobilehidden{display:none}
+#devBody tr.expanded td.mobilehidden{display:flex}
+#devBody td::before{content:attr(data-label);color:var(--muted);font-size:.72rem;flex:none}
+#devBody td[data-col="status"]::before,#devBody td[data-col="name"]::before{content:none}
+.expandbtn{display:inline-block}
+}
+.events{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.events li{display:flex;gap:10px;align-items:flex-start;background:var(--surface);
+border:1px solid var(--border);border-radius:10px;padding:9px 12px;font-size:.85rem}
+.ev-ico{flex:none}
+.ev-body{min-width:0}
+.ev-title{font-weight:600}
+.ev-meta{color:var(--muted);font-size:.76rem;margin-top:1px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;max-width:560px}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:.82rem;color:var(--muted);margin-bottom:4px}
+.field input[type=text],.field input[type=password],.field input[type=number]{
+width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;
+padding:8px 10px;color:var(--text)}
+.field .hint{color:var(--muted);font-size:.74rem;margin-top:4px}
+.checkfield{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.presets{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.inline-btn-row{display:flex;gap:8px;align-items:flex-end}
+.inline-btn-row .field{flex:1;margin-bottom:0}
+.formrow-actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+.sysinfo{display:grid;grid-template-columns:auto 1fr;gap:8px 18px;max-width:480px}
+.sysinfo dt{color:var(--muted);font-size:.82rem}
+.sysinfo dd{margin:0;font-weight:600}
+.rssi{display:inline-flex;align-items:flex-end;gap:2px;height:11px;vertical-align:middle}
+.rssi i{display:block;width:3px;background:rgba(var(--accent-rgb),.22);border-radius:1px}
+.rssi i:nth-child(1){height:3px}.rssi i:nth-child(2){height:5px}
+.rssi i:nth-child(3){height:8px}.rssi i:nth-child(4){height:11px}
+.rssi i.on{background:var(--accent-2)}
+.lock{color:var(--muted);font-size:.8em}
+.popover{position:fixed;z-index:60;background:var(--surface);border:1px solid var(--border);
+border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.5);min-width:170px;max-width:240px;
+padding:6px;max-height:60vh;overflow:auto}
+.popover button{display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;
+color:var(--text);text-align:left;padding:8px 9px;border-radius:7px;font-size:.85rem}
+.popover button:hover,.popover button:focus-visible{background:rgba(var(--accent-rgb),.14)}
+.popover button.current{color:var(--accent-2);font-weight:700}
+.popover .sep{height:1px;background:var(--border);margin:4px 2px}
+.popover button.danger{color:#fca5a5}
+.modalback{position:fixed;inset:0;background:rgba(2,4,10,.65);z-index:70;display:flex;
+align-items:center;justify-content:center;padding:16px}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px;
+width:100%;max-width:420px;max-height:80vh;overflow:auto}
+.modal h3{margin:0 0 12px;font-size:1rem}
+.netrow{display:flex;align-items:center;gap:10px;width:100%;background:none;border:1px solid var(--border);
+border-radius:9px;padding:9px 11px;color:var(--text);margin-bottom:6px;text-align:left}
+.netrow:hover{border-color:var(--accent-2)}
+.netrow .ssidname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.netrow .rssiv{color:var(--muted);font-size:.75rem}
+.modalclose{float:right;background:none;border:none;color:var(--muted);font-size:1.1rem}
+.toasts{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:80;
+display:flex;flex-direction:column;gap:8px;width:min(92vw,380px)}
+.toast{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent-2);
+border-radius:9px;padding:10px 12px;font-size:.85rem;box-shadow:0 6px 20px rgba(0,0,0,.4)}
+.toast.err{border-left-color:var(--danger)}
+.toast.ok{border-left-color:var(--online)}
+</style>
+</head>
+<body>
+<div id="offlineBanner" class="banner" role="status" hidden>Connection to the dongle was lost — retrying&hellip;</div>
+<header class="topbar">
+<div class="brand">
+<span class="logo">NETDASH</span>
+<span class="hostip" id="hostIp">&mdash;</span>
+</div>
+<div class="statuspill">
+<span class="pilltext" id="pillText">&mdash;</span>
+<div class="pillbar" id="pillBar" hidden><div class="pillbarfill" id="pillBarFill"></div></div>
+</div>
+</header>
+<nav class="tabs" role="tablist" aria-label="Sections">
+<button role="tab" type="button" id="tab-devices" class="tabbtn" aria-selected="true" aria-controls="panel-devices">Devices</button>
+<button role="tab" type="button" id="tab-events" class="tabbtn" aria-selected="false" aria-controls="panel-events">Events</button>
+<button role="tab" type="button" id="tab-settings" class="tabbtn" aria-selected="false" aria-controls="panel-settings">Settings</button>
+<button role="tab" type="button" id="tab-system" class="tabbtn" aria-selected="false" aria-controls="panel-system">System</button>
+</nav>
+<main id="app">
+<section id="panel-devices" role="tabpanel" aria-labelledby="tab-devices">
+<div class="tiles" id="tiles"></div>
+<div class="toolbar">
+<input type="search" id="filterInput" placeholder="Filter by name, IP, MAC, vendor, hostname" aria-label="Filter devices">
+<label class="switch"><input type="checkbox" id="hiddenToggle"> Show hidden</label>
+<button type="button" class="btn btn-accent" id="scanBtn">Scan now</button>
+</div>
+<div class="tablewrap">
+<table id="devTable">
+<thead><tr>
+<th data-col="status" aria-sort="none"><button class="th-btn" data-key="online"><span class="sr-only">Status</span>&nbsp;</button></th>
+<th data-col="name" aria-sort="ascending"><button class="th-btn" data-key="name">Name</button></th>
+<th data-col="type" aria-sort="none"><button class="th-btn" data-key="type">Type</button></th>
+<th data-col="ip" aria-sort="none"><button class="th-btn" data-key="ip">IP</button></th>
+<th data-col="mac" aria-sort="none"><button class="th-btn" data-key="mac">MAC</button></th>
+<th data-col="vendor" aria-sort="none"><button class="th-btn" data-key="vendor">Vendor</button></th>
+<th data-col="hostname" aria-sort="none"><button class="th-btn" data-key="hostname">Hostname</button></th>
+<th data-col="lastseen" aria-sort="none"><button class="th-btn" data-key="last_seen">Last seen</button></th>
+<th data-col="firstseen" aria-sort="none"><button class="th-btn" data-key="first_seen">First seen</button></th>
+<th data-col="actions"><span class="sr-only">Actions</span></th>
+</tr></thead>
+<tbody id="devBody"></tbody>
+</table>
+</div>
+<p class="empty" id="devEmpty" hidden>No devices match.</p>
+</section>
+<section id="panel-events" role="tabpanel" aria-labelledby="tab-events" hidden>
+<ul class="events" id="eventsList"></ul>
+<p class="empty" id="evEmpty" hidden>No events yet.</p>
+</section>
+<section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+<form class="card" id="settingsForm">
+<div class="field">
+<label for="setSsid">Wi-Fi network (SSID)</label>
+<div class="inline-btn-row">
+<div class="field" style="margin-bottom:0"><input type="text" id="setSsid" maxlength="32"></div>
+<button type="button" class="btn" id="wifiScanBtn">Scan</button>
+</div>
+</div>
+<div class="field">
+<label for="setWifiPass">Wi-Fi password</label>
+<input type="password" id="setWifiPass" maxlength="64" placeholder="Leave blank to keep current">
+</div>
+<div class="field">
+<label for="setHostname">Hostname</label>
+<input type="text" id="setHostname" maxlength="31" pattern="[a-z0-9-]+">
+<div class="hint">Lowercase letters, digits, hyphens. Also the mDNS name (&lt;hostname&gt;.local).</div>
+</div>
+<div class="field">
+<label for="setApPass">Setup access-point password</label>
+<input type="password" id="setApPass" minlength="8" maxlength="63">
+</div>
+<div class="field">
+<label for="setScanInterval">Scan interval (minutes)</label>
+<input type="number" id="setScanInterval" min="1" max="1440">
+</div>
+<div class="field">
+<label for="setHostsPerSec">Hosts per second</label>
+<input type="number" id="setHostsPerSec" min="1" max="64">
+</div>
+<div class="checkfield">
+<input type="checkbox" id="setPassive"><label for="setPassive" style="margin:0">Passive only (no active sweeps)</label>
+</div>
+<div class="field">
+<label for="setNtp">NTP server</label>
+<input type="text" id="setNtp" maxlength="63">
+</div>
+<div class="field">
+<label for="setTz">Timezone (POSIX TZ string)</label>
+<input type="text" id="setTz" maxlength="47">
+<div class="hint">e.g. <code>GMT0BST,M3.5.0/1,M10.5.0</code> &mdash; std offset, DST rule.</div>
+<div class="presets">
+<button type="button" class="btn small" data-tz="UTC0">UTC</button>
+<button type="button" class="btn small" data-tz="GMT0BST,M3.5.0/1,M10.5.0">UK</button>
+<button type="button" class="btn small" data-tz="CET-1CEST,M3.5.0,M10.5.0/3">CET</button>
+<button type="button" class="btn small" data-tz="EST5EDT,M3.2.0,M11.1.0">US Eastern</button>
+</div>
+</div>
+<div class="formrow-actions">
+<button type="submit" class="btn btn-accent">Save settings</button>
+<button type="button" class="btn" id="exportBtn">Export devices</button>
+<button type="button" class="btn" id="importBtn">Import devices</button>
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+</div>
+</form>
+</section>
+<section id="panel-system" role="tabpanel" aria-labelledby="tab-system" hidden>
+<dl class="sysinfo" id="sysInfo"></dl>
+<div class="formrow-actions">
+<button type="button" class="btn btn-danger-outline" id="rebootBtn">Reboot</button>
+<button type="button" class="btn btn-danger" id="factoryBtn">Factory reset&hellip;</button>
+</div>
+</section>
+</main>
+<div id="popover" class="popover" role="menu" hidden></div>
+<div id="modalRoot"></div>
+<div id="toasts" aria-live="polite" aria-atomic="false"></div>
+<script>
+(function(){
+"use strict";
+var TYPES = ["unknown","router","mesh_node","switch","nas","tv","hub","phone","pc","iot","printer","cast"];
+var TYPE_LABEL = {unknown:"Unknown",router:"Router",mesh_node:"Mesh node",switch:"Switch",nas:"NAS",
+tv:"TV",hub:"Hub",phone:"Phone",pc:"PC",iot:"IoT",printer:"Printer",cast:"Cast"};
+var TYPE_ICON = {unknown:"❔",router:"📶",mesh_node:"🔁",switch:"🔀",
+nas:"🗄️",tv:"📺",hub:"🏠",phone:"📱",pc:"💻",
+iot:"🔌",printer:"🖨️",cast:"📡"};
+var EV_ICON = {info:"ℹ️",device_new:"✨",device_online:"▲",device_offline:"▼",
+device_ip_changed:"🔀",scan:"🔍",wifi:"📶"};
+var state = {
+tab: "devices",
+devices: [],
+devicesByMac: {},
+events: [],
+status: {},
+sortKey: "name",
+sortDir: "asc",
+filter: "",
+showHidden: false,
+editingMac: null,
+statusFailStreak: 0
+};
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){
+return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+function api(method, path, body){
+var opts = { method: method, headers: {} };
+if (body !== undefined){ opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+return fetch(path, opts).then(function(res){
+return res.text().then(function(txt){
+var data = null;
+if (txt){ try { data = JSON.parse(txt); } catch(e){ data = null; } }
+if (!res.ok){
+var msg = (data && data.error) ? data.error : ("request failed (" + res.status + ")");
+throw new Error(msg);
+}
+return data;
+});
+});
+}
+function toast(msg, kind){
+var el = document.createElement("div");
+el.className = "toast" + (kind === "err" ? " err" : kind === "ok" ? " ok" : "");
+el.textContent = msg;
+$("toasts").appendChild(el);
+setTimeout(function(){ el.remove(); }, 4500);
+}
+function toastErr(err){ toast(err && err.message ? err.message : String(err), "err"); }
+function markPollOk(){ state.statusFailStreak = 0; $("offlineBanner").hidden = true; }
+function markPollFail(){
+state.statusFailStreak++;
+if (state.statusFailStreak >= 2) $("offlineBanner").hidden = false;
+}
+function relTime(ts){
+if (!ts) return "never";
+var diff = Math.floor(Date.now()/1000) - ts;
+if (diff < 5) return "just now";
+if (diff < 60) return diff + "s ago";
+if (diff < 3600) return Math.floor(diff/60) + "m ago";
+if (diff < 86400) return Math.floor(diff/3600) + "h ago";
+return Math.floor(diff/86400) + "d ago";
+}
+function absTime(ts){ return ts ? new Date(ts*1000).toLocaleString() : "unknown"; }
+function fmtUptime(s){
+s = s|0;
+var d = Math.floor(s/86400); s -= d*86400;
+var h = Math.floor(s/3600); s -= h*3600;
+var m = Math.floor(s/60); s -= m*60;
+var out = [];
+if (d) out.push(d+"d"); if (h||d) out.push(h+"h"); if (m||h||d) out.push(m+"m"); out.push(s+"s");
+return out.join(" ");
+}
+function fmtBytes(n){
+if (n >= 1048576) return (n/1048576).toFixed(1)+" MB";
+if (n >= 1024) return (n/1024).toFixed(1)+" KB";
+return n+" B";
+}
+function ipToNum(ip){
+var p = (ip||"0.0.0.0").split(".").map(Number);
+return ((p[0]||0)*16777216)+((p[1]||0)*65536)+((p[2]||0)*256)+(p[3]||0);
+}
+function rssiBars(rssi){
+var n = rssi >= -50 ? 4 : rssi >= -60 ? 3 : rssi >= -70 ? 2 : rssi >= -80 ? 1 : 0;
+var h = "";
+for (var i=1;i<=4;i++) h += "<i class=\"" + (i<=n?"on":"") + "\"></i>";
+return "<span class=\"rssi\" aria-hidden=\"true\">" + h + "</span>";
+}
+var TABS = ["devices","events","settings","system"];
+function selectTab(tab, skipSave){
+state.tab = tab;
+TABS.forEach(function(t){
+var btn = $("tab-"+t), panel = $("panel-"+t);
+var on = t === tab;
+btn.setAttribute("aria-selected", on ? "true" : "false");
+panel.hidden = !on;
+});
+if (!skipSave){ try { localStorage.setItem("netdash-tab", tab); } catch(e){} }
+if (tab === "devices") loadDevices();
+if (tab === "events") loadEvents();
+if (tab === "settings") loadSettings();
+}
+TABS.forEach(function(t){ $("tab-"+t).addEventListener("click", function(){ selectTab(t); }); });
+function loadStatus(){
+return api("GET","/api/status").then(function(s){
+state.status = s; markPollOk(); renderStatus(); renderTiles(); renderSystem();
+}).catch(function(e){ markPollFail(); });
+}
+function renderStatus(){
+var s = state.status;
+$("hostIp").textContent = (s.hostname || "netdash") + (s.ip ? " (" + s.ip + ")" : "");
+var pillText = $("pillText"), pillBar = $("pillBar"), pillFill = $("pillBarFill");
+if (s.scanning){
+var pct = s.scan_total ? Math.round(100*s.scan_done/s.scan_total) : 0;
+pillText.textContent = "Scanning… " + (s.scan_total ? (s.scan_done+"/"+s.scan_total) : "");
+pillBar.hidden = false; pillFill.style.width = pct + "%";
+} else {
+var mode = (s.mode||"off").toUpperCase();
+var bits = [mode];
+if (s.mode === "sta" || s.mode === "apsta"){ if (s.ssid) bits.push(s.ssid); }
+pillBar.hidden = true;
+pillText.innerHTML = esc(bits.join(" · ")) +
+((s.mode==="sta"||s.mode==="apsta") && s.rssi ? " " + rssiBars(s.rssi) + " " + s.rssi + " dBm" : "");
+}
+}
+function renderTiles(){
+var s = state.status;
+var tiles = [
+{label:"Online", value:(s.devices_online!=null?s.devices_online:"—"), sub:"of " + (s.devices_total!=null?s.devices_total:"—")},
+{label:"Total devices", value:(s.devices_total!=null?s.devices_total:"—")},
+{label:"New in 24h", value:(s.devices_new_24h!=null?s.devices_new_24h:"—"), accent:true},
+{label:"Last sweep", value:relTime(s.last_sweep), title:absTime(s.last_sweep)}
+];
+$("tiles").innerHTML = tiles.map(function(t){
+return "<div class=\"tile" + (t.accent?" accent":"") + "\">" +
+"<div class=\"label\">" + esc(t.label) + "</div>" +
+"<div class=\"value\"" + (t.title?(" title=\""+esc(t.title)+"\""):"") + ">" + esc(t.value) + "</div>" +
+(t.sub ? "<div class=\"sub\">" + esc(t.sub) + "</div>" : "") +
+"</div>";
+}).join("");
+}
+function renderSystem(){
+var s = state.status;
+if (!s.fw) return;
+var rows = [
+["Firmware", esc(s.fw) + (s.idf?(" <span class=\"muted\">("+esc(s.idf)+")</span>"):"")],
+["Uptime", fmtUptime(s.uptime_s)],
+["Free heap", fmtBytes(s.heap_free) + " <span class=\"muted\">(min " + fmtBytes(s.heap_min_free) + ")</span>"],
+["Mode", esc((s.mode||"").toUpperCase())],
+["IP address", esc(s.ip)],
+["MAC address", "<span class=\"mono\">" + esc(s.mac) + "</span>"],
+["Signal", (s.mode==="sta"||s.mode==="apsta") ? (rssiBars(s.rssi)+" "+s.rssi+" dBm") : "—"],
+["Time", s.time_synced ? esc(absTime(s.time)) : "not synced"]
+];
+$("sysInfo").innerHTML = rows.map(function(r){
+return "<dt>" + esc(r[0]) + "</dt><dd>" + r[1] + "</dd>";
+}).join("");
+}
+function loadDevices(){
+if (state.editingMac) return Promise.resolve();
+return api("GET","/api/devices?hidden=1").then(function(list){
+state.devices = list; markPollOk();
+var map = {}; list.forEach(function(d){ map[d.mac]=d; });
+state.devicesByMac = map;
+renderDevices();
+}).catch(function(e){ markPollFail(); });
+}
+function displayType(d){ return d.type_override || d.type || "unknown"; }
+function sortDevices(list){
+var key = state.sortKey, dir = state.sortDir === "asc" ? 1 : -1;
+var arr = list.slice();
+arr.sort(function(a,b){
+if (key === "default"){
+if (a.online !== b.online) return a.online ? -1 : 1;
+return a.display_name.localeCompare(b.display_name);
+}
+var av, bv;
+if (key === "ip"){ av = ipToNum(a.ip); bv = ipToNum(b.ip); }
+else if (key === "online"){ av = a.online?1:0; bv = b.online?1:0; }
+else if (key === "last_seen" || key === "first_seen"){ av = a[key]||0; bv = b[key]||0; }
+else if (key === "name"){ av = a.display_name.toLowerCase(); bv = b.display_name.toLowerCase(); }
+else if (key === "type"){ av = displayType(a); bv = displayType(b); }
+else { av = (a[key]||"").toString().toLowerCase(); bv = (b[key]||"").toString().toLowerCase(); }
+if (av < bv) return -1*dir; if (av > bv) return 1*dir; return 0;
+});
+return arr;
+}
+function renderDevices(){
+if (state.editingMac) return;
+var q = state.filter.trim().toLowerCase();
+var list = state.devices.filter(function(d){
+if (d.hidden && !state.showHidden) return false;
+if (!q) return true;
+return [d.display_name,d.ip,d.mac,d.vendor,d.hostname].join(" ").toLowerCase().indexOf(q) !== -1;
+});
+list = sortDevices(list);
+$("devEmpty").hidden = list.length !== 0;
+$("devBody").innerHTML = list.map(rowHtml).join("");
+}
+function rowHtml(d){
+var type = displayType(d);
+var isNew = d.is_new ? "<span class=\"badge\">NEW</span>" : "";
+var links = "";
+if ((d.services||[]).indexOf("https") !== -1) links += "https";
+else if ((d.services||[]).indexOf("http") !== -1) links += "http";
+return "<tr data-mac=\"" + esc(d.mac) + "\" class=\"devrow\">" +
+"<td data-col=\"status\"><span class=\"statuscell\"><span class=\"dot" + (d.online?" on":"") + "\"></span>" +
+"<span class=\"sr-only\">" + (d.online?"Online":"Offline") + "</span></span></td>" +
+"<td data-col=\"name\" data-label=\"Name\"><span class=\"namecell\">" +
+"<span class=\"nm\" title=\"" + esc(d.display_name) + "\">" + esc(d.display_name) + "</span>" + isNew +
+"<button type=\"button\" class=\"iconbtn\" data-act=\"edit\" aria-label=\"Edit name for " + esc(d.display_name) + "\">✎</button>" +
+"<button type=\"button\" class=\"expandbtn\" data-act=\"expand\" aria-label=\"Show more\">⋯</button>" +
+"</span></td>" +
+"<td data-col=\"type\" data-label=\"Type\"><button type=\"button\" class=\"typebtn\" data-act=\"type\">" +
+"<span aria-hidden=\"true\">" + TYPE_ICON[type] + "</span>" + esc(TYPE_LABEL[type]||type) + "</button></td>" +
+"<td data-col=\"ip\" data-label=\"IP\" class=\"mono\">" + esc(d.ip) + "</td>" +
+"<td data-col=\"mac\" data-label=\"MAC\" class=\"mono muted mobilehidden\">" + esc(d.mac) + "</td>" +
+"<td data-col=\"vendor\" data-label=\"Vendor\" class=\"mobilehidden\">" + esc(d.vendor||"—") + "</td>" +
+"<td data-col=\"hostname\" data-label=\"Hostname\" class=\"mobilehidden\" title=\"sources: " + esc((d.sources||[]).join(", ")||"none") + "\">" + esc(d.hostname||"—") + "</td>" +
+"<td data-col=\"lastseen\" data-label=\"Last seen\" title=\"" + esc(absTime(d.last_seen)) + "\">" + esc(relTime(d.last_seen)) + "</td>" +
+"<td data-col=\"firstseen\" data-label=\"First seen\" class=\"mobilehidden\" title=\"" + esc(absTime(d.first_seen)) + "\">" + esc(relTime(d.first_seen)) + "</td>" +
+"<td data-col=\"actions\" data-label=\"Actions\" class=\"mobilehidden\">" +
+"<button type=\"button\" class=\"iconbtn\" data-act=\"menu\" data-links=\"" + esc(links) + "\" aria-label=\"Actions for " + esc(d.display_name) + "\">⋮</button></td>" +
+"</tr>";
+}
+document.querySelectorAll("#devTable .th-btn").forEach(function(btn){
+btn.addEventListener("click", function(){
+var key = btn.dataset.key;
+if (state.sortKey === key) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+else { state.sortKey = key; state.sortDir = "asc"; }
+document.querySelectorAll("#devTable th").forEach(function(th){ th.setAttribute("aria-sort","none"); });
+btn.closest("th").setAttribute("aria-sort", state.sortDir === "asc" ? "ascending" : "descending");
+renderDevices();
+});
+});
+$("filterInput").addEventListener("input", function(e){ state.filter = e.target.value; renderDevices(); });
+$("hiddenToggle").addEventListener("change", function(e){ state.showHidden = e.target.checked; renderDevices(); });
+$("scanBtn").addEventListener("click", function(){
+api("POST","/api/scan").then(function(r){
+toast(r.scanning ? "Scan running" : "Scan requested", "ok"); loadStatus();
+}).catch(toastErr);
+});
+$("devBody").addEventListener("click", function(e){
+var actBtn = e.target.closest("button[data-act]");
+var row = e.target.closest("tr.devrow");
+if (!row) return;
+var mac = row.dataset.mac, d = state.devicesByMac[mac];
+if (!actBtn){
+if (window.innerWidth <= 720 && !e.target.closest("a,input")) row.classList.toggle("expanded");
+return;
+}
+var act = actBtn.dataset.act;
+if (act === "expand"){ row.classList.toggle("expanded"); return; }
+if (act === "edit"){ startEditName(row, d); return; }
+if (act === "type"){ openTypePopover(actBtn, d); return; }
+if (act === "menu"){ openRowMenu(actBtn, d); return; }
+});
+function startEditName(row, d){
+if (!d) return;
+state.editingMac = d.mac;
+var cell = row.querySelector("td[data-col=name] .namecell");
+var orig = cell.innerHTML;
+var input = document.createElement("input");
+input.type = "text"; input.maxLength = 31; input.className = "nameinput";
+input.value = d.nickname || "";
+input.placeholder = d.display_name;
+cell.innerHTML = ""; cell.appendChild(input);
+input.focus(); input.select();
+function finish(save){
+state.editingMac = null;
+if (!save){ cell.innerHTML = orig; return; }
+var val = input.value.trim();
+api("PATCH","/api/devices/"+d.mac, {nickname: val}).then(function(updated){
+state.devicesByMac[d.mac] = updated;
+var idx = state.devices.findIndex(function(x){ return x.mac === d.mac; });
+if (idx !== -1) state.devices[idx] = updated;
+renderDevices();
+toast("Name saved", "ok");
+}).catch(function(err){ toastErr(err); cell.innerHTML = orig; });
+}
+input.addEventListener("keydown", function(ev){
+if (ev.key === "Enter"){ ev.preventDefault(); finish(true); }
+else if (ev.key === "Escape"){ ev.preventDefault(); finish(false); }
+});
+input.addEventListener("blur", function(){ finish(true); });
+}
+var popoverCloser = null;
+function closePopover(){
+var p = $("popover");
+p.hidden = true; p.innerHTML = "";
+if (popoverCloser){ document.removeEventListener("click", popoverCloser, true); popoverCloser = null; }
+}
+function openPopover(anchor, html, onClick){
+closePopover();
+var p = $("popover");
+p.innerHTML = html; p.hidden = false;
+var r = anchor.getBoundingClientRect();
+var top = Math.min(r.bottom + 6, window.innerHeight - 60);
+var left = Math.min(r.left, window.innerWidth - 250);
+p.style.top = Math.max(8, top) + "px";
+p.style.left = Math.max(8, left) + "px";
+p.querySelectorAll("button[data-v]").forEach(function(b){
+b.addEventListener("click", function(){ onClick(b.dataset.v); closePopover(); });
+});
+setTimeout(function(){
+popoverCloser = function(ev){
+if (!p.contains(ev.target) && ev.target !== anchor) closePopover();
+};
+document.addEventListener("click", popoverCloser, true);
+}, 0);
+document.addEventListener("keydown", function esc1(ev){
+if (ev.key === "Escape"){ closePopover(); anchor.focus(); document.removeEventListener("keydown", esc1); }
+});
+}
+function openTypePopover(anchor, d){
+var cur = displayType(d);
+var html = "<button type=\"button\" data-v=\"__auto__\" class=\"" + (!d.type_override?"current":"") + "\">" +
+"⚙️ Auto (" + esc(TYPE_LABEL[d.type]||d.type) + ")</button><div class=\"sep\"></div>" +
+TYPES.map(function(t){
+return "<button type=\"button\" data-v=\"" + t + "\" class=\"" + (d.type_override===t?"current":"") + "\">" +
+TYPE_ICON[t] + " " + TYPE_LABEL[t] + "</button>";
+}).join("");
+openPopover(anchor, html, function(v){
+var override = v === "__auto__" ? null : v;
+api("PATCH","/api/devices/"+d.mac, {type_override: override}).then(function(updated){
+applyDeviceUpdate(updated); toast("Type updated", "ok");
+}).catch(toastErr);
+});
+}
+function openRowMenu(anchor, d){
+var links = anchor.dataset.links;
+var html = "<button type=\"button\" data-v=\"toggle\">" + (d.hidden?"👁️ Unhide":"🕈 Hide") + "</button>";
+if (links) html += "<button type=\"button\" data-v=\"open\">🔗 Open (" + links + ")</button>";
+html += "<div class=\"sep\"></div><button type=\"button\" data-v=\"delete\" class=\"danger\">🗑️ Delete…</button>";
+openPopover(anchor, html, function(v){
+if (v === "toggle"){
+api("PATCH","/api/devices/"+d.mac, {hidden: !d.hidden}).then(function(updated){
+applyDeviceUpdate(updated); toast(updated.hidden?"Hidden":"Unhidden", "ok");
+}).catch(toastErr);
+} else if (v === "open"){
+window.open(links + "://" + d.ip, "_blank", "noopener");
+} else if (v === "delete"){
+if (confirm("Delete " + d.display_name + "? It will reappear as new if seen again.")){
+api("DELETE","/api/devices/"+d.mac).then(function(){
+state.devices = state.devices.filter(function(x){ return x.mac !== d.mac; });
+delete state.devicesByMac[d.mac];
+renderDevices(); toast("Deleted", "ok");
+}).catch(toastErr);
+}
+}
+});
+}
+function applyDeviceUpdate(updated){
+state.devicesByMac[updated.mac] = updated;
+var idx = state.devices.findIndex(function(x){ return x.mac === updated.mac; });
+if (idx !== -1) state.devices[idx] = updated;
+renderDevices();
+}
+function loadEvents(){
+return api("GET","/api/events").then(function(list){
+state.events = list; markPollOk(); renderEvents();
+}).catch(function(e){ markPollFail(); });
+}
+function renderEvents(){
+var list = state.events;
+$("evEmpty").hidden = list.length !== 0;
+$("eventsList").innerHTML = list.map(function(ev){
+var d = ev.mac ? state.devicesByMac[ev.mac] : null;
+var who = d ? d.display_name : (ev.ip || (ev.mac || ""));
+return "<li><span class=\"ev-ico\" aria-hidden=\"true\">" + (EV_ICON[ev.type]||EV_ICON.info) + "</span>" +
+"<span class=\"ev-body\"><div class=\"ev-title\">" + esc(who ? who + " — " : "") + esc(ev.text||ev.type) + "</div>" +
+"<div class=\"ev-meta\">" + esc(ev.ip||"") + (ev.ip?" · ":"") + "<span title=\"" + esc(absTime(ev.ts)) + "\">" + esc(relTime(ev.ts)) + "</span></div></span></li>";
+}).join("");
+}
+function loadSettings(){
+return api("GET","/api/settings").then(function(s){
+$("setSsid").value = s.wifi_ssid || "";
+$("setWifiPass").placeholder = s.wifi_configured ? "Leave blank to keep current" : "No password set";
+$("setHostname").value = s.hostname || "";
+$("setApPass").value = s.ap_pass || "";
+$("setScanInterval").value = s.scan_interval_min;
+$("setHostsPerSec").value = s.hosts_per_sec;
+$("setPassive").checked = !!s.passive_only;
+$("setNtp").value = s.ntp_server || "";
+$("setTz").value = s.tz || "";
+}).catch(toastErr);
+}
+document.querySelectorAll(".presets [data-tz]").forEach(function(b){
+b.addEventListener("click", function(){ $("setTz").value = b.dataset.tz; });
+});
+$("settingsForm").addEventListener("submit", function(e){
+e.preventDefault();
+var body = {
+wifi_ssid: $("setSsid").value,
+wifi_pass: $("setWifiPass").value,
+hostname: $("setHostname").value,
+ap_pass: $("setApPass").value,
+scan_interval_min: Number($("setScanInterval").value),
+hosts_per_sec: Number($("setHostsPerSec").value),
+passive_only: $("setPassive").checked,
+ntp_server: $("setNtp").value,
+tz: $("setTz").value
+};
+api("PUT","/api/settings", body).then(function(res){
+$("setWifiPass").value = "";
+toast("Settings saved", "ok");
+if (res.reconnecting){
+toast("Wi-Fi settings changed — the dongle is reconnecting…");
+pollUntilBack();
+}
+}).catch(toastErr);
+});
+function pollUntilBack(){
+var tries = 0;
+var iv = setInterval(function(){
+tries++;
+api("GET","/api/status").then(function(s){
+clearInterval(iv); state.status = s; renderStatus(); renderTiles();
+toast("Reconnected", "ok");
+}).catch(function(){
+if (tries >= 20){ clearInterval(iv); toast("Still reconnecting — check the dongle", "err"); }
+});
+}, 3000);
+}
+$("wifiScanBtn").addEventListener("click", function(){
+var btn = $("wifiScanBtn");
+btn.disabled = true; btn.textContent = "Scanning…";
+api("POST","/api/wifi/scan").then(function(list){
+btn.disabled = false; btn.textContent = "Scan";
+openWifiModal(list);
+}).catch(function(err){ btn.disabled = false; btn.textContent = "Scan"; toastErr(err); });
+});
+function openWifiModal(list){
+var rows = list.map(function(n){
+var name = n.ssid || "(hidden network)";
+var locked = n.auth !== "open";
+return "<button type=\"button\" class=\"netrow\" data-ssid=\"" + esc(n.ssid) + "\">" +
+"<span class=\"ssidname\">" + esc(name) + "</span>" +
+(locked ? "<span class=\"lock\" aria-hidden=\"true\">🔒</span><span class=\"sr-only\">secured</span>" : "<span class=\"sr-only\">open</span>") +
+rssiBars(n.rssi) + "<span class=\"rssiv\">" + n.rssi + "</span></button>";
+}).join("");
+var html = "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Wi-Fi networks\">" +
+"<button type=\"button\" class=\"modalclose\" aria-label=\"Close\">✕</button>" +
+"<h3>Nearby networks</h3>" + (rows || "<p class=\"empty\">No networks found.</p>") + "</div>";
+openModal(html, function(root){
+root.querySelectorAll(".netrow").forEach(function(b){
+b.addEventListener("click", function(){
+$("setSsid").value = b.dataset.ssid; closeModal(); $("setWifiPass").focus();
+});
+});
+root.querySelector(".modalclose").addEventListener("click", closeModal);
+});
+}
+function openModal(innerHtml, wire){
+closeModal();
+var back = document.createElement("div");
+back.className = "modalback";
+back.innerHTML = innerHtml;
+back.addEventListener("click", function(e){ if (e.target === back) closeModal(); });
+document.addEventListener("keydown", modalEscHandler);
+$("modalRoot").appendChild(back);
+wire(back);
+var f = back.querySelector("button,input");
+if (f) f.focus();
+}
+function modalEscHandler(ev){ if (ev.key === "Escape") closeModal(); }
+function closeModal(){
+$("modalRoot").innerHTML = "";
+document.removeEventListener("keydown", modalEscHandler);
+}
+$("exportBtn").addEventListener("click", function(){ window.location.href = "/api/devices/export"; });
+$("importBtn").addEventListener("click", function(){ $("importFile").click(); });
+$("importFile").addEventListener("change", function(){
+var f = $("importFile").files[0];
+if (!f) return;
+var reader = new FileReader();
+reader.onload = function(){
+var parsed;
+try { parsed = JSON.parse(reader.result); } catch(e){ toast("Not valid JSON", "err"); return; }
+var n = (parsed.devices||[]).length;
+if (!confirm("Import " + n + " device" + (n===1?"":"s") + "? Matching nicknames and settings will be overwritten.")) return;
+api("POST","/api/devices/import", parsed).then(function(res){
+toast("Imported " + res.imported + ", skipped " + res.skipped, "ok");
+loadDevices();
+}).catch(toastErr);
+};
+reader.readAsText(f);
+$("importFile").value = "";
+});
+$("rebootBtn").addEventListener("click", function(){
+if (!confirm("Reboot the dongle now?")) return;
+api("POST","/api/system/reboot").then(function(){ toast("Rebooting…", "ok"); }).catch(toastErr);
+});
+$("factoryBtn").addEventListener("click", function(){
+var v = prompt("This erases all Wi-Fi credentials, settings and device nicknames.\nType \"factory-reset\" to confirm.");
+if (v === null) return;
+if (v !== "factory-reset"){ toast("Confirmation text did not match", "err"); return; }
+api("POST","/api/system/factory-reset", {confirm:"factory-reset"}).then(function(){
+toast("Factory reset — the dongle will restart into setup mode", "ok");
+}).catch(toastErr);
+});
+function tick(){
+if (document.hidden) return;
+loadStatus();
+if (state.tab === "devices") loadDevices();
+if (state.tab === "events") loadEvents();
+}
+setInterval(tick, 5000);
+var savedTab = "devices";
+try { savedTab = localStorage.getItem("netdash-tab") || "devices"; } catch(e){}
+if (TABS.indexOf(savedTab) === -1) savedTab = "devices";
+selectTab(savedTab, true);
+loadStatus();
+loadDevices();
+})();
+</script>
+</body>
+</html>

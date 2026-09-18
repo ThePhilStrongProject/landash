@@ -1,0 +1,146 @@
+menu "NetDash"
+
+    comment "Board / display wiring"
+
+    choice NETDASH_BOARD
+        prompt "Board pin variant"
+        default NETDASH_BOARD_GEEK_V2
+        help
+            Several hardware revisions of the Waveshare ESP32-C6-GEEK exist with
+            different LCD wiring. GEEK_V2 matches the pinout used by Waveshare's
+            own demos in ESP32-C6-GEEK-Demo.zip: ESP-IDF/06_lvgl_example_v9
+            (main/LCD_Driver/lcd_st7789.h lines 28-33) and Arduino/examples/
+            05_LCD_Button (DEV_Config.h lines 50-53, DEV_Config.cpp line 54).
+
+            Do not change the GEEK_V2 pin defaults below without confirming the
+            wiring against the board you actually have.
+
+        config NETDASH_BOARD_GEEK_V2
+            bool "Waveshare ESP32-C6-GEEK (V2 / IDF demo pinout)"
+
+        config NETDASH_BOARD_CUSTOM
+            bool "Custom pins"
+    endchoice
+
+    config NETDASH_PIN_LCD_SCLK
+        int "LCD SPI SCLK GPIO" if NETDASH_BOARD_CUSTOM
+        range 0 30
+        default 1
+
+    config NETDASH_PIN_LCD_MOSI
+        int "LCD SPI MOSI GPIO" if NETDASH_BOARD_CUSTOM
+        range 0 30
+        default 2
+
+    config NETDASH_PIN_LCD_DC
+        int "LCD DC GPIO" if NETDASH_BOARD_CUSTOM
+        range 0 30
+        default 3
+
+    config NETDASH_PIN_LCD_RST
+        int "LCD RST GPIO" if NETDASH_BOARD_CUSTOM
+        range -1 30
+        default 4
+        help
+            -1 if the panel reset line is not wired to a GPIO.
+
+    config NETDASH_PIN_LCD_CS
+        int "LCD CS GPIO" if NETDASH_BOARD_CUSTOM
+        range -1 30
+        default 5
+
+    config NETDASH_PIN_LCD_BL
+        int "LCD backlight GPIO" if NETDASH_BOARD_CUSTOM
+        range -1 30
+        default 6
+        help
+            Driven by LEDC for dimming. -1 disables backlight control.
+
+    config NETDASH_PIN_BUTTON
+        int "BOOT button GPIO" if NETDASH_BOARD_CUSTOM
+        range -1 30
+        default 9
+
+    config NETDASH_LCD_BL_ACTIVE_LOW
+        bool "Backlight is active low"
+        default n
+        help
+            Confirmed active HIGH on the GEEK: Waveshare's IDF demo drives the
+            pin to EXAMPLE_LCD_BL_ON_LEVEL (1) to light it, and the Arduino demo
+            uses analogWrite(DEV_BL_PIN, 140) for on and 0 for off.
+
+    config NETDASH_LCD_X_OFFSET
+        int "Panel column (x) offset"
+        range 0 320
+        default 40
+        help
+            Column offset of the visible 240x135 window inside the ST7789's
+            240x320 GRAM, expressed in LANDSCAPE coordinates (i.e. after the
+            MADCTL MV bit that display.c sets via swap_xy).
+
+            Waveshare's portrait demo uses x=52 / y=40 with swap_xy off; MV
+            transposes the controller's addressing, so the landscape values are
+            the same pair swapped: x=40 / y=52.
+
+    config NETDASH_LCD_Y_OFFSET
+        int "Panel row (y) offset"
+        range 0 320
+        default 52
+        help
+            See NETDASH_LCD_X_OFFSET. Landscape value; 52 = (240 - 135) / 2.
+
+    config NETDASH_LCD_INVERT_COLORS
+        bool "Invert panel colors"
+        default y
+        help
+            The GEEK's IPS panel needs inversion on. Waveshare's IDF demo calls
+            esp_lcd_panel_invert_color(panel, true) and the Arduino demo issues
+            command 0x21 (INVON).
+
+    config NETDASH_LCD_ROTATE_180
+        bool "Rotate the landscape image by 180 degrees"
+        default n
+        help
+            display.c drives the panel in landscape with MADCTL = MV | MX, which
+            is what Waveshare's Arduino driver writes (0x70 = MX | MV | ML).
+            Enable this if the text comes out upside down on your board: it
+            selects MADCTL = MV | MY instead.
+
+    config NETDASH_LCD_IDLE_DIM_SEC
+        int "Dim the backlight after this many idle seconds"
+        range 0 3600
+        default 300
+        help
+            0 disables dimming. Any button press restores full brightness.
+
+    comment "Scanning"
+
+    config NETDASH_SCAN_INTERVAL_MIN
+        int "Default sweep interval (minutes)"
+        range 1 1440
+        default 5
+        help
+            Factory default only; the running value comes from settings (NVS).
+
+    config NETDASH_SCAN_HOSTS_PER_SEC
+        int "Default probe rate (hosts per second)"
+        range 1 64
+        default 4
+        help
+            Factory default only. 4 hosts/s sweeps a /24 in about 64 s and is
+            gentle enough that consumer routers do not log it as a scan.
+
+    config NETDASH_MAX_DEVICES
+        int "Maximum tracked devices"
+        range 16 512
+        default 128
+
+    comment "Identity"
+
+    config NETDASH_HOSTNAME
+        string "Default hostname / mDNS name"
+        default "netdash"
+        help
+            Factory default only; the running value comes from settings (NVS).
+
+endmenu

@@ -1,0 +1,10 @@
+# NetDash partition table (16 MB flash)
+# ota_0 / ota_1 are 3 M each so a future web OTA has room; storage is reserved
+# for the full IEEE OUI table and event logs.
+# Name,     Type, SubType,  Offset,    Size,  Flags
+nvs,        data, nvs,      0x9000,    64K,
+otadata,    data, ota,      0x19000,   8K,
+phy_init,   data, phy,      0x1b000,   4K,
+ota_0,      app,  ota_0,    0x20000,   3M,
+ota_1,      app,  ota_1,    ,          3M,
+storage,    data, spiffs,   ,          1M,

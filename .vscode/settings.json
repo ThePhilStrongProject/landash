@@ -1,0 +1,16 @@
+{
+  "idf.currentSetup": "C:\\Users\\PhilStrong\\esp\\v5.5\\esp-idf",
+  "idf.openOcdConfigs": [
+    "board/esp32c6-builtin.cfg"
+  ],
+  "idf.portWin": "detect",
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32c6"
+  },
+  "clangd.path": "C:\\Users\\PhilStrong\\.espressif\\tools\\esp-clang\\esp-19.1.2_20250312\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=c:\\Users\\PhilStrong\\Documents\\GitHub\\esp32-c6-geek-home-network-dashboard\\build"
+  ]
+}
