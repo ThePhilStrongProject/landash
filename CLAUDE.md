@@ -87,6 +87,16 @@ main/
   db/classify.c/.h          vendor + services + hostname -> netdash_type_t, and
                             the type / service / event name strings the REST API
                             and the UI depend on.
+  db/links.c/.h             dashboard quick links, NVS namespace "links". A link
+                            stores a MAC and a port, never an IP, so it follows
+                            the device through a DHCP change; http_server
+                            resolves the address on every read.
+
+  net/portscan.c/.h         tiered background TCP connect scan. Each device
+                            advances through its own tiers in order (common ->
+                            1-1024 -> 1025-65535) with the global tier as a
+                            ceiling, and a never-scanned device jumps the queue.
+                            Results live in device_db, NVS namespace "ports".
 
   web/http_server.c/.h      esp_http_server: gzipped index.html + the REST API.
   web/www/index.html        the whole dashboard, gzipped at build time by CMake

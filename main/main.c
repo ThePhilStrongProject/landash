@@ -27,6 +27,7 @@
 #include "disc_ssdp.h"
 #include "display.h"
 #include "http_server.h"
+#include "links.h"
 #include "portscan.h"
 #include "scanner.h"
 #include "settings.h"
@@ -63,6 +64,7 @@ void app_main(void)
     ESP_ERROR_CHECK(button_init());
     ESP_ERROR_CHECK(wifi_mgr_init());
     ESP_ERROR_CHECK(device_db_init());
+    ESP_ERROR_CHECK(links_init());
     ESP_ERROR_CHECK(http_server_init());
     ESP_ERROR_CHECK(scanner_start());
 

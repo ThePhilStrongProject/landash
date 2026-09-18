@@ -33,8 +33,11 @@
 #include "display.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#include "esp_heap_caps.h"
 
 #include "driver/gpio.h"
 #include "driver/ledc.h"
@@ -216,6 +219,51 @@ static esp_err_t backlight_init(void)
 /* Panel bring-up                                                            */
 /* ------------------------------------------------------------------------- */
 
+/*
+ * Paints black over the drawn area and one row/column of margin around it.
+ *
+ * The ST7789 carries a 240x320 frame buffer while this panel only shows
+ * 240x135 of it, positioned by the configured gap. LVGL never writes the rows
+ * just outside that window, so whatever the controller powered up with stays
+ * there - which showed as a line of coloured noise along the bottom edge.
+ * Clearing the margin once at boot fixes it permanently, and it does so
+ * whether the exact gap is 52 or 53, which differ by one row between the two
+ * landscape rotations.
+ */
+static void lcd_blank_margins(void)
+{
+    const int x0 = CONFIG_NETDASH_LCD_X_OFFSET > 0 ? CONFIG_NETDASH_LCD_X_OFFSET - 1 : 0;
+    const int y0 = CONFIG_NETDASH_LCD_Y_OFFSET > 0 ? CONFIG_NETDASH_LCD_Y_OFFSET - 1 : 0;
+    const int w  = LCD_H_RES + 2;
+    const int h  = LCD_V_RES + 2;
+    const int strip_rows = 16;
+
+    uint16_t *strip = heap_caps_calloc((size_t)w * strip_rows, sizeof(uint16_t),
+                                       MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (strip == NULL) {
+        ESP_LOGW(TAG, "no DMA buffer for margin blanking, skipping");
+        return;
+    }
+    /* calloc gives 0x0000, which is black in RGB565 either byte order. */
+
+    /* Address the margin directly, so the window can start before the gap. */
+    if (esp_lcd_panel_set_gap(s_panel, x0, y0) != ESP_OK) {
+        free(strip);
+        return;
+    }
+
+    for (int y = 0; y < h; y += strip_rows) {
+        const int rows = (y + strip_rows > h) ? (h - y) : strip_rows;
+        if (esp_lcd_panel_draw_bitmap(s_panel, 0, y, w, y + rows, strip) != ESP_OK) {
+            break;
+        }
+    }
+
+    free(strip);
+    (void)esp_lcd_panel_set_gap(s_panel, CONFIG_NETDASH_LCD_X_OFFSET,
+                                CONFIG_NETDASH_LCD_Y_OFFSET);
+}
+
 static esp_err_t panel_init(void)
 {
     esp_err_t ret = ESP_OK;
@@ -257,6 +305,7 @@ static esp_err_t panel_init(void)
     ESP_GOTO_ON_ERROR(esp_lcd_panel_set_gap(s_panel, CONFIG_NETDASH_LCD_X_OFFSET,
                                             CONFIG_NETDASH_LCD_Y_OFFSET),
                       fail, TAG, "gap");
+    lcd_blank_margins();
     ESP_GOTO_ON_ERROR(esp_lcd_panel_disp_on_off(s_panel, true), fail, TAG, "disp on");
     return ESP_OK;
 

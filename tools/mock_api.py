@@ -186,6 +186,44 @@ STATUS_EXTRA = {"scanning": False, "scan_done": 0, "scan_total": 0, "last_sweep"
 PORTSCAN_CYCLE_STARTED = ago(4000)
 PORTSCAN_PROBES = 18342
 
+MAX_LINKS = 24
+SCHEME_BY_PORT = {443: "https", 8443: "https", 8006: "https", 9090: "https", 5001: "https"}
+
+
+def seed_links():
+    return [
+        {"id": 1, "mac": "dc:a6:32:88:02:dd", "port": 8123, "scheme": "http", "label": "Home Assistant"},
+        {"id": 2, "mac": "dc:a6:32:88:01:cc", "port": 9000, "scheme": "http", "label": "Portainer (OMV NAS)"},
+        {"id": 3, "mac": "bc:ae:c5:11:22:01", "port": 443, "scheme": "https", "label": "Router Admin"},
+    ]
+
+
+LINKS = seed_links()
+NEXT_LINK_ID = [4]  # mutable box so handlers can bump it without a global rebind
+
+
+def default_scheme(port):
+    return SCHEME_BY_PORT.get(port, "http")
+
+
+def link_json(link):
+    rec = DEVICES.get(link["mac"])
+    if rec:
+        return {
+            "id": link["id"], "mac": link["mac"], "port": link["port"],
+            "scheme": link["scheme"], "label": link["label"],
+            "ip": rec["ip"],
+            "url": "%s://%s:%d" % (link["scheme"], rec["ip"], link["port"]),
+            "display_name": display_name(rec), "type": effective_type(rec),
+            "online": rec["miss_count"] == 0,
+        }
+    return {
+        "id": link["id"], "mac": link["mac"], "port": link["port"],
+        "scheme": link["scheme"], "label": link["label"],
+        "ip": "0.0.0.0", "url": None, "display_name": None, "type": None, "online": False,
+    }
+
+
 WIFI_NETWORKS = [
     {"ssid": "MyHomeWiFi", "rssi": -48, "auth": "wpa2_psk", "channel": 6},
     {"ssid": "MyHomeWiFi-5G", "rssi": -55, "auth": "wpa2_wpa3_psk", "channel": 44},
@@ -337,6 +375,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._get_settings()
             if path == "/api/portscan":
                 return self._get_portscan()
+            if path == "/api/links":
+                return self._get_links()
         if path.startswith("/api/"):
             return self._error(404, "unknown endpoint")
         return self._send_html()
@@ -358,24 +398,32 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r"^/api/devices/([0-9a-f:]+)/portscan$", path)
             if m:
                 return self._rescan_device(m.group(1))
+            if path == "/api/links":
+                return self._post_link()
         return self._error(404, "unknown endpoint")
 
     def do_PATCH(self):
         parts = urlsplit(self.path)
         path = parts.path
         m = re.match(r"^/api/devices/([0-9a-f:]+)$", path)
+        m2 = re.match(r"^/api/links/(\d+)$", path)
         with LOCK:
             if m:
                 return self._patch_device(m.group(1))
+            if m2:
+                return self._patch_link(int(m2.group(1)))
         return self._error(404, "unknown endpoint")
 
     def do_DELETE(self):
         parts = urlsplit(self.path)
         path = parts.path
         m = re.match(r"^/api/devices/([0-9a-f:]+)$", path)
+        m2 = re.match(r"^/api/links/(\d+)$", path)
         with LOCK:
             if m:
                 return self._delete_device(m.group(1))
+            if m2:
+                return self._delete_link(int(m2.group(1)))
         return self._error(404, "unknown endpoint")
 
     def do_PUT(self):
@@ -384,6 +432,8 @@ class Handler(BaseHTTPRequestHandler):
         with LOCK:
             if path == "/api/settings":
                 return self._put_settings()
+            if path == "/api/links":
+                return self._put_links()
         return self._error(404, "unknown endpoint")
 
     # ---- handlers ----
@@ -635,6 +685,94 @@ class Handler(BaseHTTPRequestHandler):
         if reconnecting:
             out["reconnecting"] = True
         self._send_json(200, out)
+
+    def _get_links(self):
+        self._send_json(200, [link_json(l) for l in LINKS])
+
+    def _post_link(self):
+        body, err = self._read_json()
+        if err:
+            return self._error(400, err)
+        mac = body.get("mac")
+        if not isinstance(mac, str) or not MAC_RE.match(mac):
+            return self._error(400, "bad mac")
+        port = body.get("port")
+        if isinstance(port, bool) or not isinstance(port, (int, float)) or not (1 <= int(port) <= 65535):
+            return self._error(400, "bad port")
+        port = int(port)
+        scheme = body.get("scheme")
+        if scheme is not None:
+            if scheme not in ("http", "https"):
+                return self._error(400, "bad scheme")
+        else:
+            scheme = default_scheme(port)
+        if mac not in DEVICES:
+            return self._error(404, "device not found")
+        if len(LINKS) >= MAX_LINKS:
+            return self._error(409, "dashboard is full")
+        label = body.get("label")
+        if label is not None:
+            if not isinstance(label, str) or not label.strip():
+                return self._error(400, "bad label")
+            label = label.strip()[:31]  # NETDASH_LINK_LABEL-1: POST truncates silently
+        else:
+            label = display_name(DEVICES[mac])
+        link = {"id": NEXT_LINK_ID[0], "mac": mac, "port": port, "scheme": scheme, "label": label}
+        NEXT_LINK_ID[0] += 1
+        LINKS.append(link)
+        self._send_json(200, link_json(link))
+
+    def _patch_link(self, link_id):
+        link = next((l for l in LINKS if l["id"] == link_id), None)
+        if not link:
+            return self._error(404, "link not found")
+        body, err = self._read_json()
+        if err:
+            return self._error(400, err)
+        if "port" in body:
+            port = body["port"]
+            if isinstance(port, bool) or not isinstance(port, (int, float)) or not (1 <= int(port) <= 65535):
+                return self._error(400, "bad port")
+            link["port"] = int(port)
+        if "scheme" in body:
+            scheme = body["scheme"]
+            if scheme not in ("http", "https"):
+                return self._error(400, "bad scheme")
+            link["scheme"] = scheme
+        if "label" in body:
+            label = body["label"]
+            if not isinstance(label, str) or not label.strip():
+                return self._error(400, "bad label")
+            if len(label) >= 32:  # NETDASH_LINK_LABEL: PATCH rejects, unlike POST
+                return self._error(400, "label too long")
+            link["label"] = label.strip()
+        self._send_json(200, link_json(link))
+
+    def _delete_link(self, link_id):
+        idx = next((i for i, l in enumerate(LINKS) if l["id"] == link_id), None)
+        if idx is None:
+            return self._error(404, "link not found")
+        LINKS.pop(idx)
+        self._send_json(200, {"ok": True})
+
+    def _put_links(self):
+        global LINKS
+        body, err = self._read_json()
+        if err:
+            return self._error(400, err)
+        if not isinstance(body, list):
+            return self._error(400, "expected an array")
+        by_id = {l["id"]: l for l in LINKS}
+        seen = set()
+        new_order = []
+        for item in body:
+            link_id = item["id"] if isinstance(item, dict) and "id" in item else item
+            if not isinstance(link_id, int) or link_id not in by_id or link_id in seen:
+                return self._error(400, "unknown link id")
+            seen.add(link_id)
+            new_order.append(by_id[link_id])
+        LINKS = new_order
+        self._send_json(200, [link_json(l) for l in LINKS])
 
     def _factory_reset(self):
         body, err = self._read_json()

@@ -35,6 +35,7 @@
 #include "app_events.h"
 #include "classify.h"
 #include "device_db.h"
+#include "links.h"
 #include "portscan.h"
 #include "scanner.h"
 #include "settings.h"
@@ -820,6 +821,7 @@ static esp_err_t portscan_status_handler(httpd_req_t *req)
     cJSON_AddBoolToObject(o, "enabled", st.enabled);
     cJSON_AddBoolToObject(o, "running", st.running);
     cJSON_AddNumberToObject(o, "tier", st.tier);
+    cJSON_AddNumberToObject(o, "ceiling", st.ceiling);
     cJSON_AddNumberToObject(o, "max_tier", st.max_tier);
     cJSON_AddNumberToObject(o, "rate", st.rate);
     cJSON_AddNumberToObject(o, "device_index", st.device_index);
@@ -1335,6 +1337,308 @@ static esp_err_t factory_reset_handler(httpd_req_t *req)
  * not one of the wildcard's registered methods, so there is no actual
  * ambiguity there.
  */
+/* ------------------------------------------------------------------------- */
+/* Dashboard quick links                                                     */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Builds one link object, resolving the address from the device table on every
+ * call. That resolution is the whole point: a link is stored against a MAC, so
+ * it keeps working when DHCP hands the device a different address.
+ */
+static cJSON *link_to_json(const netdash_link_t *l)
+{
+    cJSON *o = cJSON_CreateObject();
+    char   mac_str[18];
+    mac_to_str(l->mac, mac_str);
+
+    cJSON_AddNumberToObject(o, "id", l->id);
+    cJSON_AddStringToObject(o, "mac", mac_str);
+    cJSON_AddNumberToObject(o, "port", l->port);
+    cJSON_AddStringToObject(o, "scheme", netdash_scheme_name((netdash_scheme_t)l->scheme));
+
+    netdash_device_t dev;
+    const bool       known = device_db_get_by_mac(l->mac, &dev);
+
+    char name[32];
+    name[0] = 0;
+    if (known) {
+        device_db_display_name(&dev, name, sizeof(name));
+    }
+
+    const netdash_type_t type = known
+        ? (netdash_type_t)(dev.type_override != 0 ? dev.type_override : dev.type)
+        : NETDASH_TYPE_UNKNOWN;
+
+    cJSON_AddStringToObject(o, "label", l->label[0] != 0 ? l->label : name);
+    cJSON_AddStringToObject(o, "display_name", name);
+    cJSON_AddStringToObject(o, "type", netdash_type_name(type));
+    cJSON_AddBoolToObject(o, "online", known && netdash_device_online(&dev));
+
+    char ip_str[16];
+    strcpy(ip_str, "0.0.0.0");
+    if (known && dev.ip != 0) {
+        host_ip_to_str(dev.ip, ip_str, sizeof(ip_str));
+    }
+    cJSON_AddStringToObject(o, "ip", ip_str);
+
+    if (known && dev.ip != 0) {
+        char url[48];
+        snprintf(url, sizeof(url), "%s://%s:%u",
+                 netdash_scheme_name((netdash_scheme_t)l->scheme), ip_str,
+                 (unsigned)l->port);
+        cJSON_AddStringToObject(o, "url", url);
+    } else {
+        cJSON_AddNullToObject(o, "url");
+    }
+    return o;
+}
+
+static cJSON *links_array(void)
+{
+    cJSON       *arr = cJSON_CreateArray();
+    const size_t n   = links_count();
+
+    for (size_t i = 0; i < n; i++) {
+        netdash_link_t l;
+        if (links_get_at(i, &l)) {
+            cJSON_AddItemToArray(arr, link_to_json(&l));
+        }
+    }
+    return arr;
+}
+
+static esp_err_t links_get_handler(httpd_req_t *req)
+{
+    return send_json(req, "200 OK", links_array());
+}
+
+/* Accepts "http" or "https". Returns -1 for anything else. */
+static int parse_scheme(const char *s)
+{
+    if (s == NULL) {
+        return -1;
+    }
+    if (strcmp(s, "http") == 0) {
+        return (int)NETDASH_SCHEME_HTTP;
+    }
+    if (strcmp(s, "https") == 0) {
+        return (int)NETDASH_SCHEME_HTTPS;
+    }
+    return -1;
+}
+
+static esp_err_t links_post_handler(httpd_req_t *req)
+{
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (json == NULL) {
+        return send_json_error(req, "400 Bad Request", "invalid json");
+    }
+
+    const cJSON *j_mac = cJSON_GetObjectItemCaseSensitive(json, "mac");
+    uint8_t      mac[6];
+    if (!cJSON_IsString(j_mac) || !parse_mac(j_mac->valuestring, mac)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "bad mac");
+    }
+
+    const cJSON *j_port = cJSON_GetObjectItemCaseSensitive(json, "port");
+    if (!cJSON_IsNumber(j_port) || j_port->valueint < 1 || j_port->valueint > 65535) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "port must be 1-65535");
+    }
+    const uint16_t port = (uint16_t)j_port->valueint;
+
+    int          scheme   = (int)links_default_scheme(port);
+    const cJSON *j_scheme = cJSON_GetObjectItemCaseSensitive(json, "scheme");
+    if (j_scheme != NULL) {
+        scheme = cJSON_IsString(j_scheme) ? parse_scheme(j_scheme->valuestring) : -1;
+        if (scheme < 0) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "scheme must be http or https");
+        }
+    }
+
+    netdash_device_t dev;
+    if (!device_db_get_by_mac(mac, &dev)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "404 Not Found", "device not found");
+    }
+
+    /* Default the label to whatever the device is currently called. */
+    char         label[NETDASH_LINK_LABEL];
+    const cJSON *j_label = cJSON_GetObjectItemCaseSensitive(json, "label");
+    label[0] = 0;
+    if (cJSON_IsString(j_label) && j_label->valuestring[0] != 0) {
+        /* Reject rather than truncate, to match PATCH. Silently storing a
+           shortened label would leave the UI showing something the caller
+           never asked for. */
+        if (strlen(j_label->valuestring) >= NETDASH_LINK_LABEL) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "label too long");
+        }
+        strncpy(label, j_label->valuestring, sizeof(label) - 1);
+        label[sizeof(label) - 1] = 0;
+    } else {
+        device_db_display_name(&dev, label, sizeof(label));
+    }
+    cJSON_Delete(json);
+
+    uint16_t        id  = 0;
+    const esp_err_t err = links_add(mac, port, (netdash_scheme_t)scheme, label, &id);
+    if (err == ESP_ERR_NO_MEM) {
+        return send_json_error(req, "409 Conflict", "dashboard is full");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "could not add link");
+    }
+
+    netdash_link_t created;
+    if (!links_get_by_id(id, &created)) {
+        return send_json_error(req, "500 Internal Server Error", "link vanished");
+    }
+    return send_json(req, "200 OK", link_to_json(&created));
+}
+
+/* PUT /api/links - set the order, dropping anything not listed. */
+static esp_err_t links_put_handler(httpd_req_t *req)
+{
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (json == NULL || !cJSON_IsArray(json)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "expected an array");
+    }
+
+    uint16_t ids[NETDASH_MAX_LINKS];
+    size_t   n = 0;
+
+    const cJSON *item = NULL;
+    cJSON_ArrayForEach(item, json) {
+        if (n >= NETDASH_MAX_LINKS) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "too many links");
+        }
+        const cJSON *j_id = cJSON_IsObject(item)
+                                ? cJSON_GetObjectItemCaseSensitive(item, "id")
+                                : item;
+        if (!cJSON_IsNumber(j_id) || j_id->valueint < 0 || j_id->valueint > 65534) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "bad id");
+        }
+        ids[n++] = (uint16_t)j_id->valueint;
+    }
+    cJSON_Delete(json);
+
+    if (links_reorder(ids, n) != ESP_OK) {
+        return send_json_error(req, "400 Bad Request", "unknown or duplicate id");
+    }
+    return send_json(req, "200 OK", links_array());
+}
+
+/* Pulls the numeric id out of /api/links/{id}. UINT16_MAX when malformed. */
+static uint16_t link_id_from_uri(const char *uri)
+{
+    char tail[24];
+    if (!extract_tail(uri, "/api/links/", tail, sizeof(tail))) {
+        return UINT16_MAX;
+    }
+    char      *end = NULL;
+    const long v   = strtol(tail, &end, 10);
+    if (end == tail || end == NULL || *end != 0 || v < 0 || v > 65534) {
+        return UINT16_MAX;
+    }
+    return (uint16_t)v;
+}
+
+static esp_err_t links_patch_handler(httpd_req_t *req)
+{
+    const uint16_t id = link_id_from_uri(req->uri);
+    if (id == UINT16_MAX) {
+        return send_json_error(req, "400 Bad Request", "bad id");
+    }
+
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (json == NULL) {
+        return send_json_error(req, "400 Bad Request", "invalid json");
+    }
+
+    const char  *label = NULL;
+    const cJSON *j     = cJSON_GetObjectItemCaseSensitive(json, "label");
+    if (j != NULL) {
+        if (!cJSON_IsString(j) || strlen(j->valuestring) >= NETDASH_LINK_LABEL) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "label too long");
+        }
+        label = j->valuestring;
+    }
+
+    uint16_t port = UINT16_MAX;
+    j             = cJSON_GetObjectItemCaseSensitive(json, "port");
+    if (j != NULL) {
+        if (!cJSON_IsNumber(j) || j->valueint < 1 || j->valueint > 65535) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "port must be 1-65535");
+        }
+        port = (uint16_t)j->valueint;
+    }
+
+    int scheme = -1;
+    j          = cJSON_GetObjectItemCaseSensitive(json, "scheme");
+    if (j != NULL) {
+        scheme = cJSON_IsString(j) ? parse_scheme(j->valuestring) : -1;
+        if (scheme < 0) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "scheme must be http or https");
+        }
+    }
+
+    const esp_err_t err = links_update(id, label, port, scheme);
+    cJSON_Delete(json);
+
+    if (err == ESP_ERR_NOT_FOUND) {
+        return send_json_error(req, "404 Not Found", "link not found");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "could not update link");
+    }
+
+    netdash_link_t updated;
+    if (!links_get_by_id(id, &updated)) {
+        return send_json_error(req, "404 Not Found", "link not found");
+    }
+    return send_json(req, "200 OK", link_to_json(&updated));
+}
+
+static esp_err_t links_delete_handler(httpd_req_t *req)
+{
+    const uint16_t id = link_id_from_uri(req->uri);
+    if (id == UINT16_MAX) {
+        return send_json_error(req, "400 Bad Request", "bad id");
+    }
+    if (links_remove(id) != ESP_OK) {
+        return send_json_error(req, "404 Not Found", "link not found");
+    }
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    return send_json(req, "200 OK", o);
+}
+
 static const httpd_uri_t s_uri_handlers[] = {
     {.uri = "/api/status",               .method = HTTP_GET,    .handler = status_handler},
     {.uri = "/api/devices",              .method = HTTP_GET,    .handler = devices_list_handler},
@@ -1342,6 +1646,11 @@ static const httpd_uri_t s_uri_handlers[] = {
     {.uri = "/api/devices/import",       .method = HTTP_POST,   .handler = devices_import_handler},
     {.uri = "/api/devices/*/portscan",   .method = HTTP_POST,   .handler = devices_portscan_handler},
     {.uri = "/api/portscan",             .method = HTTP_GET,    .handler = portscan_status_handler},
+    {.uri = "/api/links",                .method = HTTP_GET,    .handler = links_get_handler},
+    {.uri = "/api/links",                .method = HTTP_POST,   .handler = links_post_handler},
+    {.uri = "/api/links",                .method = HTTP_PUT,    .handler = links_put_handler},
+    {.uri = "/api/links/*",              .method = HTTP_PATCH,  .handler = links_patch_handler},
+    {.uri = "/api/links/*",              .method = HTTP_DELETE, .handler = links_delete_handler},
     {.uri = "/api/devices/*",            .method = HTTP_GET,    .handler = devices_get_handler},
     {.uri = "/api/devices/*",            .method = HTTP_PATCH,  .handler = devices_patch_handler},
     {.uri = "/api/devices/*",            .method = HTTP_DELETE, .handler = devices_delete_handler},

@@ -93,6 +93,17 @@ font-size:.82rem;display:inline-flex;align-items:center;gap:5px}
 color:var(--text);width:100%;max-width:180px}
 .expandbtn{display:none;background:none;border:none;color:var(--muted);margin-left:auto;padding:2px 6px}
 .empty{color:var(--muted);padding:20px;text-align:center}
+#devTable.colhide-type [data-col="type"],
+#devTable.colhide-ip [data-col="ip"],
+#devTable.colhide-mac [data-col="mac"],
+#devTable.colhide-vendor [data-col="vendor"],
+#devTable.colhide-hostname [data-col="hostname"],
+#devTable.colhide-ports [data-col="ports"],
+#devTable.colhide-lastseen [data-col="lastseen"],
+#devTable.colhide-firstseen [data-col="firstseen"]{display:none!important}
+.colpop label{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:7px;font-size:.85rem;cursor:pointer}
+.colpop label:hover{background:rgba(var(--accent-rgb),.14)}
+.colpop input{flex:none}
 @media (max-width:480px){.tiles{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:720px){
 #devTable thead{display:none}
@@ -196,6 +207,37 @@ animation:pulse 1.4s ease-in-out infinite;margin-left:5px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 .field select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;
 padding:8px 10px;color:var(--text)}
+.portchipwrap{display:inline-flex;align-items:center;gap:2px}
+.portaddbtn{padding:2px 6px;font-size:.85rem;font-weight:700}
+.linkgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:4px}
+.linkcard-wrap{position:relative}
+.linkcard{position:relative;display:flex;flex-direction:column;gap:10px;background:var(--surface);
+border:1px solid var(--border);border-radius:14px;padding:16px;text-decoration:none;color:var(--text);
+min-height:96px;transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease}
+a.linkcard{cursor:pointer}
+a.linkcard:hover{transform:translateY(-3px);border-color:var(--accent-2);box-shadow:0 10px 26px rgba(0,0,0,.35)}
+a.linkcard:focus-visible{outline:2px solid var(--accent-2);outline-offset:3px}
+.linkcard.offline{opacity:.68}
+.linkcard.unknown{opacity:.5}
+.lc-top{display:flex;align-items:center;gap:10px;min-width:0}
+.lc-icon{font-size:1.4rem;flex:none}
+.lc-label{font-weight:700;font-size:1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+min-width:0;flex:1}
+.lc-host{font-family:ui-monospace,Consolas,"SF Mono",Menlo,monospace;font-size:.78rem;color:var(--muted);
+overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lc-status{display:flex;align-items:center;gap:6px;font-size:.72rem;color:var(--muted);margin-top:auto}
+.lc-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.lc-dot.on{background:var(--online)}
+.linkedit{position:absolute;top:8px;right:8px;display:flex;gap:3px}
+.linkedit button{background:rgba(5,8,15,.7);border:1px solid var(--border);border-radius:6px;color:var(--text);
+padding:3px 6px;font-size:.72rem;line-height:1}
+.linkedit button:hover{border-color:var(--accent-2)}
+.linkedit button:disabled{opacity:.35;cursor:default}
+.devpicker{max-height:180px;overflow:auto;margin-top:6px;border-radius:9px}
+.emptybox{color:var(--muted);padding:40px 20px;text-align:center}
+.emptybox .ico{font-size:2rem;margin-bottom:10px}
+.emptybox .lead{font-weight:600;color:var(--text);margin-bottom:4px}
+.emptybox .sub{max-width:380px;margin:0 auto}
 </style>
 </head>
 <body>
@@ -212,17 +254,32 @@ padding:8px 10px;color:var(--text)}
 </header>
 <div id="portscanBar" class="scanpill" role="status" hidden><span id="portscanText"></span></div>
 <nav class="tabs" role="tablist" aria-label="Sections">
-<button role="tab" type="button" id="tab-devices" class="tabbtn" aria-selected="true" aria-controls="panel-devices">Devices</button>
+<button role="tab" type="button" id="tab-dashboard" class="tabbtn" aria-selected="true" aria-controls="panel-dashboard">Dashboard</button>
+<button role="tab" type="button" id="tab-devices" class="tabbtn" aria-selected="false" aria-controls="panel-devices">Devices</button>
 <button role="tab" type="button" id="tab-events" class="tabbtn" aria-selected="false" aria-controls="panel-events">Events</button>
 <button role="tab" type="button" id="tab-settings" class="tabbtn" aria-selected="false" aria-controls="panel-settings">Settings</button>
 <button role="tab" type="button" id="tab-system" class="tabbtn" aria-selected="false" aria-controls="panel-system">System</button>
 </nav>
 <main id="app">
-<section id="panel-devices" role="tabpanel" aria-labelledby="tab-devices">
+<section id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard">
+<div class="toolbar">
+<button type="button" class="btn btn-accent" id="linkAddBtn">+ Add link</button>
+<button type="button" class="btn" id="linkEditBtn" hidden aria-pressed="false">Edit</button>
+</div>
+<div class="linkgrid" id="linkGrid"></div>
+<div class="emptybox" id="linkEmpty" hidden>
+<div class="ico" aria-hidden="true">🔗</div>
+<div class="lead">No dashboard links yet</div>
+<div class="sub">Pin the services you use most &mdash; Home Assistant, your NAS, a router UI &mdash; so they're one click away. Links follow the device by MAC, so they keep working even if its IP changes.</div>
+<button type="button" class="btn btn-accent" id="linkEmptyAddBtn" style="margin-top:16px">+ Add link</button>
+</div>
+</section>
+<section id="panel-devices" role="tabpanel" aria-labelledby="tab-devices" hidden>
 <div class="tiles" id="tiles"></div>
 <div class="toolbar">
 <input type="search" id="filterInput" placeholder="Filter by name, IP, MAC, vendor, hostname" aria-label="Filter devices">
 <label class="switch"><input type="checkbox" id="hiddenToggle"> Show hidden</label>
+<button type="button" class="btn" id="columnsBtn" aria-haspopup="true">Columns</button>
 <button type="button" class="btn btn-accent" id="scanBtn">Scan now</button>
 </div>
 <div class="tablewrap">
@@ -352,21 +409,40 @@ cast:"Cast",airplay:"AirPlay",printer:"Printer",ssdp:"SSDP",workstation:"Worksta
 var CLICKABLE_PORT_SVC = {http:1,https:1,"http-alt":1,"https-alt":1};
 var PORTSCAN_TIER_LABEL = {0:"Not scanned yet",1:"Common ports",2:"Ports 1–1024",3:"All 65535 ports"};
 var PORTSCAN_TIER_WORD = {1:"common ports",2:"ports 1-1024",3:"all 65535 ports"};
+var TOGGLE_COLS = ["type","ip","mac","vendor","hostname","ports","lastseen","firstseen"];
+var DEFAULT_HIDDEN_COLS = ["mac","vendor","firstseen"];
+var COL_LABEL = {type:"Type",ip:"IP",mac:"MAC",vendor:"Vendor",hostname:"Hostname",
+ports:"Open ports",lastseen:"Last seen",firstseen:"First seen"};
 var state = {
-tab: "devices",
+tab: "dashboard",
 devices: [],
 devicesByMac: {},
 events: [],
 status: {},
 portscan: null,
+links: [],
+linksEditMode: false,
 sortKey: "name",
 sortDir: "asc",
 filter: "",
 showHidden: false,
+hiddenCols: loadHiddenCols(),
 editingMac: null,
 statusFailStreak: 0,
 detail: { mac: null, data: null, loading: false, error: null, editingName: false, opener: null }
 };
+function loadHiddenCols(){
+try {
+var raw = localStorage.getItem("netdash-hidden-cols");
+if (raw == null) return DEFAULT_HIDDEN_COLS.slice();
+var arr = JSON.parse(raw);
+if (!Array.isArray(arr)) return DEFAULT_HIDDEN_COLS.slice();
+return arr.filter(function(c){ return TOGGLE_COLS.indexOf(c) !== -1; });
+} catch(e){ return DEFAULT_HIDDEN_COLS.slice(); }
+}
+function saveHiddenCols(){
+try { localStorage.setItem("netdash-hidden-cols", JSON.stringify(state.hiddenCols)); } catch(e){}
+}
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){
 return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
@@ -432,7 +508,7 @@ var h = "";
 for (var i=1;i<=4;i++) h += "<i class=\"" + (i<=n?"on":"") + "\"></i>";
 return "<span class=\"rssi\" aria-hidden=\"true\">" + h + "</span>";
 }
-var TABS = ["devices","events","settings","system"];
+var TABS = ["dashboard","devices","events","settings","system"];
 function selectTab(tab, skipSave){
 state.tab = tab;
 TABS.forEach(function(t){
@@ -442,6 +518,7 @@ btn.setAttribute("aria-selected", on ? "true" : "false");
 panel.hidden = !on;
 });
 if (!skipSave){ try { localStorage.setItem("netdash-tab", tab); } catch(e){} }
+if (tab === "dashboard") loadLinks();
 if (tab === "devices") loadDevices();
 if (tab === "events") loadEvents();
 if (tab === "settings") loadSettings();
@@ -609,6 +686,61 @@ api("POST","/api/scan").then(function(r){
 toast(r.scanning ? "Scan running" : "Scan requested", "ok"); loadStatus();
 }).catch(toastErr);
 });
+function applyColumnVisibility(){
+var table = $("devTable");
+TOGGLE_COLS.forEach(function(c){
+table.classList.toggle("colhide-"+c, state.hiddenCols.indexOf(c) !== -1);
+});
+}
+function toggleColumn(col, visible){
+var idx = state.hiddenCols.indexOf(col);
+if (visible && idx !== -1) state.hiddenCols.splice(idx,1);
+if (!visible && idx === -1) state.hiddenCols.push(col);
+saveHiddenCols();
+applyColumnVisibility();
+if (!visible){
+var th = document.querySelector('th[data-col="'+col+'"] .th-btn');
+var key = th && th.dataset.key;
+if (key && state.sortKey === key){
+state.sortKey = "name"; state.sortDir = "asc";
+document.querySelectorAll("#devTable th").forEach(function(t){ t.setAttribute("aria-sort","none"); });
+var nameTh = document.querySelector('th[data-col="name"]');
+if (nameTh) nameTh.setAttribute("aria-sort","ascending");
+renderDevices();
+}
+}
+}
+function openColumnsPopover(anchor){
+closePopover();
+var p = $("popover");
+p.className = "popover colpop";
+p.innerHTML = TOGGLE_COLS.map(function(c){
+var checked = state.hiddenCols.indexOf(c) === -1;
+var id = "colchk-"+c;
+return "<label for=\""+id+"\"><input type=\"checkbox\" id=\""+id+"\" data-col=\""+c+"\"" +
+(checked?" checked":"") + "> " + esc(COL_LABEL[c]) + "</label>";
+}).join("");
+p.hidden = false;
+var r = anchor.getBoundingClientRect();
+var top = Math.min(r.bottom + 6, window.innerHeight - 60);
+var left = Math.min(r.left, window.innerWidth - 210);
+p.style.top = Math.max(8, top) + "px";
+p.style.left = Math.max(8, left) + "px";
+p.querySelectorAll("input[data-col]").forEach(function(chk){
+chk.addEventListener("change", function(){ toggleColumn(chk.dataset.col, chk.checked); });
+});
+setTimeout(function(){
+popoverCloser = function(ev){
+if (!p.contains(ev.target) && ev.target !== anchor) closePopover();
+};
+document.addEventListener("click", popoverCloser, true);
+}, 0);
+document.addEventListener("keydown", function esc1(ev){
+if (ev.key === "Escape"){ closePopover(); anchor.focus(); document.removeEventListener("keydown", esc1); }
+});
+}
+$("columnsBtn").addEventListener("click", function(){ openColumnsPopover($("columnsBtn")); });
+applyColumnVisibility();
 $("devBody").addEventListener("click", function(e){
 var actBtn = e.target.closest("button[data-act]");
 var row = e.target.closest("tr.devrow");
@@ -664,7 +796,7 @@ input.addEventListener("blur", function(){ finish(true); });
 var popoverCloser = null;
 function closePopover(){
 var p = $("popover");
-p.hidden = true; p.innerHTML = "";
+p.hidden = true; p.innerHTML = ""; p.className = "popover";
 if (popoverCloser){ document.removeEventListener("click", popoverCloser, true); popoverCloser = null; }
 }
 function openPopover(anchor, html, onClick){
@@ -750,7 +882,7 @@ var WEB_PORT_SCHEME = {
 8200:"http", 8686:"http", 8880:"http", 8888:"http", 9000:"http", 9091:"http",
 32400:"http"
 };
-function portChipHtml(ip, p){
+function portChipHtml(ip, p, mac){
 var svc = p.service;
 var label = svc ? esc(svc) : "";
 var inner = "<span class=\"mono\">" + esc(p.port) + "</span>" + (label ? (" " + label) : "");
@@ -758,11 +890,17 @@ var scheme = WEB_PORT_SCHEME[p.port] || null;
 if (!scheme && svc && CLICKABLE_PORT_SVC[svc]){
 scheme = svc.indexOf("https") === 0 ? "https" : "http";
 }
+var chip;
 if (scheme){
-return "<a class=\"portchip link\" target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
+chip = "<a class=\"portchip link\" target=\"_blank\" rel=\"noopener noreferrer\" href=\"" +
 scheme + "://" + esc(ip) + ":" + esc(p.port) + "\">" + inner + "</a>";
+} else {
+chip = "<span class=\"portchip\">" + inner + "</span>";
 }
-return "<span class=\"portchip\">" + inner + "</span>";
+var addBtn = "<button type=\"button\" class=\"iconbtn portaddbtn\" data-add-port=\"" + esc(p.port) +
+"\" data-mac=\"" + esc(mac) + "\" aria-label=\"Add port " + esc(p.port) +
+" to Dashboard\" title=\"Add to Dashboard\">+</button>";
+return "<span class=\"portchipwrap\">" + chip + addBtn + "</span>";
 }
 function detailHtml(d){
 var type = displayType(d);
@@ -775,7 +913,7 @@ var rtt = d.rtt_ms === -1 ? "no ICMP reply" : (d.rtt_ms + " ms");
 var ports = d.open_ports || [];
 var portsHtml;
 if (ports.length){
-portsHtml = "<div class=\"chiprow\">" + ports.map(function(p){ return portChipHtml(d.ip, p); }).join("") + "</div>";
+portsHtml = "<div class=\"chiprow\">" + ports.map(function(p){ return portChipHtml(d.ip, p, d.mac); }).join("") + "</div>";
 } else if ((d.portscan_tier||0) === 0){
 portsHtml = "<p class=\"muted\" style=\"margin:6px 0\">Not scanned yet.</p>";
 } else {
@@ -852,6 +990,17 @@ renderDevices();
 toast("Deleted", "ok");
 closeDetail();
 }).catch(toastErr);
+});
+var detailBody = $("detailBody");
+if (detailBody) detailBody.querySelectorAll("[data-add-port]").forEach(function(btn){
+btn.addEventListener("click", function(){
+var port = Number(btn.dataset.addPort);
+btn.disabled = true;
+api("POST","/api/links", {mac: btn.dataset.mac, port: port}).then(function(){
+toast("Added to Dashboard", "ok");
+if (state.tab === "dashboard") loadLinks();
+}).catch(function(err){ toastErr(err); btn.disabled = false; });
+});
 });
 }
 function doRescan(d){
@@ -970,6 +1119,202 @@ renderDetailBody();
 $("detailCloseBtn").focus();
 fetchDetail();
 }
+function loadLinks(){
+return api("GET","/api/links").then(function(list){
+state.links = list; markPollOk(); renderDashboard();
+}).catch(function(e){ markPollFail(); });
+}
+function linkCardHtml(l, i, total){
+var known = l.url != null;
+var editing = state.linksEditMode;
+var cls = "linkcard" + (!known ? " unknown" : (!l.online ? " offline" : ""));
+var host = known ? (esc(l.ip) + ":" + esc(l.port)) : "device not on the network";
+var statusText = !known ? "Unknown device" : (l.online ? "Online" : "Offline");
+var icon = TYPE_ICON[l.type] || "🔗";
+var topStyle = editing ? " style=\"padding-right:90px\"" : "";
+var body = "<div class=\"lc-top\"" + topStyle + "><span class=\"lc-icon\" aria-hidden=\"true\">" + icon + "</span>" +
+"<span class=\"lc-label\">" + esc(l.label) + "</span></div>" +
+"<div class=\"lc-host mono\">" + host + "</div>" +
+"<div class=\"lc-status\"><span class=\"lc-dot" + (l.online?" on":"") + "\"></span>" + statusText + "</div>";
+var cardTag;
+if (known && !editing){
+cardTag = "<a class=\"" + cls + "\" data-id=\"" + l.id + "\" href=\"" + esc(l.url) +
+"\" target=\"_blank\" rel=\"noopener noreferrer\">" + body + "</a>";
+} else if (!known){
+cardTag = "<div class=\"" + cls + "\" data-id=\"" + l.id + "\" tabindex=\"0\" role=\"link\" aria-disabled=\"true\" " +
+"title=\"This device is not currently on the network\">" + body + "</div>";
+} else {
+cardTag = "<div class=\"" + cls + "\" data-id=\"" + l.id + "\">" + body + "</div>";
+}
+var editControls = "";
+if (editing){
+editControls = "<div class=\"linkedit\">" +
+"<button type=\"button\" data-linkact=\"rename\" data-id=\"" + l.id + "\" aria-label=\"Rename " + esc(l.label) + "\">✎</button>" +
+"<button type=\"button\" data-linkact=\"up\" data-id=\"" + l.id + "\"" + (i===0?" disabled":"") + " aria-label=\"Move up\">↑</button>" +
+"<button type=\"button\" data-linkact=\"down\" data-id=\"" + l.id + "\"" + (i===total-1?" disabled":"") + " aria-label=\"Move down\">↓</button>" +
+"<button type=\"button\" data-linkact=\"remove\" data-id=\"" + l.id + "\" aria-label=\"Remove " + esc(l.label) + "\">🗑️</button>" +
+"</div>";
+}
+return "<div class=\"linkcard-wrap\">" + cardTag + editControls + "</div>";
+}
+function renderDashboard(){
+var links = state.links || [];
+$("linkEmpty").hidden = links.length !== 0;
+$("linkEditBtn").hidden = links.length === 0;
+$("linkGrid").innerHTML = links.map(function(l,i){ return linkCardHtml(l, i, links.length); }).join("");
+wireLinkGrid();
+}
+function wireLinkGrid(){
+var grid = $("linkGrid");
+grid.querySelectorAll("[data-linkact]").forEach(function(btn){
+btn.addEventListener("click", function(ev){
+ev.preventDefault(); ev.stopPropagation();
+var id = Number(btn.dataset.id), act = btn.dataset.linkact;
+if (act === "remove") removeLink(id);
+else if (act === "up") moveLink(id, -1);
+else if (act === "down") moveLink(id, 1);
+else if (act === "rename") renameLink(id, btn);
+});
+});
+grid.querySelectorAll(".linkcard.unknown").forEach(function(el){
+el.addEventListener("keydown", function(ev){
+if (ev.key === "Enter" || ev.key === " ") ev.preventDefault();
+});
+});
+}
+function removeLink(id){
+var l = state.links.find(function(x){ return x.id === id; });
+if (!l) return;
+if (!confirm("Remove \"" + l.label + "\" from the Dashboard?")) return;
+api("DELETE","/api/links/"+id).then(function(){ toast("Removed", "ok"); loadLinks(); }).catch(toastErr);
+}
+function moveLink(id, dir){
+var idx = state.links.findIndex(function(x){ return x.id === id; });
+if (idx === -1) return;
+var newIdx = idx + dir;
+if (newIdx < 0 || newIdx >= state.links.length) return;
+var arr = state.links.slice();
+var tmp = arr[idx]; arr[idx] = arr[newIdx]; arr[newIdx] = tmp;
+var order = arr.map(function(x){ return {id:x.id}; });
+api("PUT","/api/links", order).then(function(list){
+state.links = list; renderDashboard();
+}).catch(toastErr);
+}
+function renameLink(id, btn){
+var wrap = btn.closest(".linkcard-wrap");
+var labelEl = wrap && wrap.querySelector(".lc-label");
+var l = state.links.find(function(x){ return x.id === id; });
+if (!labelEl || !l) return;
+var input = document.createElement("input");
+input.type = "text"; input.maxLength = 31; input.className = "nameinput";
+input.value = l.label;
+labelEl.replaceWith(input);
+input.focus(); input.select();
+function finish(save){
+if (!save || input.value.trim() === "" || input.value.trim() === l.label){ renderDashboard(); return; }
+api("PATCH","/api/links/"+id, {label: input.value.trim()}).then(function(){
+toast("Renamed", "ok"); loadLinks();
+}).catch(function(err){ toastErr(err); renderDashboard(); });
+}
+input.addEventListener("keydown", function(ev){
+if (ev.key === "Enter"){ ev.preventDefault(); finish(true); }
+else if (ev.key === "Escape"){ ev.preventDefault(); finish(false); }
+});
+input.addEventListener("blur", function(){ finish(true); });
+}
+function openAddLinkModal(){
+loadDevices().then(function(){
+var html = "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Add dashboard link\">" +
+"<button type=\"button\" class=\"modalclose\" aria-label=\"Close\">✕</button>" +
+"<h3>Add link</h3>" +
+"<div class=\"field\"><label for=\"linkDevSearch\">Device</label>" +
+"<input type=\"text\" id=\"linkDevSearch\" placeholder=\"Search by name or IP\" autocomplete=\"off\">" +
+"<div class=\"devpicker\" id=\"linkDevList\"></div></div>" +
+"<div class=\"field\" id=\"linkPortField\" hidden><label for=\"linkPort\">Port</label>" +
+"<input type=\"number\" id=\"linkPort\" min=\"1\" max=\"65535\">" +
+"<div class=\"presets\" id=\"linkPortPresets\"></div></div>" +
+"<div class=\"field\" id=\"linkLabelField\" hidden><label for=\"linkLabel\">Label (optional)</label>" +
+"<input type=\"text\" id=\"linkLabel\" maxlength=\"31\"></div>" +
+"<div class=\"formrow-actions\"><button type=\"button\" class=\"btn btn-accent\" id=\"linkAddSubmit\" disabled>Add link</button></div>" +
+"</div>";
+openModal(html, function(root){
+var selectedMac = null;
+var search = root.querySelector("#linkDevSearch");
+var list = root.querySelector("#linkDevList");
+var portInput = root.querySelector("#linkPort");
+var submitBtn = root.querySelector("#linkAddSubmit");
+function updateSubmitState(){
+var port = Number(portInput.value);
+submitBtn.disabled = !selectedMac || !portInput.value || port < 1 || port > 65535;
+}
+function renderList(q){
+q = (q||"").toLowerCase();
+var items = state.devices.filter(function(d){
+return !q || (d.display_name+" "+d.ip).toLowerCase().indexOf(q) !== -1;
+}).slice(0,30);
+list.innerHTML = items.map(function(d){
+return "<button type=\"button\" class=\"netrow\" data-mac=\"" + esc(d.mac) + "\">" +
+"<span class=\"ssidname\">" + esc(d.display_name) + "</span>" +
+"<span class=\"rssiv mono\">" + esc(d.ip) + "</span></button>";
+}).join("") || "<p class=\"empty\">No devices found.</p>";
+list.querySelectorAll("button[data-mac]").forEach(function(b){
+b.addEventListener("click", function(){ selectDevice(b.dataset.mac); });
+});
+}
+function selectDevice(mac){
+selectedMac = mac;
+var d = state.devicesByMac[mac];
+search.value = d.display_name;
+list.innerHTML = "";
+root.querySelector("#linkPortField").hidden = false;
+root.querySelector("#linkLabelField").hidden = false;
+root.querySelector("#linkLabel").placeholder = d.display_name;
+var presets = root.querySelector("#linkPortPresets");
+presets.innerHTML = "<span class=\"muted\" style=\"font-size:.78rem\">Loading open ports&hellip;</span>";
+updateSubmitState();
+api("GET","/api/devices/"+mac).then(function(full){
+if (selectedMac !== mac) return;
+var ports = full.open_ports || [];
+presets.innerHTML = ports.length ? ports.map(function(p){
+var lbl = p.service ? (p.port+" ("+p.service+")") : String(p.port);
+return "<button type=\"button\" class=\"btn small\" data-port=\""+p.port+"\">"+esc(lbl)+"</button>";
+}).join("") : "<span class=\"muted\" style=\"font-size:.78rem\">No open ports found yet &mdash; enter one manually.</span>";
+presets.querySelectorAll("button[data-port]").forEach(function(b){
+b.addEventListener("click", function(){ portInput.value = b.dataset.port; updateSubmitState(); });
+});
+}).catch(function(){ presets.innerHTML = ""; });
+}
+search.addEventListener("input", function(){
+selectedMac = null;
+root.querySelector("#linkPortField").hidden = true;
+root.querySelector("#linkLabelField").hidden = true;
+renderList(search.value);
+updateSubmitState();
+});
+portInput.addEventListener("input", updateSubmitState);
+submitBtn.addEventListener("click", function(){
+var port = Number(portInput.value);
+var label = root.querySelector("#linkLabel").value.trim();
+var body = {mac: selectedMac, port: port};
+if (label) body.label = label;
+submitBtn.disabled = true;
+api("POST","/api/links", body).then(function(){
+toast("Link added", "ok"); closeModal(); loadLinks();
+}).catch(function(err){ toastErr(err); submitBtn.disabled = false; });
+});
+renderList("");
+root.querySelector(".modalclose").addEventListener("click", closeModal);
+});
+}).catch(toastErr);
+}
+$("linkAddBtn").addEventListener("click", openAddLinkModal);
+$("linkEmptyAddBtn").addEventListener("click", openAddLinkModal);
+$("linkEditBtn").addEventListener("click", function(){
+state.linksEditMode = !state.linksEditMode;
+$("linkEditBtn").textContent = state.linksEditMode ? "Done" : "Edit";
+$("linkEditBtn").setAttribute("aria-pressed", state.linksEditMode ? "true" : "false");
+renderDashboard();
+});
 function loadEvents(){
 return api("GET","/api/events").then(function(list){
 state.events = list; markPollOk(); renderEvents();
@@ -1123,14 +1468,15 @@ function tick(){
 if (document.hidden) return;
 loadStatus();
 loadPortscanStatus();
+if (state.tab === "dashboard") loadLinks();
 if (state.tab === "devices") loadDevices();
 if (state.tab === "events") loadEvents();
 if (state.detail.mac && !state.detail.editingName) fetchDetail();
 }
 setInterval(tick, 5000);
-var savedTab = "devices";
-try { savedTab = localStorage.getItem("netdash-tab") || "devices"; } catch(e){}
-if (TABS.indexOf(savedTab) === -1) savedTab = "devices";
+var savedTab = "dashboard";
+try { savedTab = localStorage.getItem("netdash-tab") || "dashboard"; } catch(e){}
+if (TABS.indexOf(savedTab) === -1) savedTab = "dashboard";
 selectTab(savedTab, true);
 loadStatus();
 loadDevices();

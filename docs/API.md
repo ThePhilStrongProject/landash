@@ -536,3 +536,88 @@ Requires a confirmation body, so a stray POST cannot wipe the device:
 ```
 
 400 when `confirm` is missing or wrong.
+
+---
+
+## Dashboard quick links
+
+The Dashboard tab is a list of shortcuts to services on the network. A link is
+stored against a **MAC address and a port, never an IP**, and the address is
+resolved from the device table on every read. That is what makes a link keep
+working when DHCP gives the device a different address: nothing has to be
+edited, the next `GET` simply returns the new `url`.
+
+Up to 24 links are kept, in user-defined order, persisted in flash.
+
+### GET /api/links
+
+```json
+[
+  {
+    "id": 1,
+    "mac": "bc:24:11:3b:e5:96",
+    "port": 8123,
+    "scheme": "http",
+    "label": "Home Assistant",
+    "ip": "192.168.50.203",
+    "url": "http://192.168.50.203:8123",
+    "display_name": "homeassistant",
+    "type": "hub",
+    "online": true
+  }
+]
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | number | stable while the link exists |
+| `mac`, `port`, `scheme` | | what is actually stored |
+| `label` | string | the user's name for it, defaulting to the device name |
+| `ip`, `url`, `display_name`, `type`, `online` | | resolved live on every request |
+
+When the MAC is not a device the dongle currently knows, `ip` is `"0.0.0.0"`,
+`url` is `null` and `online` is `false`. The link is kept, not dropped, so a
+device that is merely switched off does not lose its shortcut.
+
+### POST /api/links
+
+```json
+{ "mac": "bc:24:11:3b:e5:96", "port": 8123, "scheme": "http", "label": "Home Assistant" }
+```
+
+`scheme` and `label` are optional. `scheme` defaults by port (443, 8443, 8006,
+9090 and 5001 give `https`, anything else `http`) and `label` defaults to the
+device's current display name. Returns the created link object.
+
+**`label` is at most 31 characters.** A longer one is rejected with 400 rather
+than truncated, so the stored label is always exactly what was asked for. The
+same limit and the same behaviour apply to `PATCH`.
+
+400 for a bad MAC, port or scheme, or an over-long label. 404 when the MAC is
+not a known device. 409 when the list already holds 24 links.
+
+### PATCH /api/links/{id}
+
+Any of `label`, `port`, `scheme`. Absent members are left alone. Returns the
+updated link. 400 for an over-long label or a bad port or scheme, 404 for an
+unknown id.
+
+### DELETE /api/links/{id}
+
+```json
+{ "ok": true }
+```
+
+404 for an unknown id.
+
+### PUT /api/links
+
+Sets the order, and drops any link whose id is not listed, so this doubles as
+a bulk delete.
+
+```json
+[{ "id": 3 }, { "id": 1 }, { "id": 2 }]
+```
+
+A bare array of numbers is accepted too. Returns the reordered list. 400 if any
+id is unknown or repeated, in which case the stored list is left untouched.

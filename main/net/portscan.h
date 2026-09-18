@@ -26,7 +26,8 @@ extern "C" {
 typedef struct {
     bool     enabled;
     bool     running;       /* a probe pass is in flight right now          */
-    uint8_t  tier;          /* tier being worked on, 1..3                   */
+    uint8_t  tier;          /* tier actually being probed right now, 1..3   */
+    uint8_t  ceiling;       /* highest tier this pass will reach            */
     uint8_t  max_tier;      /* highest tier this configuration will reach   */
     uint16_t rate;          /* probes per second                            */
     uint16_t device_index;  /* position in the device list for this tier    */

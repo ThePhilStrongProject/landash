@@ -81,7 +81,8 @@ static struct {
     uint16_t rate;
     uint8_t  max_tier;
 
-    uint8_t  tier;
+    uint8_t  tier;          /* ceiling: the highest tier this pass will reach */
+    uint8_t  active_tier;   /* tier actually being probed right now           */
     uint16_t device_index;
     uint16_t device_count;
     uint32_t cursor;
@@ -175,6 +176,17 @@ static uint32_t probe_batch(const uint8_t mac[6], uint32_t ip,
         count = PS_BATCH;
     }
 
+    /*
+     * Every slot starts closed. A probe that resolves synchronously still
+     * advances n without filling its slot, and the cleanup loop below reads
+     * every slot up to n - leaving them uninitialised would make it act on a
+     * stack-garbage descriptor and it could close an unrelated socket.
+     */
+    for (uint32_t i = 0; i < PS_BATCH; i++) {
+        probes[i].fd   = -1;
+        probes[i].port = 0;
+    }
+
     struct sockaddr_in dst = {
         .sin_family = AF_INET,
     };
@@ -229,7 +241,7 @@ static uint32_t probe_batch(const uint8_t mac[6], uint32_t ip,
     /* Nothing left pending: every probe resolved synchronously. */
     uint32_t pending = 0;
     for (uint32_t i = 0; i < n; i++) {
-        if (probes[i].fd > 0) {
+        if (probes[i].fd >= 0) {
             pending++;
         }
     }
@@ -241,7 +253,7 @@ static uint32_t probe_batch(const uint8_t mac[6], uint32_t ip,
     FD_ZERO(&wset);
     int maxfd = -1;
     for (uint32_t i = 0; i < n; i++) {
-        if (probes[i].fd > 0) {
+        if (probes[i].fd >= 0) {
             FD_SET(probes[i].fd, &wset);
             if (probes[i].fd > maxfd) {
                 maxfd = probes[i].fd;
@@ -257,7 +269,7 @@ static uint32_t probe_batch(const uint8_t mac[6], uint32_t ip,
 
     if (ready > 0) {
         for (uint32_t i = 0; i < n; i++) {
-            if (probes[i].fd <= 0 || !FD_ISSET(probes[i].fd, &wset)) {
+            if (probes[i].fd < 0 || !FD_ISSET(probes[i].fd, &wset)) {
                 continue;
             }
             /*
@@ -281,7 +293,7 @@ static uint32_t probe_batch(const uint8_t mac[6], uint32_t ip,
     }
 
     for (uint32_t i = 0; i < n; i++) {
-        if (probes[i].fd > 0) {
+        if (probes[i].fd >= 0) {
             close(probes[i].fd);
         }
     }
@@ -293,12 +305,25 @@ static uint32_t probe_batch(const uint8_t mac[6], uint32_t ip,
 /* ------------------------------------------------------------------------- */
 
 /*
- * Finds the next online device that has not finished `tier`, starting at
- * *index. Fills mac and ip, advances *index past it. False when the tier is
- * complete for every device.
+ * Picks the next device to work on, and says which tier to scan it at.
+ *
+ * A device always advances through its own tiers in order, with the global
+ * tier acting only as a ceiling, so `*use_tier` is the device's next unfinished
+ * tier rather than the global one. That matters for a device that joins late:
+ * without it, a device discovered while the network is working through tier 3
+ * would be probed for ports 1025-65535 and marked finished, having never had
+ * its common ports looked at.
+ *
+ * A device that has never been scanned also jumps the queue, so a device that
+ * appears on the network gets its common ports within a couple of minutes
+ * instead of waiting out a tier that can take days.
+ *
+ * Fills mac, ip and use_tier, and sets *index to that device's position.
+ * False when every online device has reached the ceiling.
  */
-static bool next_device_for_tier(uint8_t tier, uint16_t *index,
-                                 uint8_t mac[6], uint32_t *ip, uint16_t *total)
+static bool next_device_for_tier(uint8_t ceiling, uint16_t *index,
+                                 uint8_t mac[6], uint32_t *ip, uint16_t *total,
+                                 uint8_t *use_tier)
 {
     bool found = false;
 
@@ -308,7 +333,8 @@ static bool next_device_for_tier(uint8_t tier, uint16_t *index,
         *total = (uint16_t)count;
     }
 
-    for (size_t i = *index; i < count; i++) {
+    /* Pass one: any device that has never been scanned at all. */
+    for (size_t i = 0; i < count; i++) {
         netdash_device_t dev;
         if (!device_db_get_at(i, &dev)) {
             break;
@@ -318,16 +344,39 @@ static bool next_device_for_tier(uint8_t tier, uint16_t *index,
         }
 
         netdash_ports_t ports;
-        bool            have = device_db_get_ports(dev.mac, &ports);
-        if (have && ports.tier >= tier) {
-            continue;   /* already finished this tier */
+        if (device_db_get_ports(dev.mac, &ports) && ports.tier == 0) {
+            memcpy(mac, dev.mac, 6);
+            *ip       = dev.ip;
+            *index    = (uint16_t)i;
+            *use_tier = PS_TIER_COMMON;
+            found     = true;
+            break;
         }
+    }
 
-        memcpy(mac, dev.mac, 6);
-        *ip    = dev.ip;
-        *index = (uint16_t)i;
-        found  = true;
-        break;
+    /* Pass two: resume the sweep through the list at the current ceiling. */
+    if (!found) {
+        for (size_t i = *index; i < count; i++) {
+            netdash_device_t dev;
+            if (!device_db_get_at(i, &dev)) {
+                break;
+            }
+            if (!netdash_device_online(&dev) || dev.ip == 0) {
+                continue;
+            }
+
+            netdash_ports_t ports;
+            if (!device_db_get_ports(dev.mac, &ports) || ports.tier >= ceiling) {
+                continue;   /* already at the ceiling */
+            }
+
+            memcpy(mac, dev.mac, 6);
+            *ip       = dev.ip;
+            *index    = (uint16_t)i;
+            *use_tier = (uint8_t)(ports.tier + 1);
+            found     = true;
+            break;
+        }
     }
     device_db_unlock();
     return found;
@@ -343,9 +392,10 @@ static void portscan_task(void *arg)
 
     vTaskDelay(pdMS_TO_TICKS(PS_START_DELAY_MS));
 
-    uint8_t  mac[6]  = {0};
-    uint32_t ip      = 0;
+    uint8_t  mac[6]   = {0};
+    uint32_t ip       = 0;
     bool     have_dev = false;
+    uint8_t  dev_tier = PS_TIER_COMMON;   /* tier being scanned for this device */
 
     for (;;) {
         reload_settings();
@@ -353,7 +403,7 @@ static void portscan_task(void *arg)
         state_lock();
         const bool     enabled  = s_ps.enabled;
         const uint16_t rate     = s_ps.rate;
-        const uint8_t  tier     = s_ps.tier;
+        const uint8_t  ceiling  = s_ps.tier;
         const uint8_t  max_tier = s_ps.max_tier;
         state_unlock();
 
@@ -384,7 +434,7 @@ static void portscan_task(void *arg)
             state_unlock();
 
             uint16_t count = 0;
-            if (!next_device_for_tier(tier, &index, mac, &ip, &count)) {
+            if (!next_device_for_tier(ceiling, &index, mac, &ip, &count, &dev_tier)) {
                 /* Tier finished for every device: advance, or start over. */
                 state_lock();
                 const uint8_t next = (s_ps.tier >= max_tier) ? PS_TIER_COMMON
@@ -415,7 +465,8 @@ static void portscan_task(void *arg)
             state_lock();
             s_ps.device_index = index;
             s_ps.device_count = count;
-            s_ps.tier_total   = tier_total(tier);
+            s_ps.active_tier  = dev_tier;
+            s_ps.tier_total   = tier_total(dev_tier);
             if (!jump) {
                 s_ps.cursor = 0;
             }
@@ -433,7 +484,7 @@ static void portscan_task(void *arg)
         state_unlock();
 
         if (cursor >= total) {
-            device_db_finish_tier(mac, tier, (int64_t)time(NULL));
+            device_db_finish_tier(mac, dev_tier, (int64_t)time(NULL));
             state_lock();
             s_ps.device_index++;   /* move past the device just finished */
             s_ps.cursor = 0;
@@ -443,7 +494,7 @@ static void portscan_task(void *arg)
         }
 
         const int64_t  t0     = esp_timer_get_time();
-        const uint32_t probed = probe_batch(mac, ip, tier, cursor, total - cursor);
+        const uint32_t probed = probe_batch(mac, ip, dev_tier, cursor, total - cursor);
 
         if (probed == 0) {
             /* Could not get a socket; back off briefly and retry. */
@@ -457,7 +508,7 @@ static void portscan_task(void *arg)
         const uint32_t new_cursor = s_ps.cursor;
         state_unlock();
 
-        device_db_set_scan_progress(mac, tier, new_cursor, total);
+        device_db_set_scan_progress(mac, dev_tier, new_cursor, total);
 
         /*
          * Pace to the configured probes per second. The batch already took
@@ -512,7 +563,8 @@ void portscan_get_status(portscan_status_t *out)
     state_lock();
     out->enabled       = s_ps.enabled;
     out->running       = s_ps.running;
-    out->tier          = s_ps.tier;
+    out->tier          = s_ps.active_tier != 0 ? s_ps.active_tier : s_ps.tier;
+    out->ceiling       = s_ps.tier;
     out->max_tier      = s_ps.max_tier;
     out->rate          = s_ps.rate;
     out->device_index  = s_ps.device_index;
