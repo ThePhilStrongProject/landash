@@ -45,6 +45,9 @@ typedef enum {
     NETDASH_TYPE_IOT,
     NETDASH_TYPE_PRINTER,
     NETDASH_TYPE_CAST,
+    /* Appended, never reordered: the value is persisted as type_override. */
+    NETDASH_TYPE_CONSOLE,
+    NETDASH_TYPE_PRINTER_3D,
     NETDASH_TYPE_MAX
 } netdash_type_t;
 

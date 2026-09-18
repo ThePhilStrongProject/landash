@@ -18,6 +18,7 @@
 #include "device_db.h"
 
 #include <stdio.h>
+#include <ctype.h>
 #include <string.h>
 #include <strings.h>
 #include <time.h>
@@ -146,6 +147,24 @@ static bool evict_one_locked(void)
     }
     s_count--;
     return true;
+}
+
+/*
+ * True when a name is just a machine identifier: a long unbroken run of hex
+ * digits, such as the installation UUID Home Assistant publishes over mDNS.
+ * Sixteen is comfortably longer than any real hostname that happens to be all
+ * hex (think "beef" or "facade") and shorter than the 32-character UUIDs.
+ */
+static bool is_machine_id(const char *s)
+{
+    size_t n = 0;
+
+    for (; s[n] != '\0'; n++) {
+        if (!isxdigit((unsigned char)s[n])) {
+            return false;
+        }
+    }
+    return n >= 16;
 }
 
 /* Removes non-printable bytes, trims, strips a trailing ".local", clamps to
@@ -576,6 +595,15 @@ esp_err_t device_db_set_hostname(const uint8_t mac[6], const char *name, netdash
     sanitize_hostname(name, clean, sizeof(clean));
     if (clean[0] == '\0') {
         return ESP_OK; /* nothing usable in this name */
+    }
+    if (is_machine_id(clean)) {
+        /*
+         * A long run of hex is an installation UUID, not a name a person would
+         * recognise. Home Assistant publishes exactly that as its mDNS name,
+         * and taking it would beat the far friendlier name the router's DNS
+         * gives for the same host. Drop it and let a lower-priority source win.
+         */
+        return ESP_OK;
     }
 
     device_db_lock();

@@ -75,6 +75,13 @@ static const char *TAG = "scanner";
 /* SCAN_PROGRESS event cadence. */
 #define SCAN_PROGRESS_EVERY  16
 
+/*
+ * How often the whole ARP table is harvested during the walk. Eight probes is
+ * two seconds at the default rate, comfortably inside the lifetime of a stable
+ * entry now that ARP_TABLE_SIZE is raised (see the top-level CMakeLists.txt).
+ */
+#define SCAN_ARP_HARVEST_EVERY 8
+
 /* Consecutive transient sendto() failures that abort a sweep. */
 #define SCAN_MAX_SEND_ERRORS 16
 
@@ -319,12 +326,21 @@ static void ring_pop_resolve(void)
         return;
     }
 
+    /*
+     * The periodic table harvest may already have recorded this host. Upsert
+     * anyway, because only this path knows the round-trip time, but do not
+     * count it twice.
+     */
+    const bool already = mac_seen(mac);
+
     /* No database lock is held here; upsert_seen takes its own. */
     if (device_db_upsert_seen(mac, entry.ip, entry.rtt_ms, s_sweep.now_unix)) {
         s_sweep.fresh++;
     }
-    mac_seen_add(mac);
-    s_sweep.alive++;
+    if (!already) {
+        mac_seen_add(mac);
+        s_sweep.alive++;
+    }
 
     ESP_LOGD(TAG, "%u.%u.%u.%u is %02x:%02x:%02x:%02x:%02x:%02x rtt=%d ms",
              (unsigned)(entry.ip >> 24), (unsigned)((entry.ip >> 16) & 0xff),
@@ -722,6 +738,19 @@ static void sweep(const netdash_settings_t *cfg)
 
             if ((s_sweep.probed % SCAN_PROGRESS_EVERY) == 0) {
                 post_scan_event(NETDASH_EVENT_SCAN_PROGRESS, s_sweep.probed, total);
+            }
+
+            /*
+             * Harvest the whole ARP table as we go, not only at the end.
+             *
+             * lwIP recycles the oldest *stable* entry before it touches a
+             * pending one, so every probe to an address that does not answer
+             * can evict a host we already resolved. Sampling the table often
+             * catches those entries while they are still there; the closing
+             * snapshot alone used to lose most of them.
+             */
+            if ((s_sweep.probed % SCAN_ARP_HARVEST_EVERY) == 0) {
+                arp_snapshot(network, mask);
             }
 
             /* Hold the pace even when a send or a lookup took a while. */

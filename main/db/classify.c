@@ -28,6 +28,8 @@ static const char *const s_type_names[NETDASH_TYPE_MAX] = {
     [NETDASH_TYPE_IOT]       = "iot",
     [NETDASH_TYPE_PRINTER]   = "printer",
     [NETDASH_TYPE_CAST]      = "cast",
+    [NETDASH_TYPE_CONSOLE]   = "console",
+    [NETDASH_TYPE_PRINTER_3D] = "printer_3d",
 };
 
 /* Indexed by bit position, must match the NETDASH_SVC_ defines. */
@@ -108,11 +110,18 @@ netdash_type_t classify_device(const netdash_device_t *dev, uint32_t gateway_ip)
         return NETDASH_TYPE_SWITCH;
     }
 
-    /* 4. NAS: SMB plus a telltale hostname, or a dedicated NAS-vendor OUI. */
-    if ((has_svc(dev, NETDASH_SVC_SMB) &&
-         (hostname_has(dev, "truenas") || hostname_has(dev, "omv") ||
-          hostname_has(dev, "openmediavault") || hostname_has(dev, "nas"))) ||
-        vendor_is(dev, "synology") || vendor_is(dev, "qnap")) {
+    /*
+     * 4. NAS: a telltale hostname, or a dedicated NAS-vendor OUI.
+     *
+     * The hostname is enough on its own. Requiring SMB as well used to miss a
+     * box called "truenas" whenever mDNS had not turned up its file shares,
+     * and the name is already strong evidence.
+     */
+    if (hostname_has(dev, "truenas") || hostname_has(dev, "freenas") ||
+        hostname_has(dev, "openmediavault") || hostname_has(dev, "omv") ||
+        hostname_has(dev, "unraid") || hostname_has(dev, "nas") ||
+        vendor_is(dev, "synology") || vendor_is(dev, "qnap") ||
+        (has_svc(dev, NETDASH_SVC_SMB) && hostname_has(dev, "server"))) {
         return NETDASH_TYPE_NAS;
     }
 
@@ -134,29 +143,82 @@ netdash_type_t classify_device(const netdash_device_t *dev, uint32_t gateway_ip)
         return NETDASH_TYPE_TV;
     }
 
+    /*
+     * 5a. Games console. Nintendo builds nothing else, so its OUI alone is
+     * enough; Sony and Microsoft also build televisions and PCs, so those are
+     * recognised by name only. "switch" on its own is deliberately not a
+     * signal, since it is also what a network switch calls itself.
+     */
+    if (vendor_is(dev, "nintendo") ||
+        hostname_has(dev, "nintendo") || hostname_has(dev, "xbox") ||
+        hostname_has(dev, "playstation") || hostname_has(dev, "ps4") ||
+        hostname_has(dev, "ps5") || hostname_has(dev, "steamdeck")) {
+        return NETDASH_TYPE_CONSOLE;
+    }
+
+    /*
+     * 5b. 3D printer, before the paper-printer rule so the two never collide.
+     * Most of these run OctoPrint, Klipper or a vendor web interface.
+     */
+    if (vendor_is(dev, "elegoo") || vendor_is(dev, "prusa") ||
+        vendor_is(dev, "bambu") || vendor_is(dev, "anycubic") ||
+        vendor_is(dev, "creality") ||
+        hostname_has(dev, "centauri") || hostname_has(dev, "elegoo") ||
+        hostname_has(dev, "prusa") || hostname_has(dev, "bambu") ||
+        hostname_has(dev, "creality") || hostname_has(dev, "ender") ||
+        hostname_has(dev, "anycubic") || hostname_has(dev, "octoprint") ||
+        hostname_has(dev, "klipper") || hostname_has(dev, "mainsail") ||
+        hostname_has(dev, "fluidd")) {
+        return NETDASH_TYPE_PRINTER_3D;
+    }
+
     /* 6. Smart-home hub: HomeKit/Home Assistant service or hostname. */
     if (has_svc(dev, NETDASH_SVC_HA) || has_svc(dev, NETDASH_SVC_HAP) ||
         hostname_has(dev, "homeassistant") || hostname_has(dev, "hass")) {
         return NETDASH_TYPE_HUB;
     }
 
-    /* 7. PC: SMB workstation service, or a desktop/laptop/pc-ish hostname. */
+    /*
+     * 7. PC: the SMB workstation service, a desktop/laptop hostname, or an
+     * Intel OUI, which on a home LAN is nearly always a laptop's Wi-Fi card.
+     */
     if (has_svc(dev, NETDASH_SVC_WORKSTATION) ||
         hostname_has(dev, "desktop") || hostname_has(dev, "laptop") ||
-        hostname_has(dev, "pc")) {
+        hostname_has(dev, "pc") || hostname_has(dev, "thinkpad") ||
+        hostname_has(dev, "thinkbook") || hostname_has(dev, "macbook") ||
+        hostname_has(dev, "imac") || hostname_has(dev, "surface") ||
+        vendor_is(dev, "intel")) {
         return NETDASH_TYPE_PC;
     }
 
-    /* 8. IoT silicon/brand vendors. */
+    /*
+     * 8. IoT, by silicon or brand. Invensys builds the radio in Drayton Wiser
+     * heating controls, which is why it is here rather than under a brand.
+     */
     if (vendor_is(dev, "espressif") || vendor_is(dev, "tuya") ||
-        vendor_is(dev, "shelly") || vendor_is(dev, "sonoff")) {
+        vendor_is(dev, "shelly") || vendor_is(dev, "sonoff") ||
+        vendor_is(dev, "invensys") || vendor_is(dev, "schneider") ||
+        hostname_has(dev, "wiser") || hostname_has(dev, "shelly") ||
+        hostname_has(dev, "tasmota") || hostname_has(dev, "esphome") ||
+        hostname_has(dev, "tado") || hostname_has(dev, "hive")) {
         return NETDASH_TYPE_IOT;
     }
 
-    /* 9. Printer: IPP/LPD service, or a known printer-vendor OUI. */
+    /*
+     * 9. Printer: the IPP/LPD service, or a vendor that makes little else.
+     *
+     * A bare HP OUI is deliberately not enough. HP also builds servers, NICs
+     * and laptops, and this rule would otherwise label an HP-based NAS a
+     * printer whenever its file shares went undetected.
+     */
     if (has_svc(dev, NETDASH_SVC_PRINTER) ||
-        vendor_is(dev, "hp") || vendor_is(dev, "brother") ||
-        vendor_is(dev, "canon") || vendor_is(dev, "epson")) {
+        vendor_is(dev, "brother") || vendor_is(dev, "canon") ||
+        vendor_is(dev, "epson") ||
+        (vendor_is(dev, "hp") && (hostname_has(dev, "print") ||
+                                  hostname_has(dev, "officejet") ||
+                                  hostname_has(dev, "deskjet") ||
+                                  hostname_has(dev, "laserjet") ||
+                                  hostname_has(dev, "envy")))) {
         return NETDASH_TYPE_PRINTER;
     }
 
@@ -165,11 +227,39 @@ netdash_type_t classify_device(const netdash_device_t *dev, uint32_t gateway_ip)
         return NETDASH_TYPE_CAST;
     }
 
-    /* 11. Phone: a consumer-mobile OUI with nothing else advertised. */
+    /*
+     * 11. Phone or tablet, by hostname.
+     *
+     * The name is the reliable signal, because modern phones randomise their
+     * MAC per network and so have no vendor at all.
+     */
+    if (hostname_has(dev, "iphone") || hostname_has(dev, "ipad") ||
+        hostname_has(dev, "pixel") || hostname_has(dev, "galaxy") ||
+        hostname_has(dev, "android") || hostname_has(dev, "oneplus") ||
+        hostname_has(dev, "redmi") || hostname_has(dev, "huawei") ||
+        hostname_has(dev, "magic-pad") || hostname_has(dev, "phone") ||
+        hostname_has(dev, "tablet")) {
+        return NETDASH_TYPE_PHONE;
+    }
+
+    /*
+     * 12. A Google OUI with nothing else advertised is a Nest or Chromecast
+     * device, not a phone: a real Pixel randomises its MAC, so it never
+     * reaches this rule with a Google vendor attached.
+     */
+    if (dev->services == 0 && vendor_is(dev, "google")) {
+        return NETDASH_TYPE_CAST;
+    }
+
+    /* 13. Likewise an Amazon OUI is an Echo or a Fire device. */
+    if (dev->services == 0 && vendor_is(dev, "amazon")) {
+        return NETDASH_TYPE_IOT;
+    }
+
+    /* 14. Remaining consumer-mobile OUIs with nothing advertised. */
     if (dev->services == 0 &&
         (vendor_is(dev, "apple") || vendor_is(dev, "samsung") ||
-         vendor_is(dev, "google") || vendor_is(dev, "xiaomi") ||
-         vendor_is(dev, "oneplus"))) {
+         vendor_is(dev, "xiaomi") || vendor_is(dev, "oneplus"))) {
         return NETDASH_TYPE_PHONE;
     }
 

@@ -282,12 +282,14 @@ border-radius:9px;padding:10px 12px;font-size:.85rem;box-shadow:0 6px 20px rgba(
 <script>
 (function(){
 "use strict";
-var TYPES = ["unknown","router","mesh_node","switch","nas","tv","hub","phone","pc","iot","printer","cast"];
+var TYPES = ["unknown","router","mesh_node","switch","nas","tv","hub","phone","pc","iot","printer","cast",
+"console","printer_3d"];
 var TYPE_LABEL = {unknown:"Unknown",router:"Router",mesh_node:"Mesh node",switch:"Switch",nas:"NAS",
-tv:"TV",hub:"Hub",phone:"Phone",pc:"PC",iot:"IoT",printer:"Printer",cast:"Cast"};
+tv:"TV",hub:"Hub",phone:"Phone",pc:"PC",iot:"IoT",printer:"Printer",cast:"Cast",
+console:"Console",printer_3d:"3D printer"};
 var TYPE_ICON = {unknown:"❔",router:"📶",mesh_node:"🔁",switch:"🔀",
 nas:"🗄️",tv:"📺",hub:"🏠",phone:"📱",pc:"💻",
-iot:"🔌",printer:"🖨️",cast:"📡"};
+iot:"🔌",printer:"🖨️",cast:"📡",console:"🎮",printer_3d:"🧊"};
 var EV_ICON = {info:"ℹ️",device_new:"✨",device_online:"▲",device_offline:"▼",
 device_ip_changed:"🔀",scan:"🔍",wifi:"📶"};
 var state = {

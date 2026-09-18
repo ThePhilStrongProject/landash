@@ -118,17 +118,18 @@ menu "NetDash"
     config NETDASH_SCAN_INTERVAL_MIN
         int "Default sweep interval (minutes)"
         range 1 1440
-        default 5
+        default 2
         help
             Factory default only; the running value comes from settings (NVS).
 
     config NETDASH_SCAN_HOSTS_PER_SEC
         int "Default probe rate (hosts per second)"
         range 1 64
-        default 4
+        default 16
         help
-            Factory default only. 4 hosts/s sweeps a /24 in about 64 s and is
-            gentle enough that consumer routers do not log it as a scan.
+            Factory default only. 16 hosts/s sweeps a /24 in about 16 s. Still
+            one echo per host per sweep, which consumer routers do not log as a
+            scan. Lower it to 4 for the gentlest possible profile.
 
     config NETDASH_MAX_DEVICES
         int "Maximum tracked devices"

@@ -145,7 +145,7 @@ Used by `/api/devices`, `/api/devices/{mac}` and `/api/devices/export`.
 ### `type` values
 
 `unknown`, `router`, `mesh_node`, `switch`, `nas`, `tv`, `hub`, `phone`, `pc`,
-`iot`, `printer`, `cast`
+`iot`, `printer`, `cast`, `console`, `printer_3d`
 
 ### `services` values
 

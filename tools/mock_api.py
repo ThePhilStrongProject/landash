@@ -25,7 +25,7 @@ INDEX_HTML = Path(__file__).resolve().parent.parent / "main" / "web" / "www" / "
 
 MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
 TYPES = {"unknown", "router", "mesh_node", "switch", "nas", "tv", "hub", "phone",
-         "pc", "iot", "printer", "cast"}
+         "pc", "iot", "printer", "cast", "console", "printer_3d"}
 
 START = time.time()
 NOW0 = time.time()

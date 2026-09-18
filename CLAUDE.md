@@ -152,31 +152,44 @@ partitions.csv              nvs 64K, otadata 8K, phy 4K, ota_0 3M, ota_1 3M,
 | 5 | disc_mdns / ssdp / nbns / rdns | done |
 | 6 | http_server REST API | done |
 | 7 | web/www/index.html | done |
-| 8 | hardware integration, smoke test, README | partly done |
+| 8 | hardware integration, smoke test, README | done |
 
 Every module is implemented. There are no stubs left.
 
+## Two traps worth remembering
+
+**The lwIP ARP cache is the scanner's bottleneck.** `ARP_TABLE_SIZE` is raised
+to 64 by a project-wide compile definition in the top-level `CMakeLists.txt`,
+and `scanner.c` harvests the whole table every few probes rather than only at
+the end of a sweep. Both are needed. lwIP recycles the oldest *stable* entry
+before any pending one, so at the stock size of 10 every probe to an address
+that does not answer evicts a host the scanner had already resolved. A /24
+sweep found 6 of 23 devices before this was fixed. If discovery ever goes
+sparse again, look here first.
+
+**The OUI table must be generated with every prefix per vendor.** Sampling a
+handful of blocks per manufacturer looks fine and matches almost nothing real:
+ASUS alone holds dozens of blocks. Regenerate with
+`--curated --per-vendor 100000`, which yields about 13,500 entries for roughly
+110 KB of flash. Note that phones randomise their MAC per network, so a blank
+vendor on a phone is correct, not a lookup failure.
+
 ## What has and has not been verified on hardware
 
-Verified by flashing the dongle and reading the serial log:
+Verified on a live /24 home network (23 devices):
 
-- Boots clean, no error or warning from any NetDash module.
-- LCD initialises at 240x135 on the default GEEK pins with gap 40/52.
-- BOOT button registers.
-- With no saved credentials it starts the `NetDash-XXXX` setup access point on
-  192.168.4.1, advertises `netdash.local` and serves on port 80.
-- Scanner and discovery tasks start.
-- Free heap ~166 KB after boot, flat across heartbeats.
+- Boots clean; LCD, BOOT button, setup access point and station mode all work.
+- Settings persist across a reflash; Wi-Fi credentials survive reboots.
+- A sweep finds every device the router lists, plus the router and both mesh
+  nodes. 253 addresses probed, 23 alive.
+- Naming works from mDNS, the router's reverse DNS and SSDP; vendors resolve
+  for every device that is not using a randomised MAC.
+- `tools/smoke_test.py` passes all 39 checks against the real device.
+- Heap is flat at about 164 KB.
 
-Not yet verified, because it needs someone to join the setup access point and
-supply a Wi-Fi password:
+Not verified:
 
-- The dashboard rendering in a real browser off the device.
-- The station-mode path: DHCP, SNTP, the LCD showing a LAN IP.
-- A real sweep: ICMP and ARP against live hosts, and therefore all of
-  `device_db` population, the four discovery sources and `classify`.
-- `tools/smoke_test.py` end to end.
-
-The LCD's physical orientation and colour order are also unconfirmed. If the
-image is upside down, flip `NETDASH_LCD_ROTATE_180` in menuconfig; the other
-knobs are documented in `Kconfig.projbuild`.
+- The LCD's physical orientation and colour order. If the image is upside down,
+  flip `NETDASH_LCD_ROTATE_180`; the other knobs are in `Kconfig.projbuild`.
+- The dashboard rendered in a browser. The API behind it is fully exercised.
+- Long-term stability beyond a few minutes of uptime.
