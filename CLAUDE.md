@@ -114,10 +114,30 @@ main/
   db/classify.c/.h          vendor + services + hostname -> netdash_type_t, and
                             the type / service / event name strings the REST API
                             and the UI depend on.
-  db/links.c/.h             dashboard quick links, NVS namespace "links". A link
-                            stores a MAC and a port, never an IP, so it follows
-                            the device through a DHCP change; http_server
-                            resolves the address on every read.
+  db/links.c/.h             dashboard quick links and their group headings,
+                            NVS namespace "links". A link stores a MAC and a
+                            port, never an IP, so it follows the device through
+                            a DHCP change; http_server resolves the address on
+                            every read. One versioned blob, with a v1 migration.
+
+  db/notes.c/.h             per-device plain-text notes (NVS "note") and the
+                            AES-256-GCM secret vault (NVS "sec", metadata in
+                            "vault"). The vault key is derived from a passphrase
+                            with PBKDF2 on every unlock and never stored. Read
+                            the header before trusting it with anything: it does
+                            not defend against LAN traffic capture, because the
+                            dashboard is plain HTTP.
+
+  db/notify.c/.h            the notification feed: the short, read/unread list
+                            of things worth saying, as opposed to the raw events
+                            log. Persisted to NVS "notif", writes coalesced by a
+                            timer, and armed only after the first sweep so a
+                            fresh flash does not announce the whole network.
+
+  net/wan.c/.h              WAN health: an ICMP echo and a name lookup on an
+                            interval, reported separately so "no internet" and
+                            "no DNS" can be told apart. Uses esp_ping rather than
+                            a second raw socket of our own.
 
   net/portscan.c/.h         tiered background TCP connect scan. Each device
                             advances through its own tiers in order (common ->
@@ -193,7 +213,23 @@ partitions.csv              nvs 64K, otadata 8K, phy 4K, ota_0 3M, ota_1 3M,
 
 Every module is implemented. There are no stubs left.
 
-## Two traps worth remembering
+## Two traps in the HTTP layer
+
+**esp_http_server only honours a wildcard at the END of a URI template.** A
+template like `/api/devices/*/history` is matched literally, so it never fires
+and the endpoint answers 404 or 405 as though it had been forgotten. This is
+not hypothetical: `POST /api/devices/{mac}/portscan` shipped that way and the
+UI's "Rescan ports" button never worked. Per-device sub-resources are now
+dispatched by hand from one wildcard handler per method
+(`devices_get_router()` and friends).
+
+**The httpd route table is fixed at start-up and overflowing it is silent.**
+`httpd_config_t::max_uri_handlers` comes from `NETDASH_HTTPD_MAX_URI_HANDLERS`
+in `http_server.h`; routes past the limit fail to register and look exactly
+like a routing bug at runtime. There is now a `_Static_assert` against the size
+of the route table, so raise the constant when the build tells you to.
+
+## Two traps in the scanner
 
 **The lwIP ARP cache is the scanner's bottleneck, and it must be sized for the
 probe rate.** `ARP_TABLE_SIZE` is raised to 192 by a project-wide compile
@@ -238,8 +274,21 @@ Verified on a live /24 home network (23 devices):
   nodes. 253 addresses probed, 23 alive.
 - Naming works from mDNS, the router's reverse DNS and SSDP; vendors resolve
   for every device that is not using a randomised MAC.
-- `tools/smoke_test.py` passes all 39 checks against the real device.
-- Heap is flat at about 164 KB.
+- `tools/smoke_test.py` passes all 81 checks against the real device, which
+  now covers groups, notes, the vault lifecycle, history, WAN and the feed.
+- Free heap about 112 KB with a low-water mark of 88 KB in normal polling.
+
+### Heap, and the one endpoint that still costs
+
+`GET /api/devices` used to build one cJSON tree for the whole table and then
+print it, so peak usage was the object graph and the finished string at once —
+about 58 KB for 28 devices, scaling with the table. It is now streamed a device
+at a time with `httpd_resp_send_chunk()` and costs almost nothing.
+
+`GET /api/devices/export` still builds the whole thing in one go and dips the
+low-water mark to about 47 KB. That is tolerable because it is a manual,
+one-off action rather than a five-second poll, but it is the next thing to
+stream if the device table ever gets close to its 128-device capacity.
 
 Not verified:
 

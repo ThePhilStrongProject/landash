@@ -6,6 +6,9 @@
  */
 #include "settings.h"
 
+#include "notify.h"
+
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,7 +25,7 @@ static const char *TAG = "settings";
 #define SETTINGS_NS      "cfg"
 #define SETTINGS_KEY     "blob"
 #define SETTINGS_VER_KEY "ver"
-#define SETTINGS_VERSION 2
+#define SETTINGS_VERSION 3
 
 #define AP_PASS_LEN 8
 
@@ -97,6 +100,13 @@ static void apply_defaults(netdash_settings_t *cfg)
     cfg->portscan_enabled  = CONFIG_NETDASH_PORTSCAN_ENABLED;
     cfg->portscan_rate     = CONFIG_NETDASH_PORTSCAN_RATE;
     cfg->portscan_max_tier = CONFIG_NETDASH_PORTSCAN_MAX_TIER;
+
+    cfg->notif_mask           = NETDASH_NOTIF_DEFAULT_MASK;
+    cfg->wan_enabled          = true;
+    cfg->wan_interval_s       = 60;
+    cfg->portscan_rescan_days = 7;
+    str_set(cfg->wan_ping_host, sizeof(cfg->wan_ping_host), "1.1.1.1");
+    str_set(cfg->wan_dns_probe, sizeof(cfg->wan_dns_probe), "example.com");
 }
 
 static void clamp(netdash_settings_t *cfg)
@@ -138,6 +148,25 @@ static void clamp(netdash_settings_t *cfg)
     } else if (cfg->portscan_max_tier > 3) {
         cfg->portscan_max_tier = 3;
     }
+    cfg->wan_ping_host[sizeof(cfg->wan_ping_host) - 1] = '\0';
+    cfg->wan_dns_probe[sizeof(cfg->wan_dns_probe) - 1] = '\0';
+    if (cfg->wan_ping_host[0] == '\0') {
+        str_set(cfg->wan_ping_host, sizeof(cfg->wan_ping_host), "1.1.1.1");
+    }
+    if (cfg->wan_dns_probe[0] == '\0') {
+        str_set(cfg->wan_dns_probe, sizeof(cfg->wan_dns_probe), "example.com");
+    }
+    /* Under 15 s the checks would be their own kind of network noise. */
+    if (cfg->wan_interval_s < 15) {
+        cfg->wan_interval_s = 15;
+    } else if (cfg->wan_interval_s > 3600) {
+        cfg->wan_interval_s = 3600;
+    }
+    if (cfg->portscan_rescan_days > 365) {
+        cfg->portscan_rescan_days = 365;
+    }
+    cfg->notif_mask &= NETDASH_NOTIF_ALL_MASK;
+
     /* WPA2 needs 8..63 characters; anything shorter would fail to start. */
     if (strlen(cfg->ap_pass) < 8) {
         gen_ap_pass(cfg->ap_pass, sizeof(cfg->ap_pass));
@@ -168,6 +197,21 @@ static esp_err_t save_locked(void)
     }
     return err;
 }
+
+/*
+ * Restores one field from the defaults when the stored blob was too short to
+ * contain all of it. Comparing against the end of the field rather than its
+ * start covers both a field the old layout never had and a field the old
+ * layout ended part-way through (or ended in padding just before).
+ *
+ * Only valid inside load_locked(), which defines `stored` and `fresh`.
+ */
+#define MIGRATE_FIELD(f)                                                       \
+    do {                                                                       \
+        if (stored < offsetof(netdash_settings_t, f) + sizeof(s_cfg.f)) {      \
+            memcpy(&s_cfg.f, &fresh.f, sizeof(s_cfg.f));                       \
+        }                                                                      \
+    } while (0)
 
 /* Reads NVS into s_cfg, falling back to defaults. Caller holds the lock. */
 static esp_err_t load_locked(bool *out_dirty)
@@ -225,9 +269,15 @@ static esp_err_t load_locked(bool *out_dirty)
                  */
                 netdash_settings_t fresh;
                 apply_defaults(&fresh);
-                s_cfg.portscan_enabled  = fresh.portscan_enabled;
-                s_cfg.portscan_rate     = fresh.portscan_rate;
-                s_cfg.portscan_max_tier = fresh.portscan_max_tier;
+                MIGRATE_FIELD(portscan_enabled);
+                MIGRATE_FIELD(portscan_rate);
+                MIGRATE_FIELD(portscan_max_tier);
+                MIGRATE_FIELD(notif_mask);
+                MIGRATE_FIELD(wan_enabled);
+                MIGRATE_FIELD(wan_interval_s);
+                MIGRATE_FIELD(wan_ping_host);
+                MIGRATE_FIELD(wan_dns_probe);
+                MIGRATE_FIELD(portscan_rescan_days);
 
                 ESP_LOGW(TAG, "migrated settings from v%u (%u bytes) to v%u (%u bytes)",
                          (unsigned)ver, (unsigned)stored,

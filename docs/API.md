@@ -12,6 +12,19 @@ Version 1. This contract is fixed in WP0 so the firmware (WP6) and the web UI
 - IPv4 addresses are always dotted-quad strings: `"192.168.1.42"`.
 - Unknown query parameters and unknown JSON object members are ignored.
 
+## A note on routing
+
+`esp_http_server` matches a URI template ending in a wildcard by prefix, and
+matches anything else literally — a wildcard in the *middle* of a template is
+just an asterisk, compared character for character. A route such as
+`/api/devices/<wildcard>/history` therefore never matches a real request and
+silently answers 404 or 405 for ever.
+
+Every per-device sub-resource is therefore dispatched by hand from one wildcard
+handler per method. Adding `/api/devices/{mac}/something` means adding a branch
+to the matching `devices_*_router()` in `http_server.c`, not a new row in the
+route table.
+
 ## Errors
 
 Any non-2xx response has this body and nothing else:
@@ -434,7 +447,21 @@ is stored.
   "ntp_server": "pool.ntp.org",
   "portscan_enabled": true,
   "portscan_rate": 10,
-  "portscan_max_tier": 3
+  "portscan_max_tier": 3,
+  "portscan_rescan_days": 7,
+  "wan_enabled": true,
+  "wan_interval_s": 60,
+  "wan_ping_host": "1.1.1.1",
+  "wan_dns_probe": "example.com",
+  "notifications": {
+    "new_device": true,
+    "ip_changed": true,
+    "new_port": true,
+    "device_gone": false,
+    "device_back": false,
+    "wan_down": true,
+    "wan_up": true
+  }
 }
 ```
 
@@ -443,6 +470,19 @@ is stored.
 | `portscan_enabled` | bool | background TCP port scan on or off |
 | `portscan_rate` | number | 1-200 probes per second, shared across every device |
 | `portscan_max_tier` | number | 1 common ports, 2 ports 1-1024, 3 every port |
+| `portscan_rescan_days` | number | how often to re-probe the common ports, 0 to never |
+| `wan_enabled` | bool | run the internet health checks |
+| `wan_interval_s` | number | seconds between checks |
+| `wan_ping_host` | string | an IP literal, so the test does not depend on DNS |
+| `wan_dns_probe` | string | a name to resolve, probed separately from the ping |
+| `notifications` | object | one boolean per feed type, keyed by type name |
+
+Notification toggles go out keyed by name rather than as a bitmask so the UI
+can render a row per type without carrying its own copy of the bit order.
+
+Arrivals and departures (`device_gone`, `device_back`) are **off by default**.
+Phones and laptops sleep all day, and a feed that reports every one of those is
+a feed nobody reads.
 
 ## PUT /api/settings
 
@@ -473,6 +513,15 @@ Every member is optional; absent members are left unchanged.
 | `passive_only` | bool | | disables active sweeps |
 | `tz` | string | 0..47 chars | POSIX TZ string |
 | `ntp_server` | string | 0..63 chars | |
+| `portscan_rescan_days` | number | 0..365 | 0 disables re-probing |
+| `wan_enabled` | bool | | |
+| `wan_interval_s` | number | 15..3600 | below 15 s the checks are their own noise |
+| `wan_ping_host` | string | 1..39 chars | |
+| `wan_dns_probe` | string | 1..47 chars | |
+| `notifications` | object | | partial: only the named types change |
+
+An unknown key or a non-boolean value inside `notifications` is a 400, rather
+than being ignored — a typo in a type name should not silently do nothing.
 
 Returns the same shape as `GET /api/settings` (200), with an extra hint when
 the change needs a reconnect:
@@ -547,17 +596,25 @@ resolved from the device table on every read. That is what makes a link keep
 working when DHCP gives the device a different address: nothing has to be
 edited, the next `GET` simply returns the new `url`.
 
-Up to 24 links are kept, in user-defined order, persisted in flash.
+Up to 48 links are kept, in user-defined order, persisted in flash, and
+optionally filed under a group heading.
 
 ### GET /api/links
 
 ```json
-[
+{
+  "groups": [{ "id": 1, "name": "Infrastructure" }],
+  "max_links": 48,
+  "max_groups": 8,
+  "links": [
   {
     "id": 1,
     "mac": "bc:24:11:3b:e5:96",
     "port": 8123,
     "scheme": "http",
+    "group": 2,
+    "icon": "",
+    "service": "home-assistant",
     "label": "Home Assistant",
     "ip": "192.168.50.203",
     "url": "http://192.168.50.203:8123",
@@ -565,12 +622,20 @@ Up to 24 links are kept, in user-defined order, persisted in flash.
     "type": "hub",
     "online": true
   }
-]
+  ]
+}
 ```
+
+Groups and links come back together because the dashboard needs both to paint
+a frame; returning them separately means the first paint after a reload has no
+headings.
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | number | stable while the link exists |
+| `group` | number | group id, `0` when ungrouped |
+| `icon` | string | icon override; empty means derive it from `service` |
+| `service` | string | what the firmware makes of the port, e.g. `portainer` |
 | `mac`, `port`, `scheme` | | what is actually stored |
 | `label` | string | the user's name for it, defaulting to the device name |
 | `ip`, `url`, `display_name`, `type`, `online` | | resolved live on every request |
@@ -597,13 +662,17 @@ than truncated, so the stored label is always exactly what was asked for. The
 same limit and the same behaviour apply to `PATCH`.
 
 400 for a bad MAC, port or scheme, or an over-long label. 404 when the MAC is
-not a known device. 409 when the list already holds 24 links.
+not a known device. 409 when the list already holds 48 links.
 
 ### PATCH /api/links/{id}
 
-Any of `label`, `port`, `scheme`. Absent members are left alone. Returns the
-updated link. 400 for an over-long label or a bad port or scheme, 404 for an
-unknown id.
+Any of `label`, `port`, `scheme`, `icon`, `group`. Absent members are left
+alone. `icon` accepts an empty string to clear the override and hand the choice
+back to the service lookup; `group` accepts `0` to file the link under no
+heading. Returns the updated link.
+
+400 for an over-long label or icon, a bad port or scheme, or a group id that
+does not exist. 404 for an unknown link id.
 
 ### DELETE /api/links/{id}
 
@@ -624,3 +693,286 @@ a bulk delete.
 
 A bare array of numbers is accepted too. Returns the reordered list. 400 if any
 id is unknown or repeated, in which case the stored list is left untouched.
+
+## Link groups
+
+A group is a heading on the Dashboard. Links are filed under one by id, and a
+link with `group: 0` is ungrouped. Groups are ordered by their position in the
+table; links are ordered within a group by their position in the link list.
+
+Up to 8 groups. Ids are never reused, so a link still pointing at a deleted
+group cannot be adopted by a new one that lands on the same number — it simply
+falls back to ungrouped.
+
+### POST /api/links/groups
+
+```json
+{ "name": "Infrastructure" }
+```
+
+The name is trimmed and must be 1–23 characters once trimmed. Returns
+`{ "id": 1, "groups": [...] }`.
+
+400 for an empty or over-long name, 409 when 8 groups already exist.
+
+### PATCH /api/links/groups/{id}
+
+```json
+{ "name": "Infra" }
+```
+
+Returns the group table. 400 for a bad name, 404 for an unknown id.
+
+### DELETE /api/links/groups/{id}
+
+Deletes the heading. **The links filed under it are kept and become
+ungrouped** — deleting a heading never deletes shortcuts. Returns
+`{ "groups": [...], "links": [...] }` so the caller can repaint in one step.
+
+404 for an unknown id.
+
+### PUT /api/links/groups
+
+```json
+[3, 1, 2]
+```
+
+Sets the heading order. Unlike `PUT /api/links` this is **not** a bulk delete:
+the ids must be a permutation of the existing ones. 400 otherwise, with the
+stored order untouched.
+
+## Per-device notes
+
+A plain-text note kept against a device, for the things you would otherwise
+have to remember — where its admin page is, which vault entry holds its
+password, what it is actually for.
+
+Notes are served to anyone who can reach the web UI, exactly like a nickname.
+Anything that should not be is a **secret**, below.
+
+### PUT /api/devices/{mac}/note
+
+```json
+{ "note": "Proxmox host. Root pw in Bitwarden under 'pve'. IPMI on .211." }
+```
+
+At most 255 characters; an empty string erases the note. Returns
+`{ "ok": true, "has_note": true }`.
+
+400 when the note is too long, 404 for an unknown device.
+
+The note itself comes back on `GET /api/devices/{mac}` as `note`. The device
+list carries only the `has_note` flag, so the polled endpoint stays small.
+
+## The secret vault
+
+Credentials, encrypted with AES-256-GCM under a key derived from a passphrase
+with PBKDF2-HMAC-SHA256. The key is derived on every unlock and **never
+stored**; only a salt, the iteration count and a verifier hash live in flash.
+
+**What this protects against, stated plainly.** It keeps credentials out of the
+web UI for anyone who does not have the passphrase, out of the device export,
+and out of a physical flash dump, which yields only hardened ciphertext.
+
+**What it does not.** The dashboard is served over plain HTTP, so the
+passphrase and any secret you reveal cross the LAN in the clear. Doing the
+crypto in the browser instead would fix that and was the first design tried;
+`crypto.subtle` is unavailable because it is gated behind a secure context and
+`http://netdash.local` is not one.
+
+The vault relocks itself after 15 minutes idle and on every reboot.
+
+### GET /api/vault
+
+```json
+{
+  "configured": true,
+  "unlocked": false,
+  "idle_timeout_s": 900,
+  "expires_in_s": 0,
+  "secrets": 3,
+  "max_len": 191,
+  "min_passphrase": 8
+}
+```
+
+### PUT /api/vault
+
+Creates the vault, or changes its passphrase.
+
+```json
+{ "old_passphrase": "...", "passphrase": "..." }
+```
+
+`old_passphrase` is required once a vault exists, and is ignored when one does
+not. Changing it re-encrypts every stored secret; every secret is decrypted
+into a scratch buffer first, so one unreadable blob aborts the rotation before
+anything has been rewritten under a key the rest cannot open.
+
+Returns the vault state **plus a `token`** — the caller has just proved they
+own the vault, so they get a session rather than having to unlock again.
+
+400 when the new passphrase is under 8 characters, 403 when `old_passphrase`
+is wrong.
+
+### POST /api/vault/unlock
+
+```json
+{ "passphrase": "..." }
+```
+
+Returns the vault state plus `token`. **This call is deliberately slow** —
+about 2.6 s on this hardware — because the key derivation is the entire cost of
+guessing the passphrase from a flash dump.
+
+404 when no vault exists, 403 on a wrong passphrase.
+
+### POST /api/vault/lock
+
+Wipes the key from RAM and invalidates the token. Returns the vault state.
+
+### DELETE /api/vault
+
+```json
+{ "confirm": "destroy secrets" }
+```
+
+Destroys the vault and every secret in it. This is the way out when the
+passphrase has been lost; the secrets are not recoverable, by design. The
+confirmation phrase must match exactly.
+
+### GET /api/devices/{mac}/secret
+
+Requires an `X-Vault-Token` header from an unlock. Returns
+`{ "secret": "..." }`.
+
+401 when the vault is locked or the token is wrong, 404 when there is no
+secret, 409 when the ciphertext fails its authentication tag.
+
+### PUT /api/devices/{mac}/secret
+
+```json
+{ "secret": "root / hunter2" }
+```
+
+Requires `X-Vault-Token`. At most 191 characters; an empty string erases it.
+Returns `{ "ok": true, "has_secret": true }`.
+
+The device object carries `has_secret` but **never** the secret itself.
+
+## GET /api/devices/{mac}/history
+
+Whether the device answered, one bit per five-minute slot, over the last 24
+hours.
+
+```json
+{ "slots": 288, "slot_sec": 300, "valid": 96, "bits": "ffff...3f" }
+```
+
+`bits` is 36 bytes as 72 hex characters, **oldest slot first**: slot *i* is bit
+`i % 8` of byte `i / 8`. `valid` is how many of the 288 slots have actually
+elapsed, so a short history renders as short rather than as a day of downtime.
+
+Slots are cut on wall-clock time, so nothing is recorded until NTP has synced —
+a slot number from a wrong clock would file the samples in the wrong place.
+This lives in RAM only: it costs 4.6 KB for 128 devices, and a day of history
+is not worth the flash writes. It refills within a day of a reboot.
+
+## WAN health
+
+Two probes on an interval: an ICMP echo to a fixed address, and a name lookup.
+Splitting them is the point — "the internet is down" and "DNS is down" look
+identical from a browser and want completely different responses.
+
+A single failed check is not an outage; the state only moves after three
+consecutive failures, so one lost echo does not flap the LCD.
+
+Note that lwIP caches DNS answers for their TTL, so a lookup that succeeds may
+have been answered from cache. A real resolver failure shows up within a TTL,
+not instantly.
+
+### GET /api/wan
+
+```json
+{
+  "state": "up",
+  "icmp_ok": true,
+  "dns_ok": true,
+  "rtt_ms": 16,
+  "last_check": 1789860444,
+  "changed_at": 1789860393,
+  "checks": 41,
+  "failures": 0
+}
+```
+
+`state` is `up` (both probes answered), `degraded` (one did), `down` (neither),
+or `unknown` (not checked yet, switched off, or the dongle is in AP mode with
+no WAN to speak of).
+
+The same object is embedded in `GET /api/status` as `wan`.
+
+### POST /api/wan/check
+
+Runs a check on the next tick instead of waiting out the interval.
+`{ "ok": true }`.
+
+## The notification feed
+
+Deliberately not the events log. `/api/events` is a raw trace of everything
+that happened; this is the short list of things worth telling someone about,
+with a read/unread state, so it can answer *what changed since I last looked*
+rather than *what happened*.
+
+The feed holds 48 entries and is persisted to flash, so a reboot does not erase
+the answer. Writes are coalesced on a 10 s timer, because a sweep can land
+several at once.
+
+**Nothing is recorded until the first sweep has finished.** On a freshly
+flashed dongle every device on the network is one it has never seen, and
+delivering that as twenty-odd "new device" alerts would teach the reader to
+ignore the feed on day one.
+
+Each type can be switched off in settings, and a disabled type is dropped at
+push time rather than filtered on read — so turning one off does not leave old
+entries of it stranded in the ring.
+
+### GET /api/notifications
+
+```json
+{
+  "items": [
+    {
+      "id": 12,
+      "ts": 1789860444,
+      "type": "ip_changed",
+      "read": false,
+      "text": "Was 192.168.50.31",
+      "mac": "bc:24:11:3b:e5:96",
+      "device": "truenas",
+      "ip": "192.168.50.40"
+    }
+  ],
+  "unread": 3,
+  "count": 12
+}
+```
+
+Newest first. `device` is resolved on every read rather than stored, so a
+device renamed since the notification landed reads by its new name. `mac` and
+`ip` are `null` when the notification is not about a device.
+
+`type` is one of `new_device`, `ip_changed`, `new_port`, `device_gone`,
+`device_back`, `wan_down`, `wan_up`.
+
+`unread` is also embedded in `GET /api/status`, so a badge can be kept right
+without a second poll.
+
+### POST /api/notifications/read
+
+Marks everything read. `{ "ok": true, "unread": 0 }`.
+
+### DELETE /api/notifications/{id}
+
+Drops one. `DELETE /api/notifications` drops the lot. Returns
+`{ "ok": true, "unread": n, "count": n }`. 404 for an unknown id.

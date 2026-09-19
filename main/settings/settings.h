@@ -33,6 +33,15 @@ typedef struct {
     bool     portscan_enabled;
     uint16_t portscan_rate;     /* probes per second, whole device sweep    */
     uint8_t  portscan_max_tier; /* 1 common, 2 well-known, 3 every port     */
+    /*
+     * Appended in settings blob version 3.
+     */
+    uint16_t notif_mask;        /* 1 bit per netdash_notif_type_t, 1 = on   */
+    bool     wan_enabled;
+    uint16_t wan_interval_s;    /* seconds between WAN health checks        */
+    char     wan_ping_host[40]; /* IPv4 literal or name, e.g. "1.1.1.1"     */
+    char     wan_dns_probe[48]; /* name resolved to prove DNS works         */
+    uint16_t portscan_rescan_days; /* re-probe tier 1 this often, 0 = never */
 } netdash_settings_t;
 
 /* Loads (or creates) the blob and generates ap_pass on first boot. */

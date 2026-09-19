@@ -28,7 +28,10 @@
 #include "display.h"
 #include "http_server.h"
 #include "links.h"
+#include "notes.h"
+#include "notify.h"
 #include "portscan.h"
+#include "wan.h"
 #include "scanner.h"
 #include "settings.h"
 #include "wifi_mgr.h"
@@ -63,6 +66,8 @@ void app_main(void)
     ESP_ERROR_CHECK(display_init());
     ESP_ERROR_CHECK(button_init());
     ESP_ERROR_CHECK(wifi_mgr_init());
+    ESP_ERROR_CHECK(notify_init());
+    ESP_ERROR_CHECK(notes_init());
     ESP_ERROR_CHECK(device_db_init());
     ESP_ERROR_CHECK(links_init());
     ESP_ERROR_CHECK(http_server_init());
@@ -74,6 +79,7 @@ void app_main(void)
     ESP_ERROR_CHECK(disc_rdns_init());
     ESP_ERROR_CHECK(disc_nbns_init());
     ESP_ERROR_CHECK(portscan_init());
+    ESP_ERROR_CHECK(wan_init());
 
     ESP_LOGI(TAG, "boot complete, free heap %" PRIu32 " bytes", esp_get_free_heap_size());
 

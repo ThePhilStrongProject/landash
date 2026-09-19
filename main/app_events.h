@@ -39,6 +39,12 @@ typedef enum {
 
     /* SNTP. Data: none. */
     NETDASH_EVENT_TIME_SYNCED,
+
+    /*
+     * WAN health changed state. Data: none - listeners call wan_get(), which
+     * keeps app_events.h from having to know what a WAN result looks like.
+     */
+    NETDASH_EVENT_WAN_CHANGED,
 } netdash_event_id_t;
 
 /* Data for NETDASH_EVENT_SCAN_ events. */

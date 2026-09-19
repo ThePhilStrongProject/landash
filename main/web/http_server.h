@@ -14,8 +14,13 @@ extern "C" {
  * esp_http_server sizes its handler table at start time and there is no
  * Kconfig symbol for it in IDF 5.5, so http_server_init() must set
  * httpd_config_t::max_uri_handlers to this value.
+ *
+ * Overflowing this does not fail the build or stop the server: the routes past
+ * the limit simply fail to register and answer 404 or 405 at runtime, which
+ * looks exactly like a routing bug. http_server.c carries a _Static_assert
+ * against the size of the route table so that cannot happen quietly again.
  */
-#define NETDASH_HTTPD_MAX_URI_HANDLERS 32
+#define NETDASH_HTTPD_MAX_URI_HANDLERS 48
 
 /* Listening port. */
 #define NETDASH_HTTPD_PORT 80

@@ -60,6 +60,7 @@
 #include "device_db.h"
 #include "scanner.h"
 #include "settings.h"
+#include "wan.h"
 #include "wifi_mgr.h"
 
 static const char *TAG = "display";
@@ -106,6 +107,9 @@ static const char *TAG = "display";
 #define COL_ACCENT           0x3B82F6
 #define COL_TEXT             0xF1F5F9
 #define COL_MUTED            0x94A3B8
+#define COL_OK               0x22C55E
+#define COL_WARN             0xF59E0B
+#define COL_BAD              0xEF4444
 
 /* ------------------------------------------------------------------------- */
 /* State                                                                     */
@@ -125,7 +129,7 @@ static int64_t s_last_activity_us;
 /* Pages and widgets. */
 static lv_obj_t *s_pages[DISPLAY_PAGE_COUNT];
 static lv_obj_t *s_rssi_bars[4];
-static lv_obj_t *s_lbl_ip, *s_lbl_host, *s_lbl_ssid;
+static lv_obj_t *s_lbl_ip, *s_lbl_host, *s_lbl_ssid, *s_lbl_wan;
 static lv_obj_t *s_lbl_online, *s_lbl_total, *s_lbl_new, *s_lbl_sweep;
 static lv_obj_t *s_bar_scan;
 static lv_obj_t *s_lbl_ap_ssid, *s_lbl_ap_pass;
@@ -422,11 +426,21 @@ static void build_page_main(void)
     s_lbl_host = make_label(page, &lv_font_montserrat_14, COL_ACCENT, "");
     lv_obj_align(s_lbl_host, LV_ALIGN_CENTER, 0, 26);
 
+    /*
+     * The bottom row carries the SSID on the left and the WAN verdict on the
+     * right. The dongle is plugged in and always on, so this is the line that
+     * earns the screen: the IP can be looked up on the router, "is the
+     * internet actually up" cannot.
+     */
     s_lbl_ssid = make_label(page, &lv_font_montserrat_12, COL_MUTED, "");
-    lv_obj_set_width(s_lbl_ssid, LCD_H_RES - 12);
+    lv_obj_set_width(s_lbl_ssid, LCD_H_RES - 116);
     lv_label_set_long_mode(s_lbl_ssid, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_style_text_align(s_lbl_ssid, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(s_lbl_ssid, LV_ALIGN_BOTTOM_MID, 0, -6);
+    lv_obj_set_style_text_align(s_lbl_ssid, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_align(s_lbl_ssid, LV_ALIGN_BOTTOM_LEFT, 6, -6);
+
+    s_lbl_wan = make_label(page, &lv_font_montserrat_12, COL_MUTED, "");
+    lv_obj_set_style_text_align(s_lbl_wan, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_align(s_lbl_wan, LV_ALIGN_BOTTOM_RIGHT, -6, -6);
 }
 
 static lv_obj_t *make_tile(lv_obj_t *page, int32_t x, const char *caption)
@@ -560,6 +574,40 @@ static void refresh_main(void)
     lv_obj_align(s_lbl_host, LV_ALIGN_CENTER, 0, 26);
 
     lv_label_set_text(s_lbl_ssid, ssid);
+
+    /*
+     * A degraded WAN is spelled out as which half failed. "No DNS" and "WAN
+     * down" call for completely different responses, and telling them apart
+     * is the whole reason the check is two probes rather than one.
+     */
+    netdash_wan_t wan;
+    wan_get(&wan);
+
+    uint32_t wan_col = COL_MUTED;
+    switch ((netdash_wan_state_t)wan.state) {
+    case NETDASH_WAN_UP:
+        wan_col = COL_OK;
+        if (wan.rtt_ms >= 0) {
+            snprintf(buf, sizeof(buf), "WAN %d ms", (int)wan.rtt_ms);
+        } else {
+            snprintf(buf, sizeof(buf), "WAN ok");
+        }
+        break;
+    case NETDASH_WAN_DEGRADED:
+        wan_col = COL_WARN;
+        snprintf(buf, sizeof(buf), "%s", wan.icmp_ok ? "No DNS" : "No ICMP");
+        break;
+    case NETDASH_WAN_DOWN:
+        wan_col = COL_BAD;
+        snprintf(buf, sizeof(buf), "WAN down");
+        break;
+    default:
+        buf[0] = 0;
+        break;
+    }
+    lv_label_set_text(s_lbl_wan, buf);
+    lv_obj_set_style_text_color(s_lbl_wan, lv_color_hex(wan_col), 0);
+    lv_obj_align(s_lbl_wan, LV_ALIGN_BOTTOM_RIGHT, -6, -6);
 
     int8_t rssi = wifi_mgr_get_rssi();
     int strength = 0;

@@ -45,6 +45,7 @@
 
 #include "app_events.h"
 #include "device_db.h"
+#include "notify.h"
 #include "settings.h"
 #include "wifi_mgr.h"
 
@@ -796,6 +797,15 @@ static void sweep(const netdash_settings_t *cfg)
         device_db_mark_sweep_end(s_sweep.now_unix);
     }
     set_last_sweep(end_unix);
+
+    /*
+     * Arm the notification feed only once a full sweep has been and gone.
+     * Everything found during that first sweep is a device we simply did not
+     * know about yet - on a freshly flashed dongle that is the entire network,
+     * and delivering it as twenty-odd "new device" alerts would teach the user
+     * to ignore the feed on day one.
+     */
+    notify_arm();
 
     uint32_t dur_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
     uint16_t alive  = (uint16_t)(s_sweep.alive + s_sweep.from_arp);

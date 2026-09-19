@@ -13,6 +13,9 @@
 --online:#22c55e; --online-rgb:34,197,94;
 --new:#38bdf8; --new-rgb:56,189,248;
 --danger:#ef4444; --danger-rgb:239,68,68;
+--warn:#f59e0b; --warn-rgb:245,158,11;
+--surface2:#141d30;
+--mono:ui-monospace,Consolas,"SF Mono",Menlo,monospace;
 --r-sm:5px; --r-md:8px;
 --fs-xs:.72rem; --fs-sm:.8rem; --fs-md:.875rem; --fs-lg:1rem; --fs-xl:1.375rem;
 color-scheme:dark;
@@ -275,6 +278,85 @@ padding:3px 6px;font-size:.72rem;line-height:1}
 .emptybox{color:var(--muted);padding:40px 20px;text-align:center}
 .emptybox .lead{font-weight:600;color:var(--text);margin-bottom:4px}
 .emptybox .sub{max-width:380px;margin:0 auto}
+
+/* --- dashboard groups --------------------------------------------------- */
+.grouphead{display:flex;align-items:center;gap:10px;margin:22px 0 10px}
+.grouphead:first-child{margin-top:4px}
+.grouphead h3{margin:0;font-size:var(--fs-sm);font-weight:600;letter-spacing:.06em;
+text-transform:uppercase;color:var(--muted)}
+.grouphead .rule{flex:1;height:1px;background:var(--border)}
+.grouphead .gbtns{display:flex;gap:4px}
+.grouphead .gbtns button{background:none;border:0;color:var(--muted);cursor:pointer;
+padding:3px;border-radius:var(--r-sm);line-height:0}
+.grouphead .gbtns button:hover{color:var(--text);background:var(--surface2)}
+.groupempty{color:var(--muted);font-size:var(--fs-sm);padding:6px 2px 2px}
+
+/* --- notification feed -------------------------------------------------- */
+.feed{border:1px solid var(--border);border-radius:var(--r-md);background:var(--surface);
+margin-bottom:20px;overflow:hidden}
+.feedhead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)}
+.feedhead h3{margin:0;font-size:var(--fs-sm);font-weight:600;flex:1}
+.feedhead .spacer{flex:1}
+.feedlist{list-style:none;margin:0;padding:0;max-height:min(46vh,380px);overflow:auto}
+.feedlist li{display:flex;gap:11px;padding:10px 14px;border-top:1px solid var(--border);
+align-items:flex-start}
+.feedlist li:first-child{border-top:0}
+.feedlist li.unread{background:rgba(59,130,246,.07)}
+.feedlist li.unread .fd-title{font-weight:600}
+.fd-ico{flex:0 0 auto;width:16px;height:16px;margin-top:2px;color:var(--muted)}
+.fd-ico.warn{color:var(--warn)}
+.fd-ico.bad{color:var(--danger)}
+.fd-ico.good{color:var(--online)}
+.fd-body{flex:1;min-width:0}
+.fd-title{font-size:var(--fs-sm);line-height:1.35}
+.fd-meta{font-size:var(--fs-xs);color:var(--muted);margin-top:2px}
+.fd-x{flex:0 0 auto;background:none;border:0;color:var(--muted);cursor:pointer;padding:2px;
+border-radius:var(--r-sm);line-height:0;opacity:0;transition:opacity .12s ease}
+.feedlist li:hover .fd-x,.feedlist li:focus-within .fd-x{opacity:1}
+.fd-x:hover{color:var(--text);background:var(--surface2)}
+.badgecount{display:inline-flex;align-items:center;justify-content:center;min-width:18px;
+height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;
+font-size:var(--fs-xs);font-weight:600;font-variant-numeric:tabular-nums}
+
+/* --- WAN pill in the top bar -------------------------------------------- */
+.wanpill{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);
+color:var(--muted);padding:3px 9px;border:1px solid var(--border);border-radius:999px;
+white-space:nowrap}
+.wanpill .ic{width:13px;height:13px}
+.wanpill.up{color:var(--online);border-color:rgba(34,197,94,.35)}
+.wanpill.degraded{color:var(--warn);border-color:rgba(245,158,11,.35)}
+.wanpill.down{color:var(--danger);border-color:rgba(239,68,68,.4)}
+
+/* --- notes and secrets -------------------------------------------------- */
+.notebox{width:100%;min-height:76px;resize:vertical;font:inherit;font-size:var(--fs-sm);
+line-height:1.5;padding:9px 11px;border-radius:var(--r-sm);border:1px solid var(--border);
+background:var(--bg);color:var(--text)}
+.notebox:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.notetext{font-size:var(--fs-sm);line-height:1.55;white-space:pre-wrap;word-break:break-word;margin:0}
+.secretrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.secretval{font-family:var(--mono);font-size:var(--fs-sm);white-space:pre-wrap;
+word-break:break-all;background:var(--bg);border:1px solid var(--border);
+border-radius:var(--r-sm);padding:9px 11px;margin:0;flex:1;min-width:0}
+.lockedhint{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:var(--fs-sm)}
+
+/* --- availability sparkline --------------------------------------------- */
+.spark{display:flex;align-items:flex-end;gap:1px;height:30px;padding:3px 0}
+.spark i{flex:1 1 0;min-width:1px;height:100%;border-radius:1px;background:var(--surface2)}
+.spark i.on{background:var(--online)}
+.spark i.off{background:rgba(239,68,68,.55)}
+.sparkaxis{display:flex;justify-content:space-between;font-size:var(--fs-xs);
+color:var(--muted);margin-top:4px}
+
+/* --- icon picker -------------------------------------------------------- */
+.iconpick{display:grid;grid-template-columns:repeat(auto-fill,minmax(40px,1fr));gap:6px;margin:8px 0 4px}
+.iconpick button{aspect-ratio:1;display:grid;place-items:center;border:1px solid var(--border);
+border-radius:var(--r-sm);background:var(--surface);color:var(--text);cursor:pointer}
+.iconpick button:hover{border-color:var(--accent)}
+.iconpick button[aria-pressed="true"]{border-color:var(--accent);background:rgba(59,130,246,.14)}
+.iconpick .ic{width:19px;height:19px}
+.rowmark{width:13px;height:13px;color:var(--muted);flex:none}
+.picksecthead{font-size:var(--fs-xs);color:var(--muted);text-transform:uppercase;
+letter-spacing:.06em;margin:12px 0 0}
 </style>
 </head>
 <body>
@@ -314,12 +396,38 @@ padding:3px 6px;font-size:.72rem;line-height:1}
 <g id="i-eye-off"><path d="M9.6 6.1A8.9 8.9 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3 3.8M6.3 8A17 17 0 0 0 2.5 12S6 18.5 12 18.5a8.7 8.7 0 0 0 3.1-.6"/><path d="M10 10a2.9 2.9 0 0 0 4 4"/><path d="M3.5 3.5l17 17"/></g>
 <g id="i-trash"><path d="M4 6.5h16M9.5 6.5V4.2h5v2.3"/><path d="M6.5 6.5 7.4 20a1.4 1.4 0 0 0 1.4 1.3h6.4A1.4 1.4 0 0 0 16.6 20l.9-13.5"/><path d="M10.3 10.5v6.8M13.7 10.5v6.8"/></g>
 <g id="i-lock"><rect x="4.5" y="10.5" width="15" height="10" rx="1.8"/><path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7"/></g>
+<g id="i-ha"><path d="M12 2.6 21 10v10.4a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1V10z"/><path d="M12 9.2v3.4"/></g>
+<g id="i-docker"><rect x="3.2" y="11.5" width="3.1" height="3.1"/><rect x="7" y="11.5" width="3.1" height="3.1"/><rect x="10.8" y="11.5" width="3.1" height="3.1"/><rect x="7" y="8" width="3.1" height="3.1"/><rect x="10.8" y="8" width="3.1" height="3.1"/><path d="M3.2 14.6c0 3.4 2.4 5.6 6.2 5.6 4.6 0 7.8-2.3 9-6.3 1.6.9 3 .3 3.4-.7-1.1-.8-2.4-.7-3.2-.2"/></g>
+<g id="i-media"><rect x="2.5" y="4.5" width="19" height="15" rx="2.2"/><path d="M10.2 9.4 15 12l-4.8 2.6z"/></g>
+<g id="i-chart"><path d="M3.5 20.2h17"/><path d="M6.5 17V11M11 17V5.5M15.5 17v-4M20 17V8.5"/></g>
+<g id="i-db"><ellipse cx="12" cy="6" rx="7.5" ry="3"/><path d="M4.5 6v12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6"/><path d="M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3"/></g>
+<g id="i-terminal"><rect x="2.5" y="4" width="19" height="16" rx="2"/><path d="M6.5 9.5 9.5 12l-3 2.5M12.5 15h5"/></g>
+<g id="i-shield"><path d="M12 2.8 20 6v6c0 4.6-3.2 7.8-8 9.2-4.8-1.4-8-4.6-8-9.2V6z"/><path d="M8.8 12.2 11 14.4l4.2-4.2"/></g>
+<g id="i-download"><path d="M12 3.5v11M7.8 10.6 12 14.8l4.2-4.2"/><path d="M4 17v2.5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V17"/></g>
+<g id="i-gauge"><path d="M3.5 17a8.5 8.5 0 1 1 17 0"/><path d="M12 17l4-5.2"/><circle cx="12" cy="17" r="1.4"/></g>
+<g id="i-cloud"><path d="M7 18.5h10.2a3.8 3.8 0 0 0 .6-7.5 5.6 5.6 0 0 0-10.7-1.2A3.9 3.9 0 0 0 7 18.5z"/></g>
+<g id="i-mail"><rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.2 8.5-6.2"/></g>
+<g id="i-folder"><path d="M3 18.5V6.2a1 1 0 0 1 1-1h5l2 2.4h8a1 1 0 0 1 1 1v9.9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></g>
+<g id="i-camera"><path d="M3 19V8.6a1 1 0 0 1 1-1h3l1.6-2.3h6.8L17 7.6h3a1 1 0 0 1 1 1V19a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><circle cx="12" cy="13.2" r="3.6"/></g>
+<g id="i-dns"><circle cx="12" cy="12" r="9"/><path d="M3.2 12h17.6M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></g>
+<g id="i-gear"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M4.5 7.5l2.2 1.3M17.3 15.2l2.2 1.3M4.5 16.5l2.2-1.3M17.3 8.8l2.2-1.3"/></g>
+<g id="i-book"><path d="M4 4.5h7a2.5 2.5 0 0 1 2.5 2.5v13A2 2 0 0 0 11.8 19H4z"/><path d="M20 4.5h-6a2.5 2.5 0 0 0-2.5 2.5v13A2 2 0 0 1 13.2 19H20z"/></g>
+<g id="i-vpn"><rect x="4.5" y="10.5" width="15" height="10" rx="1.8"/><path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7"/><path d="M12 14v3"/></g>
+<g id="i-folder-share"><rect x="2.5" y="6.5" width="19" height="12" rx="1.8"/><path d="M6.5 10.5h5M6.5 14h8"/></g>
+<g id="i-tag"><path d="M3.5 11.2V4.5a1 1 0 0 1 1-1h6.7l9.3 9.3-7.7 7.7z"/><circle cx="7.9" cy="7.9" r="1.4"/></g>
+<g id="i-bell"><path d="M6 10a6 6 0 0 1 12 0c0 4 1.5 5.4 1.5 5.4h-15S6 14 6 10z"/><path d="M10.2 18.8a2 2 0 0 0 3.6 0"/></g>
+<g id="i-bell-off"><path d="M8.6 5.6A6 6 0 0 1 18 10c0 3.5 1.2 5 1.4 5.3M6.6 8.7A6 6 0 0 0 6 10c0 4-1.5 5.4-1.5 5.4h11.1"/><path d="M10.2 18.8a2 2 0 0 0 3.6 0"/><path d="M3.5 3.5 20.5 20.5"/></g>
+<g id="i-note"><path d="M5 3.8h9.5L19 8.3V20a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4.8a1 1 0 0 1 1-1z"/><path d="M14 3.8v5h5M7.5 12.5h8M7.5 16h5"/></g>
+<g id="i-key"><circle cx="8" cy="12" r="4.2"/><path d="M12.2 12H21M18 12v3.2M15.2 12v2.4"/></g>
+<g id="i-globe"><circle cx="12" cy="12" r="8.8"/><path d="M3.4 12h17.2"/><path d="M12 3.2a13.5 13.5 0 0 1 0 17.6 13.5 13.5 0 0 1 0-17.6"/></g>
+<g id="i-globe-off"><circle cx="12" cy="12" r="8.8"/><path d="M3.4 12h17.2"/><path d="M12 3.2a13.5 13.5 0 0 1 3.2 8.8"/><path d="M4 4 20 20"/></g>
 </defs></svg>
 <div id="offlineBanner" class="banner" role="status" hidden>Connection to the dongle was lost — retrying&hellip;</div>
 <header class="topbar">
 <div class="brand">
 <span class="logo">NETDASH</span>
 <span class="hostip" id="hostIp">&mdash;</span>
+<span class="wanpill" id="wanPill" hidden></span>
 </div>
 <div class="statuspill">
 <span class="pilltext" id="pillText">&mdash;</span>
@@ -336,11 +444,20 @@ padding:3px 6px;font-size:.72rem;line-height:1}
 </nav>
 <main id="app">
 <section id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard">
+<div class="feed" id="feed" hidden>
+<div class="feedhead">
+<h3>What changed <span class="badgecount" id="feedCount" hidden>0</span></h3>
+<button type="button" class="btn small" id="feedReadBtn">Mark all read</button>
+<button type="button" class="btn small" id="feedClearBtn">Clear</button>
+</div>
+<ul class="feedlist" id="feedList"></ul>
+</div>
 <div class="toolbar">
 <button type="button" class="btn" id="linkAddBtn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"/></svg> Add link</button>
+<button type="button" class="btn" id="linkGroupAddBtn" hidden>Add group</button>
 <button type="button" class="btn" id="linkEditBtn" hidden aria-pressed="false">Edit</button>
 </div>
-<div class="linkgrid" id="linkGrid"></div>
+<div id="linkGrid"></div>
 <div class="emptybox" id="linkEmpty" hidden>
 <div class="lead">No dashboard links yet</div>
 <div class="sub">Pin the services you use most &mdash; Home Assistant, your NAS, a router UI &mdash; so they're one click away. Links follow the device by MAC, so they keep working even if its IP changes.</div>
@@ -441,6 +558,68 @@ padding:3px 6px;font-size:.72rem;line-height:1}
 </div>
 </div>
 <div class="settgroup">
+<h3>Notifications</h3>
+<p class="hint" style="margin:0 0 10px">What earns a place in the "What changed" feed on
+the Dashboard. Arrivals and departures are off by default: phones and laptops sleep all
+day, and a feed that cries wolf is one nobody reads.</p>
+<label class="switch"><input type="checkbox" data-notif="new_device"> A device appears that has never been seen here</label>
+<label class="switch"><input type="checkbox" data-notif="ip_changed"> A device's IP address changes</label>
+<label class="switch"><input type="checkbox" data-notif="new_port"> A device opens a port it was not listening on before</label>
+<label class="switch"><input type="checkbox" data-notif="device_gone"> A device stops answering</label>
+<label class="switch"><input type="checkbox" data-notif="device_back"> A device that was gone comes back</label>
+<label class="switch"><input type="checkbox" data-notif="wan_down"> The internet connection breaks</label>
+<label class="switch"><input type="checkbox" data-notif="wan_up"> The internet connection recovers</label>
+<div class="field" style="margin-top:14px">
+<label for="setRescanDays">Re-probe common ports every (days)</label>
+<input type="number" id="setRescanDays" min="0" max="365">
+<div class="hint">Finding a port open that was not before is the point of this. 0 turns
+re-probing off, which also turns off the "new open port" notification in practice.</div>
+</div>
+</div>
+<div class="settgroup">
+<h3>Internet health</h3>
+<label class="switch"><input type="checkbox" id="setWanEnabled"> Check that the internet is reachable</label>
+<div class="field">
+<label for="setWanInterval">Check every (seconds)</label>
+<input type="number" id="setWanInterval" min="15" max="3600">
+</div>
+<div class="field">
+<label for="setWanPing">Address to ping</label>
+<input type="text" id="setWanPing" maxlength="39">
+<div class="hint">An IP literal, so the test does not depend on DNS working.</div>
+</div>
+<div class="field">
+<label for="setWanDns">Name to resolve</label>
+<input type="text" id="setWanDns" maxlength="47">
+<div class="hint">Probed separately from the ping, so "the internet is down" and "DNS is
+down" can be told apart. Answers may be served from the resolver cache for their TTL.</div>
+</div>
+</div>
+<div class="settgroup">
+<h3>Secret vault</h3>
+<p class="hint" style="margin:0 0 10px" id="vaultBlurb">&nbsp;</p>
+<div class="field">
+<label for="vaultOldPass">Current passphrase</label>
+<input type="password" id="vaultOldPass" autocomplete="current-password" placeholder="Only needed when changing an existing passphrase">
+</div>
+<div class="field">
+<label for="vaultNewPass">New passphrase</label>
+<input type="password" id="vaultNewPass" autocomplete="new-password" minlength="8">
+<div class="hint">At least 8 characters. The key is derived from this every time and is
+never stored, so losing it means losing the secrets &mdash; there is no reset that keeps them.</div>
+</div>
+<div class="formrow-actions" style="margin-top:0">
+<button type="button" class="btn" id="vaultSetBtn">Set passphrase</button>
+<button type="button" class="btn" id="vaultLockBtn">Lock now</button>
+<button type="button" class="btn btn-danger-outline" id="vaultResetBtn">Destroy vault</button>
+</div>
+<p class="hint" style="margin-top:12px">What this does and does not do: a locked vault
+keeps credentials out of the web UI and out of the device export, and a flash dump yields
+only PBKDF2-hardened ciphertext. It does <strong>not</strong> protect against someone
+watching LAN traffic while the vault is unlocked &mdash; the dashboard is served over plain
+HTTP, so a revealed secret crosses the network in the clear.</p>
+</div>
+<div class="settgroup">
 <h3>Time</h3>
 <div class="field">
 <label for="setNtp">NTP server</label>
@@ -489,6 +668,45 @@ console:"Console",printer_3d:"3D printer"};
 var TYPE_ICON = {unknown:"i-unknown",router:"i-router",mesh_node:"i-mesh",switch:"i-switch",
 nas:"i-nas",tv:"i-tv",hub:"i-hub",phone:"i-phone",pc:"i-pc",
 iot:"i-iot",printer:"i-printer",cast:"i-cast",console:"i-console",printer_3d:"i-printer3d"};
+var SERVICE_ICON = {
+"home-assistant":"i-ha", esphome:"i-ha", hap:"i-ha",
+portainer:"i-docker", docker:"i-docker",
+plex:"i-media", jellyfin:"i-media", emby:"i-media", rtsp:"i-media", sonos:"i-media",
+airplay:"i-media", cast:"i-media", "cast-http":"i-media",
+grafana:"i-chart", prometheus:"i-chart", influxdb:"i-chart",
+mysql:"i-db", postgres:"i-db", redis:"i-db", mongodb:"i-db", mqtt:"i-db", mqtts:"i-db",
+ssh:"i-terminal", telnet:"i-terminal", rdp:"i-terminal", vnc:"i-terminal",
+proxmox:"i-shield", cockpit:"i-gauge", synology:"i-nas", nfs:"i-folder-share",
+smb:"i-folder-share", afp:"i-folder-share", ftp:"i-folder", webdav:"i-folder",
+transmission:"i-download", qbittorrent:"i-download",
+dns:"i-dns", mdns:"i-dns", dhcp:"i-dns", ntp:"i-globe",
+smtp:"i-mail", imap:"i-mail", imaps:"i-mail", pop3:"i-mail", pop3s:"i-mail",
+printer:"i-printer", ipp:"i-printer", jetdirect:"i-printer",
+snmp:"i-gauge", squid:"i-globe", upnp:"i-globe", ssdp:"i-globe",
+http:"i-globe", https:"i-globe", "http-alt":"i-globe", "https-alt":"i-globe"
+};
+
+/*
+ * The icon shown on a dashboard tile, in priority order: what the user picked,
+ * then what the service on that port suggests, then the device type, then a
+ * generic link. Only the first is stored on the device; the rest follow the
+ * device around as it is reclassified.
+ */
+function linkIconId(l){
+if (l.icon) return l.icon;
+if (l.service && SERVICE_ICON[l.service]) return SERVICE_ICON[l.service];
+return TYPE_ICON[l.type] || "i-link";
+}
+
+/* Every icon a link may be given, grouped for the picker. */
+var ICON_CHOICES = [
+["Services","i-ha","i-docker","i-media","i-chart","i-db","i-terminal","i-shield","i-gauge",
+"i-download","i-cloud","i-mail","i-folder","i-folder-share","i-camera","i-dns","i-globe",
+"i-vpn","i-key","i-book","i-gear","i-tag","i-bell","i-note","i-link"],
+["Devices","i-router","i-mesh","i-switch","i-nas","i-tv","i-hub","i-phone","i-pc","i-iot",
+"i-printer","i-cast","i-console","i-printer3d","i-unknown"]
+];
+
 var EV_ICON = {info:"i-info",device_new:"i-plus",device_online:"i-online",device_offline:"i-offline",
 device_ip_changed:"i-swap",scan:"i-radar",wifi:"i-wifi"};
 function icon(id, cls){ return "<svg class=\"ic" + (cls?(" "+cls):"") + "\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><use href=\"#" + id + "\"/></svg>"; }
@@ -510,6 +728,12 @@ events: [],
 status: {},
 portscan: null,
 links: [],
+groups: [],
+maxGroups: 8,
+notifs: [],
+notifUnread: 0,
+notifRendered: false,
+vault: null,
 linksEditMode: false,
 linksRenamingId: null,
 linksRendered: false,
@@ -537,9 +761,10 @@ try { localStorage.setItem("netdash-hidden-cols", JSON.stringify(state.hiddenCol
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){
 return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
-function api(method, path, body){
+function api(method, path, body, extraHeaders){
 var opts = { method: method, headers: {} };
 if (body !== undefined){ opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+if (extraHeaders){ for (var k in extraHeaders) opts.headers[k] = extraHeaders[k]; }
 return fetch(path, opts).then(function(res){
 return res.text().then(function(txt){
 var data = null;
@@ -609,10 +834,10 @@ btn.setAttribute("aria-selected", on ? "true" : "false");
 panel.hidden = !on;
 });
 if (!skipSave){ try { localStorage.setItem("netdash-tab", tab); } catch(e){} }
-if (tab === "dashboard") loadLinks();
+if (tab === "dashboard"){ loadLinks(); loadNotifs(); }
 if (tab === "devices") loadDevices();
 if (tab === "events") loadEvents();
-if (tab === "settings") loadSettings();
+if (tab === "settings"){ loadSettings(); loadVault().then(renderVaultSettings).catch(function(){}); }
 }
 TABS.forEach(function(t){ $("tab-"+t).addEventListener("click", function(){ selectTab(t); }); });
 function loadStatus(){
@@ -621,6 +846,12 @@ state.status = s; markPollOk(); renderStatus(); renderTiles(); renderSystem();
 }).catch(function(e){ markPollFail(); });
 }
 function renderStatus(){
+renderWan();
+if (state.status && typeof state.status.unread === "number" &&
+state.status.unread !== state.notifUnread){
+state.notifUnread = state.status.unread;
+updateFeedBadge();
+}
 var s = state.status;
 $("hostIp").textContent = (s.hostname || "netdash") + (s.ip ? " (" + s.ip + ")" : "");
 var pillText = $("pillText"), pillBar = $("pillBar"), pillFill = $("pillBarFill");
@@ -637,6 +868,28 @@ pillText.innerHTML = esc(bits.join(" · ")) +
 ((s.mode==="sta"||s.mode==="apsta") && s.rssi ? " " + rssiBars(s.rssi) + " " + s.rssi + " dBm" : "");
 }
 }
+var WAN_TEXT = {up:"Internet up", degraded:"Internet degraded", down:"Internet down",
+unknown:"Internet unchecked"};
+
+function renderWan(){
+var pill = $("wanPill");
+if (!pill) return;
+var w = (state.status && state.status.wan) || null;
+if (!w || w.state === "unknown"){ pill.hidden = true; return; }
+
+var label = WAN_TEXT[w.state] || w.state;
+if (w.state === "up" && w.rtt_ms >= 0) label = "Internet " + w.rtt_ms + " ms";
+/* Say which half failed. "No DNS" and "no route" need different responses,
+   and separating them is the only reason the check is two probes. */
+if (w.state === "degraded") label = w.icmp_ok ? "DNS not resolving" : "No route out";
+
+pill.hidden = false;
+pill.className = "wanpill " + w.state;
+pill.innerHTML = icon(w.state === "up" ? "i-globe" : "i-globe-off") + "<span>" + esc(label) + "</span>";
+pill.title = "ICMP " + (w.icmp_ok ? "ok" : "failing") + " · DNS " + (w.dns_ok ? "ok" : "failing") +
+(w.last_check ? (" · checked " + relTime(w.last_check)) : "");
+}
+
 function renderTiles(){
 var s = state.status;
 var tiles = [
@@ -744,6 +997,7 @@ return "<tr data-mac=\"" + esc(d.mac) + "\" class=\"devrow\" tabindex=\"0\">" +
 "<span class=\"sr-only\">" + (d.online?"Online":"Offline") + "</span></span></td>" +
 "<td data-col=\"name\" data-label=\"Name\"><span class=\"namecell\">" +
 "<span class=\"nm\" title=\"" + esc(d.display_name) + "\">" + esc(d.display_name) + "</span>" + isNew +
+(d.has_note ? icon("i-note", "rowmark") : "") + (d.has_secret ? icon("i-key", "rowmark") : "") +
 "<button type=\"button\" class=\"iconbtn\" data-act=\"edit\" aria-label=\"Edit name for " + esc(d.display_name) + "\">" + icon("i-pencil") + "</button>" +
 "<button type=\"button\" class=\"expandbtn\" data-act=\"expand\" aria-label=\"Show more\">⋯</button>" +
 "</span></td>" +
@@ -1037,6 +1291,9 @@ return "" +
 icon(TYPE_ICON[type]||"i-unknown") + esc(TYPE_LABEL[type]||type) + "</button></dd>" +
 "<dt>Nickname</dt><dd>" + esc(d.nickname||"—") + "</dd>" +
 "</dl></div>" +
+"<div class=\"detailsection\"><h4>Notes</h4><div id=\"noteHost\"></div></div>" +
+"<div class=\"detailsection\"><h4>Secret</h4><div id=\"secretHost\"></div></div>" +
+"<div class=\"detailsection\"><h4>Seen over the last 24 hours</h4><div id=\"sparkHost\"></div></div>" +
 "<div class=\"detailsection\"><h4>Discovery</h4><dl class=\"kv\">" +
 "<dt>Sources</dt><dd><div class=\"chiprow\">" + sources + "</div></dd>" +
 "<dt>Services</dt><dd><div class=\"chiprow\">" + services + "</div></dd>" +
@@ -1146,7 +1403,228 @@ if (!d){ root.innerHTML = "<p class=\"empty\">Device not found.</p>"; return; }
 root.innerHTML = detailHtml(d) +
 (st.error ? ("<p class=\"empty\" style=\"color:var(--danger)\">" + esc(st.error) + "</p>") : "");
 wireDetailBody(d);
+renderNote(d);
+renderSecret(d);
+renderSpark(d);
 }
+/* ---- notes ---------------------------------------------------------- */
+
+function renderNote(d){
+var host = $("noteHost");
+if (!host) return;
+var note = d.note || "";
+if (state.detail.editingNote){
+host.innerHTML = "<textarea class=\"notebox\" id=\"noteInput\" maxlength=\"255\" " +
+"placeholder=\"What would you want to be told about this box in six months? " +
+"Where its admin page is, which vault entry holds the password, what it is for.\"></textarea>" +
+"<div class=\"detailactions\" style=\"margin-top:8px\">" +
+"<button type=\"button\" class=\"btn btn-accent\" id=\"noteSaveBtn\">Save</button>" +
+"<button type=\"button\" class=\"btn\" id=\"noteCancelBtn\">Cancel</button></div>";
+var ta = $("noteInput");
+ta.value = note;
+ta.focus();
+$("noteSaveBtn").addEventListener("click", function(){
+api("PUT","/api/devices/"+d.mac+"/note",{note:ta.value})
+.then(function(){
+state.detail.editingNote = false;
+toast("Note saved","ok");
+fetchDetail();
+}).catch(toastErr);
+});
+$("noteCancelBtn").addEventListener("click", function(){
+state.detail.editingNote = false; renderNote(d);
+});
+return;
+}
+host.innerHTML = (note
+? "<p class=\"notetext\">" + esc(note) + "</p>"
+: "<p class=\"muted\" style=\"margin:0;font-size:var(--fs-sm)\">No note yet.</p>") +
+"<div class=\"detailactions\" style=\"margin-top:8px\">" +
+"<button type=\"button\" class=\"btn\" id=\"noteEditBtn\">" +
+icon("i-pencil") + " " + (note ? "Edit note" : "Add a note") + "</button></div>";
+$("noteEditBtn").addEventListener("click", function(){
+state.detail.editingNote = true; renderNote(d);
+});
+}
+
+/* ---- vault ---------------------------------------------------------- */
+
+var vaultToken = null;   /* session only: never written to storage */
+
+function vaultUnlocked(){ return !!(vaultToken && state.vault && state.vault.unlocked); }
+
+function loadVault(){
+return api("GET","/api/vault").then(function(v){
+state.vault = v;
+if (!v.unlocked) vaultToken = null;
+return v;
+});
+}
+
+function renderSecret(d){
+var host = $("secretHost");
+if (!host) return;
+var v = state.vault || {};
+var st = state.detail;
+
+if (!v.configured){
+host.innerHTML = "<div class=\"lockedhint\">" + icon("i-lock") +
+"<span>No vault yet. Set a passphrase in Settings to store credentials here.</span></div>";
+return;
+}
+if (!vaultUnlocked()){
+host.innerHTML = "<div class=\"lockedhint\">" + icon("i-lock") + "<span>" +
+(d.has_secret ? "A secret is stored for this device." : "Vault is locked.") +
+"</span></div><div class=\"detailactions\" style=\"margin-top:8px\">" +
+"<button type=\"button\" class=\"btn\" id=\"secUnlockBtn\">Unlock vault</button></div>";
+$("secUnlockBtn").addEventListener("click", function(){ openUnlockModal(function(){ renderSecret(d); }); });
+return;
+}
+
+if (st.editingSecret){
+host.innerHTML = "<textarea class=\"notebox\" id=\"secInput\" maxlength=\"191\" " +
+"placeholder=\"root / hunter2&#10;Recovery key in Bitwarden under 'pve'\"></textarea>" +
+"<div class=\"detailactions\" style=\"margin-top:8px\">" +
+"<button type=\"button\" class=\"btn btn-accent\" id=\"secSaveBtn\">Save</button>" +
+"<button type=\"button\" class=\"btn\" id=\"secCancelBtn\">Cancel</button></div>";
+var ta = $("secInput");
+ta.value = st.secretText || "";
+ta.focus();
+$("secSaveBtn").addEventListener("click", function(){
+apiAuth("PUT","/api/devices/"+d.mac+"/secret",{secret:ta.value})
+.then(function(){
+st.editingSecret = false; st.secretText = null; st.secretShown = false;
+ta.value = "";
+toast("Secret saved","ok");
+fetchDetail();
+}).catch(toastErr);
+});
+$("secCancelBtn").addEventListener("click", function(){
+st.editingSecret = false; st.secretText = null; renderSecret(d);
+});
+return;
+}
+
+if (!d.has_secret){
+host.innerHTML = "<p class=\"muted\" style=\"margin:0;font-size:var(--fs-sm)\">Nothing stored.</p>" +
+"<div class=\"detailactions\" style=\"margin-top:8px\">" +
+"<button type=\"button\" class=\"btn\" id=\"secAddBtn\">" + icon("i-key") + " Add a secret</button></div>";
+$("secAddBtn").addEventListener("click", function(){
+st.editingSecret = true; st.secretText = ""; renderSecret(d);
+});
+return;
+}
+
+host.innerHTML = "<div class=\"secretrow\">" +
+(st.secretShown
+? "<pre class=\"secretval\">" + esc(st.secretText || "") + "</pre>"
+: "<pre class=\"secretval\">" + "•".repeat(12) + "</pre>") +
+"</div><div class=\"detailactions\" style=\"margin-top:8px\">" +
+"<button type=\"button\" class=\"btn\" id=\"secShowBtn\">" +
+icon(st.secretShown ? "i-eye-off" : "i-eye") + " " + (st.secretShown ? "Hide" : "Reveal") + "</button>" +
+(st.secretShown ? "<button type=\"button\" class=\"btn\" id=\"secCopyBtn\">Copy</button>" : "") +
+"<button type=\"button\" class=\"btn\" id=\"secEditBtn\">Replace</button>" +
+"<button type=\"button\" class=\"btn btn-danger-outline\" id=\"secDelBtn\">Delete</button></div>";
+
+$("secShowBtn").addEventListener("click", function(){
+if (st.secretShown){ st.secretShown = false; st.secretText = null; renderSecret(d); return; }
+apiAuth("GET","/api/devices/"+d.mac+"/secret").then(function(r){
+st.secretText = r.secret || ""; st.secretShown = true; renderSecret(d);
+}).catch(toastErr);
+});
+var copyBtn = $("secCopyBtn");
+if (copyBtn) copyBtn.addEventListener("click", function(){
+if (!navigator.clipboard){ toast("Clipboard unavailable","err"); return; }
+navigator.clipboard.writeText(st.secretText || "")
+.then(function(){ toast("Copied","ok"); })
+.catch(function(){ toast("Could not copy","err"); });
+});
+$("secEditBtn").addEventListener("click", function(){
+apiAuth("GET","/api/devices/"+d.mac+"/secret").then(function(r){
+st.secretText = r.secret || ""; st.editingSecret = true; renderSecret(d);
+}).catch(toastErr);
+});
+$("secDelBtn").addEventListener("click", function(){
+if (!confirm("Delete the stored secret for this device?")) return;
+apiAuth("PUT","/api/devices/"+d.mac+"/secret",{secret:""})
+.then(function(){
+st.secretShown = false; st.secretText = null;
+toast("Secret deleted","ok"); fetchDetail();
+}).catch(toastErr);
+});
+}
+
+/* Same as api(), plus the vault session token. */
+function apiAuth(method, path, body){
+return api(method, path, body, vaultToken ? {"X-Vault-Token": vaultToken} : null);
+}
+
+function openUnlockModal(after){
+var html = "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Unlock vault\">" +
+"<button type=\"button\" class=\"modalclose\" aria-label=\"Close\">" + icon("i-close") + "</button>" +
+"<h3>Unlock the vault</h3>" +
+"<p class=\"muted\" style=\"font-size:var(--fs-sm)\">The key is derived from your passphrase " +
+"each time, so unlocking takes a second or two. It relocks itself after 15 minutes idle " +
+"and on every reboot.</p>" +
+"<div class=\"field\"><label for=\"vaultPass\">Passphrase</label>" +
+"<input type=\"password\" id=\"vaultPass\" autocomplete=\"current-password\"></div>" +
+"<div class=\"detailactions\"><button type=\"button\" class=\"btn btn-accent\" id=\"vaultGoBtn\">Unlock</button></div>" +
+"</div>";
+openModal(html, function(root){
+root.querySelector(".modalclose").addEventListener("click", closeModal);
+function go(){
+var btn = $("vaultGoBtn"), pass = $("vaultPass").value;
+if (!pass) return;
+btn.disabled = true; btn.textContent = "Unlocking…";
+api("POST","/api/vault/unlock",{passphrase:pass}).then(function(v){
+vaultToken = v.token; state.vault = v;
+$("vaultPass").value = "";
+closeModal();
+toast("Vault unlocked","ok");
+if (after) after();
+}).catch(function(e){
+btn.disabled = false; btn.textContent = "Unlock";
+toastErr(e);
+});
+}
+$("vaultGoBtn").addEventListener("click", go);
+$("vaultPass").addEventListener("keydown", function(ev){ if (ev.key === "Enter"){ ev.preventDefault(); go(); } });
+});
+}
+
+/* ---- availability sparkline ----------------------------------------- */
+
+function renderSpark(d){
+var host = $("sparkHost");
+if (!host) return;
+host.innerHTML = "<p class=\"muted\" style=\"margin:0;font-size:var(--fs-sm)\">Loading…</p>";
+api("GET","/api/devices/"+d.mac+"/history").then(function(h){
+if (!state.detail.mac || state.detail.mac !== d.mac) return;
+var valid = h.valid || 0;
+if (!valid){
+host.innerHTML = "<p class=\"muted\" style=\"margin:0;font-size:var(--fs-sm)\">" +
+"No history yet. Samples start once the clock has synced.</p>";
+return;
+}
+var bytes = [];
+for (var i = 0; i + 1 < h.bits.length; i += 2) bytes.push(parseInt(h.bits.substr(i,2),16));
+var bars = "";
+for (var j = 0; j < valid; j++){
+var on = (bytes[j >> 3] >> (j & 7)) & 1;
+bars += "<i class=\"" + (on ? "on" : "off") + "\"></i>";
+}
+var mins = valid * (h.slot_sec || 300) / 60;
+var span = mins >= 120 ? (Math.round(mins/60) + " hours") : (Math.round(mins) + " minutes");
+var up = 0;
+for (var k = 0; k < valid; k++) up += (bytes[k >> 3] >> (k & 7)) & 1;
+host.innerHTML = "<div class=\"spark\">" + bars + "</div>" +
+"<div class=\"sparkaxis\"><span>" + esc(span) + " ago</span>" +
+"<span>" + Math.round(100*up/valid) + "% reachable</span><span>now</span></div>";
+}).catch(function(){
+host.innerHTML = "<p class=\"muted\" style=\"margin:0;font-size:var(--fs-sm)\">History unavailable.</p>";
+});
+}
+
 function fetchDetail(){
 var mac = state.detail.mac;
 if (!mac) return;
@@ -1157,7 +1635,7 @@ state.devicesByMac[d.mac] = d;
 var idx = state.devices.findIndex(function(x){ return x.mac === d.mac; });
 if (idx !== -1) state.devices[idx] = d;
 if (state.tab === "devices") renderDevices();
-if (!state.detail.editingName) renderDetailBody();
+if (!state.detail.editingName && !state.detail.editingNote && !state.detail.editingSecret) renderDetailBody();
 }).catch(function(err){
 if (state.detail.mac !== mac) return;
 state.detail.loading = false;
@@ -1170,7 +1648,8 @@ if (!state.detail.mac) return;
 var opener = state.detail.opener, mac = state.detail.mac;
 if (detailKeyHandler){ document.removeEventListener("keydown", detailKeyHandler); detailKeyHandler = null; }
 $("detailRoot").innerHTML = "";
-state.detail = { mac: null, data: null, loading: false, error: null, editingName: false, opener: null };
+state.detail = { mac: null, data: null, loading: false, error: null, editingName: false,
+editingNote: false, editingSecret: false, secretShown: false, secretText: null, opener: null };
 if (!opener || !document.contains(opener)){
 opener = document.querySelector('tr.devrow[data-mac="' + mac.replace(/"/g,"") + '"]');
 }
@@ -1180,7 +1659,8 @@ else $("tab-devices").focus();
 function openDetail(mac, opener){
 closePopover();
 state.detail = { mac: mac, data: state.devicesByMac[mac]||null, loading: true, error: null,
-editingName: false, opener: opener||null };
+editingName: false, editingNote: false, editingSecret: false,
+secretShown: false, secretText: null, opener: opener||null };
 var back = document.createElement("div");
 back.className = "drawerback";
 back.innerHTML = "<div class=\"drawer\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Device details\" id=\"detailPanel\">" +
@@ -1211,14 +1691,18 @@ $("detailCloseBtn").focus();
 fetchDetail();
 }
 function loadLinks(){
-return api("GET","/api/links").then(function(list){
+return api("GET","/api/links").then(function(res){
 markPollOk();
 /* Re-rendering replaces the whole grid, which would rip out an open rename
    box mid-edit and look like edit mode had exited. Hold off while a rename is
    in progress, and skip it entirely when the poll brought back nothing new,
    so the page is not rebuilt every five seconds for no reason. */
-var same = JSON.stringify(list) === JSON.stringify(state.links);
-state.links = list;
+var links = res.links || [], groups = res.groups || [];
+var same = JSON.stringify(links) === JSON.stringify(state.links) &&
+JSON.stringify(groups) === JSON.stringify(state.groups);
+state.links = links;
+state.groups = groups;
+state.maxGroups = res.max_groups || 8;
 if (state.linksRenamingId == null && (!same || !state.linksRendered)) renderDashboard();
 }).catch(function(e){ markPollFail(); });
 }
@@ -1228,7 +1712,7 @@ var editing = state.linksEditMode;
 var cls = "linkcard" + (!known ? " unknown" : (!l.online ? " offline" : ""));
 var host = known ? (esc(l.ip) + ":" + esc(l.port)) : "device not on the network";
 var statusText = !known ? "Unknown device" : (l.online ? "Online" : "Offline");
-var iconId = TYPE_ICON[l.type] || "i-link";
+var iconId = linkIconId(l);
 var topStyle = editing ? " style=\"padding-right:90px\"" : "";
 var body = "<div class=\"lc-top\"" + topStyle + ">" + icon(iconId, "lc-icon") +
 "<span class=\"lc-label\">" + esc(l.label) + "</span></div>" +
@@ -1248,6 +1732,8 @@ var editControls = "";
 if (editing){
 editControls = "<div class=\"linkedit\">" +
 "<button type=\"button\" data-linkact=\"rename\" data-id=\"" + l.id + "\" aria-label=\"Rename " + esc(l.label) + "\">" + icon("i-pencil") + "</button>" +
+"<button type=\"button\" data-linkact=\"icon\" data-id=\"" + l.id + "\" aria-label=\"Change icon for " + esc(l.label) + "\">" + icon("i-tag") + "</button>" +
+(state.groups.length ? ("<button type=\"button\" data-linkact=\"group\" data-id=\"" + l.id + "\" aria-label=\"Move " + esc(l.label) + " to a group\">" + icon("i-folder") + "</button>") : "") +
 "<button type=\"button\" data-linkact=\"up\" data-id=\"" + l.id + "\"" + (i===0?" disabled":"") + " aria-label=\"Move up\">" + icon("i-up") + "</button>" +
 "<button type=\"button\" data-linkact=\"down\" data-id=\"" + l.id + "\"" + (i===total-1?" disabled":"") + " aria-label=\"Move down\">" + icon("i-down") + "</button>" +
 "<button type=\"button\" data-linkact=\"remove\" data-id=\"" + l.id + "\" aria-label=\"Remove " + esc(l.label) + "\">" + icon("i-trash") + "</button>" +
@@ -1255,12 +1741,60 @@ editControls = "<div class=\"linkedit\">" +
 }
 return "<div class=\"linkcard-wrap\">" + cardTag + editControls + "</div>";
 }
+function groupHeadHtml(g){
+if (!state.linksEditMode) {
+return "<div class=\"grouphead\"><h3>" + esc(g.name) + "</h3><div class=\"rule\"></div></div>";
+}
+return "<div class=\"grouphead\"><h3>" + esc(g.name) + "</h3><div class=\"rule\"></div>" +
+"<div class=\"gbtns\">" +
+"<button type=\"button\" data-groupact=\"up\" data-gid=\"" + g.id + "\" aria-label=\"Move " + esc(g.name) + " up\">" + icon("i-up") + "</button>" +
+"<button type=\"button\" data-groupact=\"down\" data-gid=\"" + g.id + "\" aria-label=\"Move " + esc(g.name) + " down\">" + icon("i-down") + "</button>" +
+"<button type=\"button\" data-groupact=\"rename\" data-gid=\"" + g.id + "\" aria-label=\"Rename " + esc(g.name) + "\">" + icon("i-pencil") + "</button>" +
+"<button type=\"button\" data-groupact=\"remove\" data-gid=\"" + g.id + "\" aria-label=\"Delete " + esc(g.name) + "\">" + icon("i-trash") + "</button>" +
+"</div></div>";
+}
+
+/*
+ * Sections render in group order, then whatever is ungrouped. An empty group
+ * still draws its heading while editing - otherwise a group you just created
+ * appears to have vanished before you can put anything in it.
+ */
 function renderDashboard(){
-var links = state.links || [];
+var links = state.links || [], groups = state.groups || [];
 state.linksRendered = true;
 $("linkEmpty").hidden = links.length !== 0;
 $("linkEditBtn").hidden = links.length === 0;
-$("linkGrid").innerHTML = links.map(function(l,i){ return linkCardHtml(l, i, links.length); }).join("");
+$("linkGroupAddBtn").hidden = !state.linksEditMode || groups.length >= (state.maxGroups || 8);
+
+var html = "";
+var sections = groups.map(function(g){
+return {group: g, items: links.filter(function(l){ return l.group === g.id; })};
+});
+var loose = links.filter(function(l){
+return !l.group || !groups.some(function(g){ return g.id === l.group; });
+});
+
+sections.forEach(function(sec){
+if (!sec.items.length && !state.linksEditMode) return;
+html += groupHeadHtml(sec.group);
+if (!sec.items.length){
+html += "<div class=\"groupempty\">Nothing filed here yet.</div>";
+} else {
+html += "<div class=\"linkgrid\">" + sec.items.map(function(l,i){
+return linkCardHtml(l, i, sec.items.length); }).join("") + "</div>";
+}
+});
+
+if (loose.length){
+/* Only label the leftovers once there is something to contrast them with. */
+if (sections.some(function(sec){ return sec.items.length || state.linksEditMode; })){
+html += "<div class=\"grouphead\"><h3>Ungrouped</h3><div class=\"rule\"></div></div>";
+}
+html += "<div class=\"linkgrid\">" + loose.map(function(l,i){
+return linkCardHtml(l, i, loose.length); }).join("") + "</div>";
+}
+
+$("linkGrid").innerHTML = html;
 wireLinkGrid();
 }
 function wireLinkGrid(){
@@ -1273,11 +1807,110 @@ if (act === "remove") removeLink(id);
 else if (act === "up") moveLink(id, -1);
 else if (act === "down") moveLink(id, 1);
 else if (act === "rename") renameLink(id, btn);
+else if (act === "icon") openIconPicker(id);
+else if (act === "group") openGroupPicker(id, btn);
+});
+});
+grid.querySelectorAll("[data-groupact]").forEach(function(btn){
+btn.addEventListener("click", function(ev){
+ev.preventDefault(); ev.stopPropagation();
+var gid = Number(btn.dataset.gid), act = btn.dataset.groupact;
+if (act === "remove") removeGroup(gid);
+else if (act === "rename") renameGroup(gid);
+else if (act === "up") moveGroup(gid, -1);
+else if (act === "down") moveGroup(gid, 1);
 });
 });
 grid.querySelectorAll(".linkcard.unknown").forEach(function(el){
 el.addEventListener("keydown", function(ev){
 if (ev.key === "Enter" || ev.key === " ") ev.preventDefault();
+});
+});
+}
+function addGroup(){
+var name = prompt("Name this group", "");
+if (name == null) return;
+name = name.trim();
+if (!name) return;
+api("POST","/api/links/groups",{name:name})
+.then(function(){ toast("Group added", "ok"); state.linksRendered = false; loadLinks(); })
+.catch(toastErr);
+}
+function renameGroup(gid){
+var g = (state.groups||[]).find(function(x){ return x.id === gid; });
+if (!g) return;
+var name = prompt("Rename group", g.name);
+if (name == null) return;
+name = name.trim();
+if (!name || name === g.name) return;
+api("PATCH","/api/links/groups/"+gid,{name:name})
+.then(function(){ state.linksRendered = false; loadLinks(); }).catch(toastErr);
+}
+function removeGroup(gid){
+var g = (state.groups||[]).find(function(x){ return x.id === gid; });
+if (!g) return;
+var n = (state.links||[]).filter(function(l){ return l.group === gid; }).length;
+var msg = n ? ("Delete the group \"" + g.name + "\"? Its " + n + " link" + (n===1?"":"s") +
+" will move to Ungrouped, not be deleted.")
+: ("Delete the group \"" + g.name + "\"?");
+if (!confirm(msg)) return;
+api("DELETE","/api/links/groups/"+gid)
+.then(function(){ toast("Group deleted", "ok"); state.linksRendered = false; loadLinks(); })
+.catch(toastErr);
+}
+function moveGroup(gid, dir){
+var ids = (state.groups||[]).map(function(g){ return g.id; });
+var i = ids.indexOf(gid), j = i + dir;
+if (i < 0 || j < 0 || j >= ids.length) return;
+ids[i] = ids[j]; ids[j] = gid;
+api("PUT","/api/links/groups", ids)
+.then(function(){ state.linksRendered = false; loadLinks(); }).catch(toastErr);
+}
+function setLinkGroup(id, gid){
+api("PATCH","/api/links/"+id,{group:gid})
+.then(function(){ state.linksRendered = false; loadLinks(); }).catch(toastErr);
+}
+function openGroupPicker(id, anchor){
+var l = (state.links||[]).find(function(x){ return x.id === id; });
+if (!l) return;
+var items = [{v:0, label:"Ungrouped"}].concat((state.groups||[]).map(function(g){
+return {v:g.id, label:g.name}; }));
+var html = items.map(function(it){
+var sel = (l.group||0) === it.v;
+return "<button type=\"button\" data-v=\"" + it.v + "\"" + (sel?" aria-current=\"true\"":"") +
+">" + (sel ? icon("i-check") : icon("i-folder")) + " " + esc(it.label) + "</button>";
+}).join("");
+openPopover(anchor, html, function(v){ setLinkGroup(id, Number(v)); });
+}
+function openIconPicker(id){
+var l = (state.links||[]).find(function(x){ return x.id === id; });
+if (!l) return;
+var current = l.icon || "";
+var html = "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Choose an icon\">" +
+"<button type=\"button\" class=\"modalclose\" aria-label=\"Close\">" + icon("i-close") + "</button>" +
+"<h3>Icon for " + esc(l.label) + "</h3>" +
+"<p class=\"muted\" style=\"margin:0 0 4px;font-size:var(--fs-sm)\">" +
+"Automatic follows the service on port " + esc(l.port) + ", so it keeps up if the " +
+"device is reclassified.</p>" +
+"<p class=\"picksecthead\">Automatic</p><div class=\"iconpick\">" +
+"<button type=\"button\" data-icon=\"\" aria-pressed=\"" + (current===""?"true":"false") +
+"\" title=\"Automatic\">" +
+icon(linkIconId({port:l.port, service:l.service, type:l.type})) + "</button></div>" +
+ICON_CHOICES.map(function(sect){
+return "<p class=\"picksecthead\">" + esc(sect[0]) + "</p><div class=\"iconpick\">" +
+sect.slice(1).map(function(ic){
+return "<button type=\"button\" data-icon=\"" + ic + "\" aria-pressed=\"" +
+(current===ic?"true":"false") + "\" title=\"" + esc(ic.slice(2)) + "\">" + icon(ic) + "</button>";
+}).join("") + "</div>";
+}).join("") + "</div>";
+openModal(html, function(root){
+root.querySelector(".modalclose").addEventListener("click", closeModal);
+root.querySelectorAll("[data-icon]").forEach(function(b){
+b.addEventListener("click", function(){
+api("PATCH","/api/links/"+id,{icon:b.dataset.icon})
+.then(function(){ closeModal(); state.linksRendered = false; loadLinks(); })
+.catch(toastErr);
+});
 });
 });
 }
@@ -1379,7 +2012,7 @@ airplay:"AirPlay",jetdirect:"JetDirect",proxmox:"Proxmox",synology:"Synology"};
 function serviceLabel(svc){
 if (!svc) return "";
 if (SERVICE_LABEL_FIX[svc]) return SERVICE_LABEL_FIX[svc];
-return svc.replace(/[-_]/g," ").replace(/[a-z]/g, function(c){ return c.toUpperCase(); });
+return svc.replace(/[-_]/g," ").replace(/\b[a-z]/g, function(c){ return c.toUpperCase(); });
 }
 function defaultLinkLabel(deviceName, port, svc){
 return deviceName + " - " + (svc ? serviceLabel(svc) : String(port));
@@ -1441,6 +2074,18 @@ root.querySelector(".modalclose").addEventListener("click", closeModal);
 }).catch(toastErr);
 }
 $("linkAddBtn").addEventListener("click", openAddLinkModal);
+$("linkGroupAddBtn").addEventListener("click", addGroup);
+$("feedReadBtn").addEventListener("click", function(){
+api("POST","/api/notifications/read").then(function(){
+state.notifRendered = false; loadNotifs();
+}).catch(toastErr);
+});
+$("feedClearBtn").addEventListener("click", function(){
+if (!confirm("Clear the whole feed?")) return;
+api("DELETE","/api/notifications").then(function(){
+state.notifRendered = false; loadNotifs();
+}).catch(toastErr);
+});
 $("linkEmptyAddBtn").addEventListener("click", openAddLinkModal);
 $("linkEditBtn").addEventListener("click", function(){
 state.linksEditMode = !state.linksEditMode;
@@ -1448,6 +2093,82 @@ $("linkEditBtn").textContent = state.linksEditMode ? "Done" : "Edit";
 $("linkEditBtn").setAttribute("aria-pressed", state.linksEditMode ? "true" : "false");
 renderDashboard();
 });
+var NOTIF_ICON = {
+new_device:"i-plus", ip_changed:"i-swap", new_port:"i-key",
+device_gone:"i-offline", device_back:"i-online",
+wan_down:"i-globe-off", wan_up:"i-globe"
+};
+/* Tone, not decoration: colour is reserved for the ones that mean something
+   is wrong, so a feed of routine arrivals stays quiet. */
+var NOTIF_TONE = {
+new_device:"", ip_changed:"warn", new_port:"warn",
+device_gone:"warn", device_back:"good", wan_down:"bad", wan_up:"good"
+};
+var NOTIF_WHAT = {
+new_device:"New device", ip_changed:"Address changed", new_port:"New open port",
+device_gone:"Went offline", device_back:"Back online",
+wan_down:"Internet problem", wan_up:"Internet restored"
+};
+
+function loadNotifs(){
+return api("GET","/api/notifications").then(function(res){
+var items = res.items || [];
+var same = JSON.stringify(items) === JSON.stringify(state.notifs);
+state.notifs = items;
+state.notifUnread = res.unread || 0;
+if (!same || !state.notifRendered) renderFeed();
+updateFeedBadge();
+}).catch(function(){});
+}
+
+function updateFeedBadge(){
+var b = $("feedCount");
+if (!b) return;
+b.hidden = state.notifUnread === 0;
+b.textContent = state.notifUnread;
+}
+
+function renderFeed(){
+var items = state.notifs || [];
+state.notifRendered = true;
+$("feed").hidden = items.length === 0;
+if (!items.length){ $("feedList").innerHTML = ""; return; }
+
+$("feedList").innerHTML = items.map(function(n){
+var what = NOTIF_WHAT[n.type] || n.type;
+/* The device name leads when there is one - that is what the reader is
+   scanning for - with the category carried by the icon and the detail line. */
+var title = n.device ? esc(n.device) : what;
+var detail = n.device ? (what + (n.text ? (" · " + n.text) : ""))
+: (n.text || "");
+if (n.ip) detail += " · " + n.ip;
+return "<li" + (n.read ? "" : " class=\"unread\"") + " data-nid=\"" + n.id + "\">" +
+icon(NOTIF_ICON[n.type] || "i-info", "fd-ico " + (NOTIF_TONE[n.type] || "")) +
+"<span class=\"fd-body\">" +
+"<div class=\"fd-title\">" + title + "</div>" +
+"<div class=\"fd-meta\">" + esc(detail) + (n.ts ? (" · " + esc(relTime(n.ts))) : "") + "</div>" +
+"</span>" +
+"<button type=\"button\" class=\"fd-x\" data-nid=\"" + n.id + "\" aria-label=\"Dismiss\">" +
+icon("i-close") + "</button></li>";
+}).join("");
+
+$("feedList").querySelectorAll(".fd-x").forEach(function(b){
+b.addEventListener("click", function(ev){
+ev.stopPropagation();
+api("DELETE","/api/notifications/"+b.dataset.nid)
+.then(function(){ state.notifRendered = false; loadNotifs(); }).catch(toastErr);
+});
+});
+/* Clicking the row opens the device it is about, which is almost always the
+   next thing you want after reading it. */
+$("feedList").querySelectorAll("li[data-nid]").forEach(function(li){
+var n = state.notifs.find(function(x){ return String(x.id) === li.dataset.nid; });
+if (!n || !n.mac) return;
+li.style.cursor = "pointer";
+li.addEventListener("click", function(){ openDetail(n.mac, null); });
+});
+}
+
 function loadEvents(){
 return api("GET","/api/events").then(function(list){
 state.events = list; markPollOk(); renderEvents();
@@ -1486,8 +2207,73 @@ $("setPortscanRate").value = s.portscan_rate;
 $("setPortscanMaxTier").value = s.portscan_max_tier;
 $("setNtp").value = s.ntp_server || "";
 $("setTz").value = s.tz || "";
+$("setRescanDays").value = s.portscan_rescan_days;
+$("setWanEnabled").checked = !!s.wan_enabled;
+$("setWanInterval").value = s.wan_interval_s;
+$("setWanPing").value = s.wan_ping_host || "";
+$("setWanDns").value = s.wan_dns_probe || "";
+var n = s.notifications || {};
+document.querySelectorAll("[data-notif]").forEach(function(cb){
+cb.checked = !!n[cb.dataset.notif];
+});
 }).catch(toastErr);
 }
+function renderVaultSettings(){
+var v = state.vault || {};
+var blurb = $("vaultBlurb");
+if (!blurb) return;
+if (!v.configured){
+blurb.textContent = "No vault has been set up. Choose a passphrase to start storing " +
+"credentials against devices.";
+} else if (v.unlocked){
+blurb.textContent = "Vault is unlocked, holding " + (v.secrets||0) + " secret" +
+((v.secrets === 1) ? "" : "s") + ". It relocks after " +
+Math.round((v.idle_timeout_s||900)/60) + " minutes idle.";
+} else {
+blurb.textContent = "Vault is locked, holding " + (v.secrets||0) + " secret" +
+((v.secrets === 1) ? "" : "s") + ".";
+}
+$("vaultLockBtn").hidden = !v.unlocked;
+$("vaultResetBtn").hidden = !v.configured;
+$("vaultOldPass").parentElement.hidden = !v.configured;
+$("vaultSetBtn").textContent = v.configured ? "Change passphrase" : "Set passphrase";
+}
+$("vaultSetBtn").addEventListener("click", function(){
+var np = $("vaultNewPass").value, op = $("vaultOldPass").value;
+if (np.length < 8){ toast("Passphrase must be at least 8 characters","err"); return; }
+var body = {passphrase: np};
+if (state.vault && state.vault.configured) body.old_passphrase = op;
+var btn = $("vaultSetBtn"), was = btn.textContent;
+btn.disabled = true; btn.textContent = "Working…";
+api("PUT","/api/vault", body).then(function(v){
+vaultToken = v.token; state.vault = v;
+$("vaultNewPass").value = ""; $("vaultOldPass").value = "";
+btn.disabled = false; btn.textContent = was;
+renderVaultSettings();
+toast("Vault passphrase set","ok");
+}).catch(function(e){
+btn.disabled = false; btn.textContent = was;
+toastErr(e);
+});
+});
+$("vaultLockBtn").addEventListener("click", function(){
+api("POST","/api/vault/lock").then(function(v){
+vaultToken = null; state.vault = v; renderVaultSettings();
+toast("Vault locked","ok");
+}).catch(toastErr);
+});
+$("vaultResetBtn").addEventListener("click", function(){
+var n = (state.vault && state.vault.secrets) || 0;
+if (!confirm("Destroy the vault and all " + n + " secret" + (n===1?"":"s") +
+" in it? They cannot be recovered.")) return;
+if (!confirm("Last chance. This is permanent.")) return;
+api("DELETE","/api/vault",{confirm:"destroy secrets"}).then(function(v){
+vaultToken = null; state.vault = v; renderVaultSettings();
+toast("Vault destroyed","ok");
+loadDevices();
+}).catch(toastErr);
+});
+
 document.querySelectorAll(".presets [data-tz]").forEach(function(b){
 b.addEventListener("click", function(){ $("setTz").value = b.dataset.tz; });
 });
@@ -1505,7 +2291,17 @@ portscan_enabled: $("setPortscanEnabled").checked,
 portscan_rate: Number($("setPortscanRate").value),
 portscan_max_tier: Number($("setPortscanMaxTier").value),
 ntp_server: $("setNtp").value,
-tz: $("setTz").value
+tz: $("setTz").value,
+portscan_rescan_days: Number($("setRescanDays").value),
+wan_enabled: $("setWanEnabled").checked,
+wan_interval_s: Number($("setWanInterval").value),
+wan_ping_host: $("setWanPing").value,
+wan_dns_probe: $("setWanDns").value,
+notifications: (function(){
+var o = {};
+document.querySelectorAll("[data-notif]").forEach(function(cb){ o[cb.dataset.notif] = cb.checked; });
+return o;
+})()
 };
 api("PUT","/api/settings", body).then(function(res){
 $("setWifiPass").value = "";
@@ -1609,10 +2405,11 @@ function tick(){
 if (document.hidden) return;
 loadStatus();
 loadPortscanStatus();
-if (state.tab === "dashboard") loadLinks();
+if (state.tab === "dashboard"){ loadLinks(); loadNotifs(); }
 if (state.tab === "devices") loadDevices();
 if (state.tab === "events") loadEvents();
-if (state.detail.mac && !state.detail.editingName) fetchDetail();
+if (state.detail.mac && !state.detail.editingName && !state.detail.editingNote &&
+!state.detail.editingSecret) fetchDetail();
 }
 setInterval(tick, 5000);
 var savedTab = "dashboard";
@@ -1622,6 +2419,10 @@ selectTab(savedTab, true);
 loadStatus();
 loadDevices();
 loadPortscanStatus();
+loadNotifs();
+/* The vault state is needed before the first drawer opens, so the Secret
+   section can say "locked" rather than flashing "no vault". */
+loadVault().then(renderVaultSettings).catch(function(){});
 })();
 </script>
 </body>

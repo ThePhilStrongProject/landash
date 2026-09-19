@@ -36,9 +36,12 @@
 #include "classify.h"
 #include "device_db.h"
 #include "links.h"
+#include "notes.h"
+#include "notify.h"
 #include "portscan.h"
 #include "scanner.h"
 #include "settings.h"
+#include "wan.h"
 #include "wifi_mgr.h"
 
 static const char *TAG = "http_server";
@@ -296,6 +299,9 @@ static const char *mode_name(wifi_mgr_mode_t mode)
     }
 }
 
+/* Defined with the rest of the WAN endpoints, far below. */
+static cJSON *wan_json(void);
+
 static esp_err_t status_handler(httpd_req_t *req)
 {
     wifi_mgr_mode_t mode = wifi_mgr_get_mode();
@@ -355,6 +361,8 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "rssi", wifi_mgr_get_rssi());
     cJSON_AddStringToObject(root, "hostname", cfg.hostname);
     cJSON_AddNumberToObject(root, "uptime_s", (double)(esp_timer_get_time() / 1000000));
+    cJSON_AddItemToObject(root, "wan", wan_json());
+    cJSON_AddNumberToObject(root, "unread", notify_unread());
     cJSON_AddNumberToObject(root, "heap_free", (double)esp_get_free_heap_size());
     cJSON_AddNumberToObject(root, "heap_min_free", (double)esp_get_minimum_free_heap_size());
     cJSON_AddStringToObject(root, "fw", app->version);
@@ -472,6 +480,8 @@ static cJSON *device_to_json(const netdash_device_t *d, int64_t now)
     cJSON_AddBoolToObject(o, "hidden", (d->flags & NETDASH_FLAG_HIDDEN) != 0);
     cJSON_AddNumberToObject(o, "rtt_ms", d->rtt_ms);
     cJSON_AddNumberToObject(o, "miss_count", d->miss_count);
+    cJSON_AddBoolToObject(o, "has_note", notes_exists(d->mac));
+    cJSON_AddBoolToObject(o, "has_secret", secret_exists(d->mac));
 
     /*
      * Port-scan summary. The list endpoint is polled every few seconds, so it
@@ -564,11 +574,24 @@ static esp_err_t devices_list_handler(httpd_req_t *req)
         qsort(buf, n, sizeof(*buf), cmp_by_ip);
     }
 
-    int64_t now = now_or_zero();
-    cJSON  *arr = cJSON_CreateArray();
-    for (size_t i = 0; i < n; i++) {
+    /*
+     * Streamed a device at a time rather than assembled into one tree and
+     * printed. Building the whole array first costs the object graph and the
+     * finished string simultaneously - about 58 KB for 28 devices, and it
+     * grows with the table, so a full 128-device table would not fit in the
+     * heap this leaves. One device at a time is a few hundred bytes.
+     */
+    int64_t   now  = now_or_zero();
+    esp_err_t err  = ESP_OK;
+    size_t    sent = 0;
+
+    httpd_resp_set_status(req, "200 OK");
+    httpd_resp_set_type(req, "application/json; charset=utf-8");
+    err = httpd_resp_send_chunk(req, "[", 1);
+
+    for (size_t i = 0; i < n && err == ESP_OK; i++) {
         netdash_device_t *d      = &buf[i];
-        bool               hidden = (d->flags & NETDASH_FLAG_HIDDEN) != 0;
+        bool              hidden = (d->flags & NETDASH_FLAG_HIDDEN) != 0;
         if (hidden && !show_hidden) {
             continue;
         }
@@ -576,13 +599,40 @@ static esp_err_t devices_list_handler(httpd_req_t *req)
         if ((online_filter == 1 && !online) || (online_filter == 0 && online)) {
             continue;
         }
-        cJSON_AddItemToArray(arr, device_to_json(d, now));
+
+        cJSON *o = device_to_json(d, now);
+        char  *text = cJSON_PrintUnformatted(o);
+        cJSON_Delete(o);
+        if (text == NULL) {
+            err = ESP_ERR_NO_MEM;
+            break;
+        }
+        if (sent > 0) {
+            err = httpd_resp_send_chunk(req, ",", 1);
+        }
+        if (err == ESP_OK) {
+            err = httpd_resp_send_chunk(req, text, strlen(text));
+        }
+        cJSON_free(text);
+        sent++;
     }
     free(buf);
 
+    if (err == ESP_OK) {
+        err = httpd_resp_send_chunk(req, "]", 1);
+    }
+    if (err == ESP_OK) {
+        err = httpd_resp_send_chunk(req, NULL, 0);   /* end of response */
+    } else {
+        /* The status line is already on the wire, so the only honest way to
+           signal a failure now is to abort the chunked stream. */
+        ESP_LOGE(TAG, "devices list aborted: %s", esp_err_to_name(err));
+        httpd_resp_send_chunk(req, NULL, 0);
+    }
+
     ESP_LOGD(TAG, "devices list: %u of %u, free heap %u bytes",
-              (unsigned)cJSON_GetArraySize(arr), (unsigned)n, (unsigned)esp_get_free_heap_size());
-    return send_json(req, "200 OK", arr);
+              (unsigned)sent, (unsigned)n, (unsigned)esp_get_free_heap_size());
+    return err;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -771,6 +821,13 @@ static esp_err_t devices_get_handler(httpd_req_t *req)
     }
     cJSON *o = device_to_json(&d, now_or_zero());
     device_add_ports(o, mac);
+
+    char note[NETDASH_NOTE_MAX];
+    if (notes_get(mac, note, sizeof(note))) {
+        cJSON_AddStringToObject(o, "note", note);
+    } else {
+        cJSON_AddStringToObject(o, "note", "");
+    }
     return send_json(req, "200 OK", o);
 }
 
@@ -1006,6 +1063,22 @@ static cJSON *settings_to_json(const netdash_settings_t *cfg)
     cJSON_AddBoolToObject(o, "portscan_enabled", cfg->portscan_enabled);
     cJSON_AddNumberToObject(o, "portscan_rate", cfg->portscan_rate);
     cJSON_AddNumberToObject(o, "portscan_max_tier", cfg->portscan_max_tier);
+    cJSON_AddNumberToObject(o, "portscan_rescan_days", cfg->portscan_rescan_days);
+    cJSON_AddBoolToObject(o, "wan_enabled", cfg->wan_enabled);
+    cJSON_AddNumberToObject(o, "wan_interval_s", cfg->wan_interval_s);
+    cJSON_AddStringToObject(o, "wan_ping_host", cfg->wan_ping_host);
+    cJSON_AddStringToObject(o, "wan_dns_probe", cfg->wan_dns_probe);
+
+    /*
+     * Notification toggles go out as an object keyed by type name rather than
+     * a raw bitmask, so the UI can render a row per type without carrying its
+     * own copy of the bit order.
+     */
+    cJSON *n = cJSON_AddObjectToObject(o, "notifications");
+    for (int t = 0; t < NETDASH_NOTIF_COUNT; t++) {
+        cJSON_AddBoolToObject(n, netdash_notif_type_name((netdash_notif_type_t)t),
+                              (cfg->notif_mask & NETDASH_NOTIF_BIT(t)) != 0);
+    }
     return o;
 }
 
@@ -1136,6 +1209,79 @@ static esp_err_t settings_put_handler(httpd_req_t *req)
             return send_json_error(req, "400 Bad Request", "portscan_rate must be 1-200");
         }
         next.portscan_rate = (uint16_t)j->valueint;
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "portscan_rescan_days");
+    if (j != NULL) {
+        if (!cJSON_IsNumber(j) || j->valueint < 0 || j->valueint > 365) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "portscan_rescan_days must be 0-365");
+        }
+        next.portscan_rescan_days = (uint16_t)j->valueint;
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "wan_enabled");
+    if (j != NULL) {
+        if (!cJSON_IsBool(j)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "wan_enabled must be a boolean");
+        }
+        next.wan_enabled = cJSON_IsTrue(j);
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "wan_interval_s");
+    if (j != NULL) {
+        if (!cJSON_IsNumber(j) || j->valueint < 15 || j->valueint > 3600) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "wan_interval_s must be 15-3600");
+        }
+        next.wan_interval_s = (uint16_t)j->valueint;
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "wan_ping_host");
+    if (j != NULL) {
+        if (!cJSON_IsString(j) || j->valuestring[0] == 0 ||
+            strlen(j->valuestring) >= sizeof(next.wan_ping_host)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "wan_ping_host must be 1-39 chars");
+        }
+        snprintf(next.wan_ping_host, sizeof(next.wan_ping_host), "%s", j->valuestring);
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "wan_dns_probe");
+    if (j != NULL) {
+        if (!cJSON_IsString(j) || j->valuestring[0] == 0 ||
+            strlen(j->valuestring) >= sizeof(next.wan_dns_probe)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "wan_dns_probe must be 1-47 chars");
+        }
+        snprintf(next.wan_dns_probe, sizeof(next.wan_dns_probe), "%s", j->valuestring);
+    }
+
+    /* Accepts a partial object: only the types named are changed. */
+    j = cJSON_GetObjectItemCaseSensitive(json, "notifications");
+    if (j != NULL) {
+        if (!cJSON_IsObject(j)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "notifications must be an object");
+        }
+        const cJSON *item = NULL;
+        cJSON_ArrayForEach(item, j) {
+            netdash_notif_type_t type;
+            if (item->string == NULL || !netdash_notif_type_from_name(item->string, &type)) {
+                cJSON_Delete(json);
+                return send_json_error(req, "400 Bad Request", "unknown notification type");
+            }
+            if (!cJSON_IsBool(item)) {
+                cJSON_Delete(json);
+                return send_json_error(req, "400 Bad Request", "notification must be a boolean");
+            }
+            if (cJSON_IsTrue(item)) {
+                next.notif_mask |= NETDASH_NOTIF_BIT(type);
+            } else {
+                next.notif_mask &= (uint16_t)~NETDASH_NOTIF_BIT(type);
+            }
+        }
     }
 
     j = cJSON_GetObjectItemCaseSensitive(json, "portscan_max_tier");
@@ -1356,6 +1502,12 @@ static cJSON *link_to_json(const netdash_link_t *l)
     cJSON_AddStringToObject(o, "mac", mac_str);
     cJSON_AddNumberToObject(o, "port", l->port);
     cJSON_AddStringToObject(o, "scheme", netdash_scheme_name((netdash_scheme_t)l->scheme));
+    cJSON_AddNumberToObject(o, "group", l->group);
+    cJSON_AddStringToObject(o, "icon", l->icon);
+
+    /* The service on this port, so the UI can pick an icon when none is set. */
+    const char *svc = netdash_port_service(l->port);
+    cJSON_AddStringToObject(o, "service", svc != NULL ? svc : "");
 
     netdash_device_t dev;
     const bool       known = device_db_get_by_mac(l->mac, &dev);
@@ -1408,9 +1560,36 @@ static cJSON *links_array(void)
     return arr;
 }
 
+static cJSON *groups_array(void)
+{
+    cJSON       *arr = cJSON_CreateArray();
+    const size_t n   = links_group_count();
+
+    for (size_t i = 0; i < n; i++) {
+        netdash_group_t g;
+        if (links_group_get_at(i, &g)) {
+            cJSON *o = cJSON_CreateObject();
+            cJSON_AddNumberToObject(o, "id", g.id);
+            cJSON_AddStringToObject(o, "name", g.name);
+            cJSON_AddItemToArray(arr, o);
+        }
+    }
+    return arr;
+}
+
+/*
+ * One object rather than a bare array, because the dashboard needs the group
+ * headings and the links together or it renders a frame with no headings on
+ * the first paint after a reload.
+ */
 static esp_err_t links_get_handler(httpd_req_t *req)
 {
-    return send_json(req, "200 OK", links_array());
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddItemToObject(o, "groups", groups_array());
+    cJSON_AddItemToObject(o, "links", links_array());
+    cJSON_AddNumberToObject(o, "max_links", NETDASH_MAX_LINKS);
+    cJSON_AddNumberToObject(o, "max_groups", NETDASH_MAX_GROUPS);
+    return send_json(req, "200 OK", o);
 }
 
 /* Accepts "http" or "https". Returns -1 for anything else. */
@@ -1643,11 +1822,36 @@ static esp_err_t links_patch_handler(httpd_req_t *req)
         }
     }
 
-    const esp_err_t err = links_update(id, label, port, scheme);
+    const char *icon = NULL;
+    j                = cJSON_GetObjectItemCaseSensitive(json, "icon");
+    if (j != NULL) {
+        /* An empty string is meaningful: it clears the override and hands the
+           choice back to the service lookup. */
+        if (!cJSON_IsString(j) || strlen(j->valuestring) >= NETDASH_LINK_ICON) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "icon too long");
+        }
+        icon = j->valuestring;
+    }
+
+    int group = -1;
+    j         = cJSON_GetObjectItemCaseSensitive(json, "group");
+    if (j != NULL) {
+        if (!cJSON_IsNumber(j) || j->valueint < 0 || j->valueint > 255) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "bad group");
+        }
+        group = j->valueint;
+    }
+
+    const esp_err_t err = links_update(id, label, port, scheme, icon, group);
     cJSON_Delete(json);
 
     if (err == ESP_ERR_NOT_FOUND) {
         return send_json_error(req, "404 Not Found", "link not found");
+    }
+    if (err == ESP_ERR_INVALID_ARG) {
+        return send_json_error(req, "400 Bad Request", "no such group");
     }
     if (err != ESP_OK) {
         return send_json_error(req, "500 Internal Server Error", "could not update link");
@@ -1675,29 +1879,758 @@ static esp_err_t links_delete_handler(httpd_req_t *req)
     return send_json(req, "200 OK", o);
 }
 
+/* ------------------------------------------------------------------------- */
+/* Link groups                                                               */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Pulls the numeric id out of /api/links/groups/{id}. 0 when malformed, which
+ * is never a valid group id.
+ */
+static uint8_t group_id_from_uri(const char *uri)
+{
+    char tail[24];
+    if (!extract_tail(uri, "/api/links/groups/", tail, sizeof(tail))) {
+        return 0;
+    }
+    char      *end = NULL;
+    const long v   = strtol(tail, &end, 10);
+    if (end == tail || end == NULL || *end != 0 || v < 1 || v > 255) {
+        return 0;
+    }
+    return (uint8_t)v;
+}
+
+static esp_err_t groups_post_handler(httpd_req_t *req)
+{
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (json == NULL) {
+        return send_json_error(req, "400 Bad Request", "invalid json");
+    }
+
+    const cJSON *j_name = cJSON_GetObjectItemCaseSensitive(json, "name");
+    if (!cJSON_IsString(j_name) || j_name->valuestring[0] == 0 ||
+        strlen(j_name->valuestring) >= NETDASH_GROUP_NAME) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "name must be 1-23 characters");
+    }
+
+    uint8_t         id  = 0;
+    const esp_err_t err = links_group_add(j_name->valuestring, &id);
+    cJSON_Delete(json);
+
+    if (err == ESP_ERR_NO_MEM) {
+        return send_json_error(req, "409 Conflict", "no room for another group");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "400 Bad Request", "could not add group");
+    }
+
+    /* Return the stored form, trimming and all, rather than echoing input. */
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddItemToObject(out, "groups", groups_array());
+    cJSON_AddNumberToObject(out, "id", id);
+    return send_json(req, "200 OK", out);
+}
+
+static esp_err_t groups_patch_handler(httpd_req_t *req)
+{
+    const uint8_t id = group_id_from_uri(req->uri);
+    if (id == 0) {
+        return send_json_error(req, "400 Bad Request", "bad id");
+    }
+
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (json == NULL) {
+        return send_json_error(req, "400 Bad Request", "invalid json");
+    }
+
+    const cJSON *j_name = cJSON_GetObjectItemCaseSensitive(json, "name");
+    if (!cJSON_IsString(j_name) || j_name->valuestring[0] == 0 ||
+        strlen(j_name->valuestring) >= NETDASH_GROUP_NAME) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "name must be 1-23 characters");
+    }
+
+    const esp_err_t err = links_group_rename(id, j_name->valuestring);
+    cJSON_Delete(json);
+
+    if (err == ESP_ERR_NOT_FOUND) {
+        return send_json_error(req, "404 Not Found", "group not found");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "400 Bad Request", "could not rename group");
+    }
+    return send_json(req, "200 OK", groups_array());
+}
+
+static esp_err_t groups_delete_handler(httpd_req_t *req)
+{
+    const uint8_t id = group_id_from_uri(req->uri);
+    if (id == 0) {
+        return send_json_error(req, "400 Bad Request", "bad id");
+    }
+    if (links_group_remove(id) != ESP_OK) {
+        return send_json_error(req, "404 Not Found", "group not found");
+    }
+
+    /* The links that were in it are still there, just ungrouped, so hand the
+       caller the whole dashboard back rather than a bare acknowledgement. */
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddItemToObject(o, "groups", groups_array());
+    cJSON_AddItemToObject(o, "links", links_array());
+    return send_json(req, "200 OK", o);
+}
+
+/* PUT /api/links/groups - set the heading order. */
+static esp_err_t groups_put_handler(httpd_req_t *req)
+{
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (json == NULL || !cJSON_IsArray(json)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "expected an array");
+    }
+
+    uint8_t ids[NETDASH_MAX_GROUPS];
+    size_t  n = 0;
+
+    const cJSON *item = NULL;
+    cJSON_ArrayForEach(item, json) {
+        if (!cJSON_IsNumber(item) || item->valueint < 1 || item->valueint > 255 ||
+            n >= NETDASH_MAX_GROUPS) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "bad group id");
+        }
+        ids[n++] = (uint8_t)item->valueint;
+    }
+    cJSON_Delete(json);
+
+    if (links_group_reorder(ids, n) != ESP_OK) {
+        return send_json_error(req, "400 Bad Request", "ids must be a permutation");
+    }
+    return send_json(req, "200 OK", groups_array());
+}
+
+/* ------------------------------------------------------------------------- */
+/* Per-device notes, secrets and history                                     */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Splits /api/devices/{mac} or /api/devices/{mac}/{sub} into its two parts.
+ * out_sub receives the sub-resource name, or an empty string when the URI
+ * names the device itself. False when the MAC will not parse.
+ */
+static bool device_uri_split(const char *uri, uint8_t mac[6], char *out_sub, size_t sub_cap)
+{
+    char tail[64];
+
+    if (out_sub != NULL && sub_cap > 0) {
+        out_sub[0] = 0;
+    }
+    if (!extract_tail(uri, "/api/devices/", tail, sizeof(tail))) {
+        return false;
+    }
+
+    char *slash = strchr(tail, '/');
+    if (slash != NULL) {
+        *slash = 0;
+        if (out_sub != NULL && sub_cap > 0) {
+            snprintf(out_sub, sub_cap, "%s", slash + 1);
+        }
+    }
+    return parse_mac(tail, mac);
+}
+
+/* Kept for the sub-resource handlers, which each want one specific name. */
+static bool device_sub_uri(const char *uri, const char *suffix, uint8_t mac[6])
+{
+    char sub[32];
+    if (!device_uri_split(uri, mac, sub, sizeof(sub))) {
+        return false;
+    }
+    return strcmp(sub, suffix) == 0;
+}
+
+static esp_err_t note_put_handler(httpd_req_t *req)
+{
+    uint8_t mac[6];
+    if (!device_sub_uri(req->uri, "note", mac)) {
+        return send_json_error(req, "404 Not Found", "not found");
+    }
+    netdash_device_t dev;
+    if (!device_db_get_by_mac(mac, &dev)) {
+        return send_json_error(req, "404 Not Found", "device not found");
+    }
+
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (json == NULL) {
+        return send_json_error(req, "400 Bad Request", "invalid json");
+    }
+
+    const cJSON *j = cJSON_GetObjectItemCaseSensitive(json, "note");
+    if (!cJSON_IsString(j) || strlen(j->valuestring) >= NETDASH_NOTE_MAX) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "note too long");
+    }
+
+    const esp_err_t err = notes_set(mac, j->valuestring);
+    cJSON_Delete(json);
+
+    if (err != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "could not save note");
+    }
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    cJSON_AddBoolToObject(o, "has_note", notes_exists(mac));
+    return send_json(req, "200 OK", o);
+}
+
+/*
+ * GET /api/devices/{mac}/history - the presence bitmap as hex, oldest slot in
+ * the low bit of the first byte. Hex rather than an array of 288 numbers
+ * because this is polled and the array form is twenty times the bytes.
+ */
+static esp_err_t history_get_handler(httpd_req_t *req)
+{
+    uint8_t mac[6];
+    if (!device_sub_uri(req->uri, "history", mac)) {
+        return send_json_error(req, "404 Not Found", "not found");
+    }
+
+    uint8_t  bits[NETDASH_HISTORY_BYTES];
+    uint16_t valid = 0;
+    const bool have = device_db_get_history(mac, bits, sizeof(bits), &valid);
+
+    char hex[NETDASH_HISTORY_BYTES * 2 + 1];
+    static const char digits[] = "0123456789abcdef";
+    if (!have) {
+        memset(bits, 0, sizeof(bits));
+    }
+    for (size_t i = 0; i < sizeof(bits); i++) {
+        hex[i * 2]     = digits[(bits[i] >> 4) & 0x0f];
+        hex[i * 2 + 1] = digits[bits[i] & 0x0f];
+    }
+    hex[sizeof(hex) - 1] = 0;
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddNumberToObject(o, "slots", NETDASH_HISTORY_SLOTS);
+    cJSON_AddNumberToObject(o, "slot_sec", NETDASH_HISTORY_SLOT_SEC);
+    cJSON_AddNumberToObject(o, "valid", valid);
+    cJSON_AddStringToObject(o, "bits", hex);
+    return send_json(req, "200 OK", o);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Vault                                                                     */
+/* ------------------------------------------------------------------------- */
+
+/* True when the request carries a token for the live vault session. */
+static bool vault_authorised(httpd_req_t *req)
+{
+    char token[NETDASH_VAULT_TOKEN_LEN];
+    if (httpd_req_get_hdr_value_str(req, "X-Vault-Token", token, sizeof(token)) != ESP_OK) {
+        return false;
+    }
+    return vault_token_valid(token);
+}
+
+static cJSON *vault_state_json(void)
+{
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "configured", vault_configured());
+    cJSON_AddBoolToObject(o, "unlocked", vault_unlocked());
+    cJSON_AddNumberToObject(o, "idle_timeout_s", NETDASH_VAULT_IDLE_S);
+    cJSON_AddNumberToObject(o, "expires_in_s", vault_idle_remaining());
+    cJSON_AddNumberToObject(o, "secrets", secret_count());
+    cJSON_AddNumberToObject(o, "max_len", NETDASH_SECRET_MAX - 1);
+    cJSON_AddNumberToObject(o, "min_passphrase", NETDASH_VAULT_PASS_MIN);
+    return o;
+}
+
+static esp_err_t vault_get_handler(httpd_req_t *req)
+{
+    return send_json(req, "200 OK", vault_state_json());
+}
+
+/* PUT /api/vault - create the vault, or change its passphrase. */
+static esp_err_t vault_put_handler(httpd_req_t *req)
+{
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (json == NULL) {
+        return send_json_error(req, "400 Bad Request", "invalid json");
+    }
+
+    const cJSON *j_new = cJSON_GetObjectItemCaseSensitive(json, "passphrase");
+    const cJSON *j_old = cJSON_GetObjectItemCaseSensitive(json, "old_passphrase");
+
+    if (!cJSON_IsString(j_new)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "passphrase required");
+    }
+
+    char            token[NETDASH_VAULT_TOKEN_LEN];
+    const char     *old_pass = cJSON_IsString(j_old) ? j_old->valuestring : NULL;
+    const esp_err_t err = vault_set_passphrase(old_pass, j_new->valuestring, token,
+                                               sizeof(token));
+    /* Neither passphrase should outlive the request in the parsed body. */
+    memset(j_new->valuestring, 0, strlen(j_new->valuestring));
+    if (cJSON_IsString(j_old)) {
+        memset(j_old->valuestring, 0, strlen(j_old->valuestring));
+    }
+    cJSON_Delete(json);
+
+    if (err == ESP_ERR_INVALID_SIZE) {
+        return send_json_error(req, "400 Bad Request", "passphrase too short");
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_json_error(req, "403 Forbidden", "wrong passphrase");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "could not set passphrase");
+    }
+
+    /* Setting the passphrase leaves the vault unlocked, so the caller gets a
+       session token here rather than having to unlock straight afterwards. */
+    cJSON *o = vault_state_json();
+    cJSON_AddStringToObject(o, "token", token);
+    return send_json(req, "200 OK", o);
+}
+
+static esp_err_t vault_unlock_handler(httpd_req_t *req)
+{
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (json == NULL) {
+        return send_json_error(req, "400 Bad Request", "invalid json");
+    }
+
+    const cJSON *j = cJSON_GetObjectItemCaseSensitive(json, "passphrase");
+    if (!cJSON_IsString(j)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "passphrase required");
+    }
+
+    char            token[NETDASH_VAULT_TOKEN_LEN];
+    const esp_err_t err = vault_unlock(j->valuestring, token, sizeof(token));
+    memset(j->valuestring, 0, strlen(j->valuestring));
+    cJSON_Delete(json);
+
+    if (err == ESP_ERR_NOT_FOUND) {
+        return send_json_error(req, "404 Not Found", "no vault has been set up");
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_json_error(req, "403 Forbidden", "wrong passphrase");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "could not unlock");
+    }
+
+    cJSON *o = vault_state_json();
+    cJSON_AddStringToObject(o, "token", token);
+    return send_json(req, "200 OK", o);
+}
+
+static esp_err_t vault_lock_handler(httpd_req_t *req)
+{
+    vault_lock();
+    return send_json(req, "200 OK", vault_state_json());
+}
+
+/*
+ * DELETE /api/vault - destroy the vault and everything in it. Guarded by a
+ * confirmation in the body rather than a token, because the whole point of
+ * this endpoint is to recover from having lost the passphrase.
+ */
+static esp_err_t vault_delete_handler(httpd_req_t *req)
+{
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+
+    const cJSON *j = json != NULL ? cJSON_GetObjectItemCaseSensitive(json, "confirm") : NULL;
+    const bool   ok = cJSON_IsString(j) && strcmp(j->valuestring, "destroy secrets") == 0;
+    cJSON_Delete(json);
+
+    if (!ok) {
+        return send_json_error(req, "400 Bad Request",
+                               "send {\"confirm\":\"destroy secrets\"} to proceed");
+    }
+    if (vault_reset() != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "could not reset vault");
+    }
+    return send_json(req, "200 OK", vault_state_json());
+}
+
+static esp_err_t secret_get_handler(httpd_req_t *req)
+{
+    uint8_t mac[6];
+    if (!device_sub_uri(req->uri, "secret", mac)) {
+        return send_json_error(req, "404 Not Found", "not found");
+    }
+    if (!vault_authorised(req)) {
+        return send_json_error(req, "401 Unauthorized", "vault is locked");
+    }
+
+    char            text[NETDASH_SECRET_MAX];
+    const esp_err_t err = secret_get(mac, text, sizeof(text));
+
+    if (err == ESP_ERR_NOT_FOUND) {
+        return send_json_error(req, "404 Not Found", "no secret for this device");
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_json_error(req, "401 Unauthorized", "vault is locked");
+    }
+    if (err == ESP_ERR_INVALID_MAC) {
+        return send_json_error(req, "409 Conflict", "secret failed its integrity check");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "could not read secret");
+    }
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "secret", text);
+    memset(text, 0, sizeof(text));
+    return send_json(req, "200 OK", o);
+}
+
+static esp_err_t secret_put_handler(httpd_req_t *req)
+{
+    uint8_t mac[6];
+    if (!device_sub_uri(req->uri, "secret", mac)) {
+        return send_json_error(req, "404 Not Found", "not found");
+    }
+    if (!vault_authorised(req)) {
+        return send_json_error(req, "401 Unauthorized", "vault is locked");
+    }
+    netdash_device_t dev;
+    if (!device_db_get_by_mac(mac, &dev)) {
+        return send_json_error(req, "404 Not Found", "device not found");
+    }
+
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (json == NULL) {
+        return send_json_error(req, "400 Bad Request", "invalid json");
+    }
+
+    const cJSON *j = cJSON_GetObjectItemCaseSensitive(json, "secret");
+    if (!cJSON_IsString(j) || strlen(j->valuestring) >= NETDASH_SECRET_MAX) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "secret too long");
+    }
+
+    const esp_err_t err = secret_set(mac, j->valuestring);
+    /* Wipe the plaintext out of the parsed body before it is freed. */
+    memset(j->valuestring, 0, strlen(j->valuestring));
+    cJSON_Delete(json);
+
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_json_error(req, "401 Unauthorized", "vault is locked");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "could not save secret");
+    }
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    cJSON_AddBoolToObject(o, "has_secret", secret_exists(mac));
+    return send_json(req, "200 OK", o);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Notification feed                                                         */
+/* ------------------------------------------------------------------------- */
+
+static esp_err_t notifications_get_handler(httpd_req_t *req)
+{
+    cJSON       *arr = cJSON_CreateArray();
+    const size_t n   = notify_count();
+
+    for (size_t i = 0; i < n; i++) {
+        netdash_notif_t rec;
+        if (!notify_get(i, &rec)) {
+            break;
+        }
+
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddNumberToObject(o, "id", rec.id);
+        cJSON_AddNumberToObject(o, "ts", (double)rec.ts);
+        cJSON_AddStringToObject(o, "type",
+                                netdash_notif_type_name((netdash_notif_type_t)rec.type));
+        cJSON_AddBoolToObject(o, "read", rec.read != 0);
+        cJSON_AddStringToObject(o, "text", rec.text);
+
+        static const uint8_t zero_mac[6] = {0};
+        if (memcmp(rec.mac, zero_mac, 6) != 0) {
+            char mac_str[18];
+            mac_to_str(rec.mac, mac_str);
+            cJSON_AddStringToObject(o, "mac", mac_str);
+
+            /* Resolve the name now rather than storing it: a device renamed
+               since the notification landed should read by its new name. */
+            netdash_device_t dev;
+            char             name[32];
+            name[0] = 0;
+            if (device_db_get_by_mac(rec.mac, &dev)) {
+                device_db_display_name(&dev, name, sizeof(name));
+            }
+            cJSON_AddStringToObject(o, "device", name);
+        } else {
+            cJSON_AddNullToObject(o, "mac");
+            cJSON_AddStringToObject(o, "device", "");
+        }
+
+        if (rec.ip != 0) {
+            char ip_str[16];
+            host_ip_to_str(rec.ip, ip_str, sizeof(ip_str));
+            cJSON_AddStringToObject(o, "ip", ip_str);
+        } else {
+            cJSON_AddNullToObject(o, "ip");
+        }
+        cJSON_AddItemToArray(arr, o);
+    }
+
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddItemToObject(out, "items", arr);
+    cJSON_AddNumberToObject(out, "unread", notify_unread());
+    cJSON_AddNumberToObject(out, "count", n);
+    return send_json(req, "200 OK", out);
+}
+
+/* Pulls the id out of /api/notifications/{id}. 0 means "all of them". */
+static uint32_t notif_id_from_uri(const char *uri)
+{
+    char tail[24];
+    if (!extract_tail(uri, "/api/notifications/", tail, sizeof(tail))) {
+        return 0;
+    }
+    char      *end = NULL;
+    const long v   = strtol(tail, &end, 10);
+    if (end == tail || end == NULL || *end != 0 || v < 0) {
+        return 0;
+    }
+    return (uint32_t)v;
+}
+
+/* POST /api/notifications/read - mark everything read. */
+static esp_err_t notifications_read_handler(httpd_req_t *req)
+{
+    notify_mark_read(0);
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    cJSON_AddNumberToObject(o, "unread", notify_unread());
+    return send_json(req, "200 OK", o);
+}
+
+/* DELETE /api/notifications/{id}, or /api/notifications for the lot. */
+static esp_err_t notifications_delete_handler(httpd_req_t *req)
+{
+    const uint32_t id = notif_id_from_uri(req->uri);
+
+    if (notify_dismiss(id) != ESP_OK) {
+        return send_json_error(req, "404 Not Found", "no such notification");
+    }
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    cJSON_AddNumberToObject(o, "unread", notify_unread());
+    cJSON_AddNumberToObject(o, "count", notify_count());
+    return send_json(req, "200 OK", o);
+}
+
+/* ------------------------------------------------------------------------- */
+/* WAN health                                                                */
+/* ------------------------------------------------------------------------- */
+
+static cJSON *wan_json(void)
+{
+    netdash_wan_t w;
+    wan_get(&w);
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "state", netdash_wan_state_name((netdash_wan_state_t)w.state));
+    cJSON_AddBoolToObject(o, "icmp_ok", w.icmp_ok);
+    cJSON_AddBoolToObject(o, "dns_ok", w.dns_ok);
+    cJSON_AddNumberToObject(o, "rtt_ms", w.rtt_ms);
+    cJSON_AddNumberToObject(o, "last_check", (double)w.last_check);
+    cJSON_AddNumberToObject(o, "changed_at", (double)w.changed_at);
+    cJSON_AddNumberToObject(o, "checks", w.checks);
+    cJSON_AddNumberToObject(o, "failures", w.failures);
+    return o;
+}
+
+static esp_err_t wan_get_handler(httpd_req_t *req)
+{
+    return send_json(req, "200 OK", wan_json());
+}
+
+static esp_err_t wan_check_handler(httpd_req_t *req)
+{
+    wan_check_now();
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    return send_json(req, "200 OK", o);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Per-device routing                                                        */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * esp_http_server matches a template ending in a wildcard by prefix, and
+ * matches anything else literally: a wildcard in the middle of a template is
+ * just an asterisk to be compared character for character. A template like
+ * "/api/devices/" + wildcard + "/history" therefore never matches a real
+ * request, and the route silently answers 404 or 405 for ever.
+ *
+ * So every per-device sub-resource is dispatched by hand, from one wildcard
+ * handler per method. That is also why the pre-existing POST .../portscan
+ * route never worked.
+ */
+static esp_err_t devices_get_router(httpd_req_t *req)
+{
+    uint8_t mac[6];
+    char    sub[32];
+
+    if (!device_uri_split(req->uri, mac, sub, sizeof(sub))) {
+        return send_json_error(req, "400 Bad Request", "bad mac");
+    }
+    if (sub[0] == 0) {
+        return devices_get_handler(req);
+    }
+    if (strcmp(sub, "history") == 0) {
+        return history_get_handler(req);
+    }
+    if (strcmp(sub, "secret") == 0) {
+        return secret_get_handler(req);
+    }
+    return send_json_error(req, "404 Not Found", "not found");
+}
+
+static esp_err_t devices_put_router(httpd_req_t *req)
+{
+    uint8_t mac[6];
+    char    sub[32];
+
+    if (!device_uri_split(req->uri, mac, sub, sizeof(sub))) {
+        return send_json_error(req, "400 Bad Request", "bad mac");
+    }
+    if (strcmp(sub, "note") == 0) {
+        return note_put_handler(req);
+    }
+    if (strcmp(sub, "secret") == 0) {
+        return secret_put_handler(req);
+    }
+    return send_json_error(req, "404 Not Found", "not found");
+}
+
+static esp_err_t devices_post_router(httpd_req_t *req)
+{
+    uint8_t mac[6];
+    char    sub[32];
+
+    if (!device_uri_split(req->uri, mac, sub, sizeof(sub))) {
+        return send_json_error(req, "400 Bad Request", "bad mac");
+    }
+    if (strcmp(sub, "portscan") == 0) {
+        return devices_portscan_handler(req);
+    }
+    return send_json_error(req, "404 Not Found", "not found");
+}
+
 static const httpd_uri_t s_uri_handlers[] = {
     {.uri = "/api/status",               .method = HTTP_GET,    .handler = status_handler},
     {.uri = "/api/devices",              .method = HTTP_GET,    .handler = devices_list_handler},
     {.uri = "/api/devices/export",       .method = HTTP_GET,    .handler = devices_export_handler},
     {.uri = "/api/devices/import",       .method = HTTP_POST,   .handler = devices_import_handler},
-    {.uri = "/api/devices/*/portscan",   .method = HTTP_POST,   .handler = devices_portscan_handler},
     {.uri = "/api/portscan",             .method = HTTP_GET,    .handler = portscan_status_handler},
     {.uri = "/api/links",                .method = HTTP_GET,    .handler = links_get_handler},
     {.uri = "/api/links",                .method = HTTP_POST,   .handler = links_post_handler},
     {.uri = "/api/links",                .method = HTTP_PUT,    .handler = links_put_handler},
+    /* The group routes must precede the wildcard under /api/links, or a PATCH
+       to /api/links/groups/3 would be routed to links_patch_handler and fail
+       trying to read "groups" as a link id. */
+    {.uri = "/api/links/groups",         .method = HTTP_POST,   .handler = groups_post_handler},
+    {.uri = "/api/links/groups",         .method = HTTP_PUT,    .handler = groups_put_handler},
+    {.uri = "/api/links/groups/*",       .method = HTTP_PATCH,  .handler = groups_patch_handler},
+    {.uri = "/api/links/groups/*",       .method = HTTP_DELETE, .handler = groups_delete_handler},
     {.uri = "/api/links/*",              .method = HTTP_PATCH,  .handler = links_patch_handler},
     {.uri = "/api/links/*",              .method = HTTP_DELETE, .handler = links_delete_handler},
-    {.uri = "/api/devices/*",            .method = HTTP_GET,    .handler = devices_get_handler},
+    /* One route per method; the routers above pick the sub-resource. */
+    {.uri = "/api/devices/*",            .method = HTTP_GET,    .handler = devices_get_router},
+    {.uri = "/api/devices/*",            .method = HTTP_PUT,    .handler = devices_put_router},
+    {.uri = "/api/devices/*",            .method = HTTP_POST,   .handler = devices_post_router},
     {.uri = "/api/devices/*",            .method = HTTP_PATCH,  .handler = devices_patch_handler},
     {.uri = "/api/devices/*",            .method = HTTP_DELETE, .handler = devices_delete_handler},
     {.uri = "/api/scan",                 .method = HTTP_POST,   .handler = scan_handler},
     {.uri = "/api/events",               .method = HTTP_GET,    .handler = events_handler},
+    {.uri = "/api/notifications",        .method = HTTP_GET,    .handler = notifications_get_handler},
+    {.uri = "/api/notifications/read",   .method = HTTP_POST,   .handler = notifications_read_handler},
+    {.uri = "/api/notifications",        .method = HTTP_DELETE, .handler = notifications_delete_handler},
+    {.uri = "/api/notifications/*",      .method = HTTP_DELETE, .handler = notifications_delete_handler},
+    {.uri = "/api/wan",                  .method = HTTP_GET,    .handler = wan_get_handler},
+    {.uri = "/api/wan/check",            .method = HTTP_POST,   .handler = wan_check_handler},
+    {.uri = "/api/vault",                .method = HTTP_GET,    .handler = vault_get_handler},
+    {.uri = "/api/vault",                .method = HTTP_PUT,    .handler = vault_put_handler},
+    {.uri = "/api/vault",                .method = HTTP_DELETE, .handler = vault_delete_handler},
+    {.uri = "/api/vault/unlock",         .method = HTTP_POST,   .handler = vault_unlock_handler},
+    {.uri = "/api/vault/lock",           .method = HTTP_POST,   .handler = vault_lock_handler},
     {.uri = "/api/settings",             .method = HTTP_GET,    .handler = settings_get_handler},
     {.uri = "/api/settings",             .method = HTTP_PUT,    .handler = settings_put_handler},
     {.uri = "/api/wifi/scan",            .method = HTTP_POST,   .handler = wifi_scan_handler},
     {.uri = "/api/system/reboot",        .method = HTTP_POST,   .handler = reboot_handler},
     {.uri = "/api/system/factory-reset", .method = HTTP_POST,   .handler = factory_reset_handler},
 };
+
+/*
+ * A route past the end of the handler table does not fail loudly: it just
+ * never registers, and every request to it answers 404 or 405 as though the
+ * endpoint had been forgotten. Catching that at compile time is much cheaper
+ * than finding it by testing the API.
+ */
+_Static_assert(sizeof(s_uri_handlers) / sizeof(s_uri_handlers[0]) <=
+                   NETDASH_HTTPD_MAX_URI_HANDLERS,
+               "more routes than httpd_config_t::max_uri_handlers will hold - "
+               "raise NETDASH_HTTPD_MAX_URI_HANDLERS in http_server.h");
 
 esp_err_t http_server_init(void)
 {

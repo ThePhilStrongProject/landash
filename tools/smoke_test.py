@@ -5,8 +5,10 @@ Exercises every REST endpoint in docs/API.md against real hardware and checks
 the response shapes, then does a nickname round-trip to prove the device
 database persists user edits.
 
-Nothing here is destructive: reboot and factory-reset are only probed with a
-deliberately invalid body to confirm they refuse it.
+Nothing here destroys anything you did not ask it to: reboot and factory-reset
+are only probed with a deliberately invalid body to confirm they refuse it, and
+the vault section is skipped entirely when a vault already exists, because
+exercising it means destroying it at the end.
 
 Usage:
     python tools/smoke_test.py                       # http://netdash.local
@@ -36,7 +38,7 @@ def check(name, condition, detail=""):
         print(f"  FAIL {name}  {detail}")
 
 
-def request(base, method, path, body=None, expect=200):
+def request(base, method, path, body=None, expect=200, extra_headers=None):
     """Returns (status, parsed_json_or_raw_bytes, headers)."""
     url = base + path
     data = None
@@ -44,6 +46,8 @@ def request(base, method, path, body=None, expect=200):
     if body is not None:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
+    if extra_headers:
+        headers.update(extra_headers)
 
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
@@ -204,6 +208,174 @@ def main():
               "ssid" in aps[0] and "rssi" in aps[0], repr(aps[0])[:120])
         print(f"       {len(aps)} networks, strongest "
               f"{aps[0].get('ssid')!r} at {aps[0].get('rssi')} dBm")
+
+
+    # --- dashboard groups ---------------------------------------------------
+    print("\nlink groups")
+    st, links, _ = request(base, "GET", "/api/links")
+    check("links returns groups and links",
+          st == 200 and isinstance(links, dict) and "groups" in links and "links" in links,
+          repr(links)[:120])
+
+    # Clean up anything a previous interrupted run left behind.
+    for g in (links or {}).get("groups", []):
+        if g.get("name", "").startswith("smoketest"):
+            request(base, "DELETE", f"/api/links/groups/{g['id']}")
+
+    st, created, _ = request(base, "POST", "/api/links/groups", {"name": "  smoketest-a  "})
+    gid = (created or {}).get("id")
+    check("create a group", st == 200 and gid, f"status {st} {created!r}"[:120])
+    check("group name is trimmed",
+          any(g["name"] == "smoketest-a" for g in (created or {}).get("groups", [])),
+          repr(created)[:120])
+
+    st, _, _ = request(base, "POST", "/api/links/groups", {"name": ""})
+    check("empty group name is rejected", st == 400, f"status {st}")
+
+    st, _, _ = request(base, "PATCH", "/api/links/groups/250", {"name": "nope"})
+    check("renaming an unknown group is 404", st == 404, f"status {st}")
+
+    if gid:
+        st, renamed, _ = request(base, "PATCH", f"/api/links/groups/{gid}",
+                                 {"name": "smoketest-b"})
+        check("rename a group",
+              st == 200 and any(g["name"] == "smoketest-b" for g in (renamed or [])),
+              f"status {st}")
+        st, _, _ = request(base, "DELETE", f"/api/links/groups/{gid}")
+        check("delete a group", st == 200, f"status {st}")
+
+    # --- notes --------------------------------------------------------------
+    print("\nnotes")
+    st, devices, _ = request(base, "GET", "/api/devices")
+    mac = devices[0]["mac"] if isinstance(devices, list) and devices else None
+    check("a device is available to annotate", mac is not None, "no devices listed")
+
+    if mac:
+        check("device list carries note and secret markers",
+              "has_note" in devices[0] and "has_secret" in devices[0],
+              sorted(devices[0])[:10])
+
+        st, r, _ = request(base, "PUT", f"/api/devices/{mac}/note",
+                           {"note": "smoke test note"})
+        check("save a note", st == 200 and (r or {}).get("has_note"), f"status {st}")
+
+        st, d, _ = request(base, "GET", f"/api/devices/{mac}")
+        check("note round-trips", (d or {}).get("note") == "smoke test note",
+              repr((d or {}).get("note"))[:80])
+
+        st, _, _ = request(base, "PUT", f"/api/devices/{mac}/note", {"note": "x" * 300})
+        check("an over-long note is rejected", st == 400, f"status {st}")
+
+        st, r, _ = request(base, "PUT", f"/api/devices/{mac}/note", {"note": ""})
+        check("clear a note", st == 200 and not (r or {}).get("has_note"), f"status {st}")
+
+    # --- availability history ----------------------------------------------
+    print("\nhistory")
+    if mac:
+        st, h, _ = request(base, "GET", f"/api/devices/{mac}/history")
+        check("history endpoint answers", st == 200 and isinstance(h, dict), f"status {st}")
+        check("history is a 288-slot day",
+              (h or {}).get("slots") == 288 and (h or {}).get("slot_sec") == 300,
+              repr(h)[:120])
+        check("history bitmap is 36 bytes of hex",
+              len((h or {}).get("bits", "")) == 72, len((h or {}).get("bits", "")))
+
+    # --- WAN health ---------------------------------------------------------
+    print("\nwan health")
+    st, w, _ = request(base, "GET", "/api/wan")
+    check("wan endpoint answers", st == 200 and "state" in (w or {}), f"status {st}")
+    check("wan state is one of the four",
+          (w or {}).get("state") in ("up", "degraded", "down", "unknown"),
+          (w or {}).get("state"))
+    check("wan reports both probes separately",
+          "icmp_ok" in (w or {}) and "dns_ok" in (w or {}), sorted(w or {}))
+    st, _, _ = request(base, "POST", "/api/wan/check")
+    check("wan check can be forced", st == 200, f"status {st}")
+
+    st, status, _ = request(base, "GET", "/api/status")
+    check("status embeds the wan verdict", isinstance((status or {}).get("wan"), dict),
+          repr((status or {}).get("wan"))[:80])
+
+    # --- notification feed --------------------------------------------------
+    print("\nnotifications")
+    st, n, _ = request(base, "GET", "/api/notifications")
+    check("feed endpoint answers",
+          st == 200 and isinstance((n or {}).get("items"), list), f"status {st}")
+    check("feed reports an unread count", isinstance((n or {}).get("unread"), int),
+          repr(n)[:80])
+    check("status embeds the unread count", isinstance((status or {}).get("unread"), int),
+          (status or {}).get("unread"))
+    st, _, _ = request(base, "POST", "/api/notifications/read")
+    check("mark all read", st == 200, f"status {st}")
+
+    st, cfg, _ = request(base, "GET", "/api/settings")
+    check("settings carry per-type notification toggles",
+          isinstance((cfg or {}).get("notifications"), dict),
+          repr((cfg or {}).get("notifications"))[:80])
+    st, _, _ = request(base, "PUT", "/api/settings", {"notifications": {"nonsense": True}})
+    check("an unknown notification type is rejected", st == 400, f"status {st}")
+
+    # --- vault --------------------------------------------------------------
+    print("\nsecret vault")
+    st, v, _ = request(base, "GET", "/api/vault")
+    check("vault status answers", st == 200 and "configured" in (v or {}), f"status {st}")
+
+    if (v or {}).get("configured"):
+        print("       a vault is already set up - skipping the destructive checks")
+    elif mac:
+        st, _, _ = request(base, "PUT", "/api/vault", {"passphrase": "short"})
+        check("a short passphrase is rejected", st == 400, f"status {st}")
+
+        st, v, _ = request(base, "PUT", "/api/vault", {"passphrase": "smoke test passphrase"})
+        token = (v or {}).get("token")
+        check("create the vault", st == 200 and token, f"status {st}")
+
+        st, _, _ = request(base, "PUT", f"/api/devices/{mac}/secret", {"secret": "hunter2"})
+        check("storing a secret needs a token", st == 401, f"status {st}")
+
+        auth = {"X-Vault-Token": token or ""}
+        st, r, _ = request(base, "PUT", f"/api/devices/{mac}/secret",
+                           {"secret": "hunter2"}, extra_headers=auth)
+        check("store a secret", st == 200 and (r or {}).get("has_secret"), f"status {st}")
+
+        st, r, _ = request(base, "GET", f"/api/devices/{mac}/secret", extra_headers=auth)
+        check("read the secret back", st == 200 and (r or {}).get("secret") == "hunter2",
+              repr(r)[:80])
+
+        st, d, _ = request(base, "GET", f"/api/devices/{mac}")
+        check("the secret never rides on the device object", "secret" not in (d or {}),
+              sorted(d or {})[:10])
+
+        st, _, _ = request(base, "GET", f"/api/devices/{mac}/secret",
+                           extra_headers={"X-Vault-Token": "0" * 32})
+        check("a wrong token is rejected", st == 401, f"status {st}")
+
+        st, v2, _ = request(base, "PUT", "/api/vault",
+                            {"old_passphrase": "smoke test passphrase",
+                             "passphrase": "smoke test passphrase two"})
+        token2 = (v2 or {}).get("token")
+        check("rotate the passphrase", st == 200 and token2, f"status {st}")
+
+        st, r, _ = request(base, "GET", f"/api/devices/{mac}/secret",
+                           extra_headers={"X-Vault-Token": token2 or ""})
+        check("the secret survives re-encryption",
+              st == 200 and (r or {}).get("secret") == "hunter2", repr(r)[:80])
+
+        st, _, _ = request(base, "POST", "/api/vault/unlock", {"passphrase": "wrong"})
+        check("a wrong passphrase is refused", st == 403, f"status {st}")
+
+        st, _, _ = request(base, "POST", "/api/vault/lock")
+        check("lock the vault", st == 200, f"status {st}")
+        st, _, _ = request(base, "GET", f"/api/devices/{mac}/secret",
+                           extra_headers={"X-Vault-Token": token2 or ""})
+        check("the token dies with the lock", st == 401, f"status {st}")
+
+        st, _, _ = request(base, "DELETE", "/api/vault", {"confirm": "wrong words"})
+        check("destroying the vault needs the exact phrase", st == 400, f"status {st}")
+
+        st, v3, _ = request(base, "DELETE", "/api/vault", {"confirm": "destroy secrets"})
+        check("destroy the vault", st == 200 and not (v3 or {}).get("configured"),
+              f"status {st}")
 
     # --- destructive endpoints, non-destructively ---------------------------
     print("\nguards")

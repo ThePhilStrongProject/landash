@@ -248,6 +248,32 @@ const char *netdash_port_service(uint16_t port);
 void netdash_service_label(const char *service, char *out, size_t cap);
 
 /* ------------------------------------------------------------------------- */
+/* Availability history                                                      */
+/* ------------------------------------------------------------------------- */
+
+#define NETDASH_HISTORY_SLOT_SEC 300   /* one sample per five minutes        */
+#define NETDASH_HISTORY_SLOTS    288   /* ...so the window is 24 hours       */
+#define NETDASH_HISTORY_BYTES    (NETDASH_HISTORY_SLOTS / 8)
+
+/*
+ * One bit per five-minute slot: set when the device answered at least once
+ * during that slot. Slots are cut on wall-clock time, so a device answering
+ * twice in five minutes still only lights one bit and a slower sweep interval
+ * simply leaves gaps rather than shifting the axis.
+ *
+ * Nothing is recorded before NTP has synced, because a slot number derived
+ * from a wrong clock would put the samples in the wrong place. This lives in
+ * RAM only: 24 hours of history is not worth the flash writes, and it fills
+ * back up within a day of a reboot.
+ *
+ * out receives NETDASH_HISTORY_BYTES with the OLDEST slot in bit 0 of out[0],
+ * which is the order a sparkline wants to draw. *out_valid is how many of the
+ * 288 slots have actually elapsed, so a chart can show a short history as
+ * short rather than as 24 hours of downtime.
+ */
+bool device_db_get_history(const uint8_t mac[6], uint8_t *out, size_t cap, uint16_t *out_valid);
+
+/* ------------------------------------------------------------------------- */
 /* Locking                                                                   */
 /* ------------------------------------------------------------------------- */
 

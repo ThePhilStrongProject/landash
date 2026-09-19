@@ -31,6 +31,8 @@ idf_component_register(
         esp_driver_ledc
         esp_timer
         driver
+        # AES-GCM and PBKDF2 for the secret vault in db/notes.c.
+        mbedtls
         app_update
         esp_app_format
         espressif__mdns

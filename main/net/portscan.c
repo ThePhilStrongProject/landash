@@ -15,7 +15,9 @@
 #include "portscan.h"
 
 #include <errno.h>
+#include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -28,6 +30,7 @@
 
 #include "app_events.h"
 #include "device_db.h"
+#include "notify.h"
 #include "settings.h"
 #include "wifi_mgr.h"
 
@@ -92,10 +95,19 @@ static struct {
     uint32_t found;
     int64_t  cycle_started;
 
+    uint16_t rescan_days;   /* re-probe tier 1 this often, 0 = never          */
+    bool     rescanning;    /* the current device is a re-probe, not a first  */
+
     /* Set by portscan_rescan_device(); consumed by the task. */
     bool     jump_valid;
     uint8_t  jump_mac[6];
 } s_ps;
+
+/*
+ * Read by the probe helpers to decide whether an open port is news. Only the
+ * scan task writes it, and only between devices, so it needs no lock.
+ */
+static bool s_report_new_ports;
 
 static void state_lock(void)
 {
@@ -117,9 +129,10 @@ static void reload_settings(void)
     settings_get(&cfg);
 
     state_lock();
-    s_ps.enabled  = cfg.portscan_enabled;
-    s_ps.rate     = cfg.portscan_rate > 0 ? cfg.portscan_rate : 1;
-    s_ps.max_tier = cfg.portscan_max_tier;
+    s_ps.enabled     = cfg.portscan_enabled;
+    s_ps.rate        = cfg.portscan_rate > 0 ? cfg.portscan_rate : 1;
+    s_ps.max_tier    = cfg.portscan_max_tier;
+    s_ps.rescan_days = cfg.portscan_rescan_days;
     if (s_ps.tier == 0) {
         s_ps.tier = PS_TIER_COMMON;
     }
@@ -132,6 +145,39 @@ static void reload_settings(void)
 /* ------------------------------------------------------------------------- */
 /* Tier arithmetic                                                           */
 /* ------------------------------------------------------------------------- */
+
+static void record_open_port(const uint8_t mac[6], uint32_t ip, uint16_t port)
+{
+    if (!device_db_add_open_port(mac, port)) {
+        return;   /* already knew about this one */
+    }
+
+    ESP_LOGI(TAG, "open %u.%u.%u.%u:%u", (unsigned)(ip >> 24), (unsigned)((ip >> 16) & 0xff),
+             (unsigned)((ip >> 8) & 0xff), (unsigned)(ip & 0xff), (unsigned)port);
+
+    state_lock();
+    s_ps.found++;
+    state_unlock();
+
+    /*
+     * Only on a re-probe. During the first pass over a device every port is
+     * new by definition, and announcing all of them would bury the one case
+     * this is for: something started listening that was not listening before.
+     */
+    if (s_report_new_ports) {
+        const char *svc = netdash_port_service(port);
+        char        text[NETDASH_NOTIF_TEXT];
+
+        if (svc != NULL) {
+            char label[32];
+            netdash_service_label(svc, label, sizeof(label));
+            snprintf(text, sizeof(text), "Port %u open (%s)", (unsigned)port, label);
+        } else {
+            snprintf(text, sizeof(text), "Port %u open", (unsigned)port);
+        }
+        notify_push(NETDASH_NOTIF_NEW_PORT, mac, ip, text);
+    }
+}
 
 static uint32_t tier_total(uint8_t tier)
 {
@@ -214,15 +260,7 @@ static uint32_t probe_batch(const uint8_t mac[6], uint32_t ip,
         const int rc = connect(fd, (struct sockaddr *)&dst, sizeof(dst));
         if (rc == 0) {
             /* Connected immediately, which on a LAN is entirely possible. */
-            if (device_db_add_open_port(mac, port)) {
-                ESP_LOGI(TAG, "open %u.%u.%u.%u:%u",
-                         (unsigned)(ip >> 24), (unsigned)((ip >> 16) & 0xff),
-                         (unsigned)((ip >> 8) & 0xff), (unsigned)(ip & 0xff),
-                         (unsigned)port);
-                state_lock();
-                s_ps.found++;
-                state_unlock();
-            }
+            record_open_port(mac, ip, port);
             close(fd);
             n++;
             continue;
@@ -279,15 +317,7 @@ static uint32_t probe_batch(const uint8_t mac[6], uint32_t ip,
             int       err = 0;
             socklen_t len = sizeof(err);
             if (getsockopt(probes[i].fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0 && err == 0) {
-                if (device_db_add_open_port(mac, probes[i].port)) {
-                    ESP_LOGI(TAG, "open %u.%u.%u.%u:%u",
-                             (unsigned)(ip >> 24), (unsigned)((ip >> 16) & 0xff),
-                             (unsigned)((ip >> 8) & 0xff), (unsigned)(ip & 0xff),
-                             (unsigned)probes[i].port);
-                    state_lock();
-                    s_ps.found++;
-                    state_unlock();
-                }
+                record_open_port(mac, ip, probes[i].port);
             }
         }
     }
@@ -323,9 +353,10 @@ static uint32_t probe_batch(const uint8_t mac[6], uint32_t ip,
  */
 static bool next_device_for_tier(uint8_t ceiling, uint16_t *index,
                                  uint8_t mac[6], uint32_t *ip, uint16_t *total,
-                                 uint8_t *use_tier)
+                                 uint8_t *use_tier, uint16_t rescan_days, bool *is_rescan)
 {
-    bool found = false;
+    bool found  = false;
+    *is_rescan  = false;
 
     device_db_lock();
     const size_t count = device_db_count();
@@ -375,6 +406,43 @@ static bool next_device_for_tier(uint8_t ceiling, uint16_t *index,
             *index    = (uint16_t)i;
             *use_tier = (uint8_t)(ports.tier + 1);
             found     = true;
+            break;
+        }
+    }
+
+    /*
+     * Pass three: a device that finished long enough ago to be worth checking
+     * again. Only the common ports are re-probed - the point is to notice a
+     * service that has started listening since, and anything worth knowing
+     * about is almost always on a well-known port. The stored port list is
+     * deliberately not cleared first, because the diff against it is the
+     * whole reason for the pass.
+     */
+    if (!found && rescan_days > 0) {
+        const int64_t now = (int64_t)time(NULL);
+        const int64_t age = (int64_t)rescan_days * 86400;
+
+        for (size_t i = 0; i < count && now > 0; i++) {
+            netdash_device_t dev;
+            if (!device_db_get_at(i, &dev)) {
+                break;
+            }
+            if (!netdash_device_online(&dev) || dev.ip == 0) {
+                continue;
+            }
+
+            netdash_ports_t ports;
+            if (!device_db_get_ports(dev.mac, &ports) || ports.tier < ceiling ||
+                ports.last_scan == 0 || now - ports.last_scan < age) {
+                continue;
+            }
+
+            memcpy(mac, dev.mac, 6);
+            *ip        = dev.ip;
+            *index     = (uint16_t)i;
+            *use_tier  = PS_TIER_COMMON;
+            *is_rescan = true;
+            found      = true;
             break;
         }
     }
@@ -433,8 +501,14 @@ static void portscan_task(void *arg)
             uint16_t index = s_ps.device_index;
             state_unlock();
 
-            uint16_t count = 0;
-            if (!next_device_for_tier(ceiling, &index, mac, &ip, &count, &dev_tier)) {
+            state_lock();
+            const uint16_t rescan_days = s_ps.rescan_days;
+            state_unlock();
+
+            uint16_t count     = 0;
+            bool     is_rescan = false;
+            if (!next_device_for_tier(ceiling, &index, mac, &ip, &count, &dev_tier, rescan_days,
+                                      &is_rescan)) {
                 /* Tier finished for every device: advance, or start over. */
                 state_lock();
                 const uint8_t next = (s_ps.tier >= max_tier) ? PS_TIER_COMMON
@@ -466,6 +540,7 @@ static void portscan_task(void *arg)
             s_ps.device_index = index;
             s_ps.device_count = count;
             s_ps.active_tier  = dev_tier;
+            s_ps.rescanning   = is_rescan;
             s_ps.tier_total   = tier_total(dev_tier);
             if (!jump) {
                 s_ps.cursor = 0;
@@ -474,7 +549,8 @@ static void portscan_task(void *arg)
                 s_ps.cycle_started = (int64_t)time(NULL);
             }
             state_unlock();
-            have_dev = true;
+            s_report_new_ports = is_rescan;
+            have_dev           = true;
         }
 
         state_lock();

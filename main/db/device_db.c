@@ -33,6 +33,8 @@
 
 #include "app_events.h"
 #include "classify.h"
+#include "notes.h"
+#include "notify.h"
 #include "oui.h"
 #include "wifi_mgr.h"
 
@@ -47,6 +49,14 @@ static bool              s_seen[NETDASH_MAX_DEVICES];      /* seen this sweep */
 static bool              s_persisted[NETDASH_MAX_DEVICES]; /* has an NVS blob */
 /* Parallel to s_devices[]; see the comment on netdash_ports_t in the header. */
 static netdash_ports_t   s_ports[NETDASH_MAX_DEVICES];
+/*
+ * Also parallel to s_devices[]. A ring of presence bits indexed by absolute
+ * slot number modulo NETDASH_HISTORY_SLOTS, so advancing time only has to
+ * clear the slots that have just been entered rather than shift 4.6 KB along.
+ */
+static uint8_t           s_hist[NETDASH_MAX_DEVICES][NETDASH_HISTORY_BYTES];
+static int64_t           s_hist_slot;    /* newest slot recorded, 0 = none   */
+static uint16_t          s_hist_valid;   /* slots elapsed, capped at SLOTS   */
 static size_t            s_count;
 static SemaphoreHandle_t s_lock;
 
@@ -101,8 +111,9 @@ void device_db_unlock(void)
 /* Small helpers                                                             */
 /* ------------------------------------------------------------------------- */
 
-/* Defined with the rest of the port-scan code further down. */
+/* Both defined with the rest of the port-scan code further down. */
 static void ports_restore_locked(int idx);
+static void ports_erase_nvs(const uint8_t mac[6]);
 
 /* Caller must hold device_db_lock(). Returns -1 when mac is not present. */
 static int find_index_locked(const uint8_t mac[6])
@@ -150,8 +161,10 @@ static bool evict_one_locked(void)
         s_seen[victim]      = s_seen[last];
         s_persisted[victim] = s_persisted[last];
         s_ports[victim]     = s_ports[last];   /* parallel array, move together */
+        memcpy(s_hist[victim], s_hist[last], NETDASH_HISTORY_BYTES);
     }
     memset(&s_ports[last], 0, sizeof(s_ports[last]));
+    memset(s_hist[last], 0, NETDASH_HISTORY_BYTES);
     s_count--;
     return true;
 }
@@ -208,6 +221,96 @@ static void sanitize_hostname(const char *in, char *out, size_t out_cap)
         out_len--;
     }
     out[out_len] = '\0';
+}
+
+/* ------------------------------------------------------------------------- */
+/* Availability history                                                      */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Moves the window on to the slot `now` falls in, clearing the slots just
+ * entered for every device. Caller holds the lock. A `now` of 0 means NTP has
+ * not synced, in which case nothing is recorded at all - see the header.
+ */
+static void history_advance_locked(int64_t now)
+{
+    if (now == 0) {
+        return;
+    }
+    const int64_t slot = now / NETDASH_HISTORY_SLOT_SEC;
+
+    if (s_hist_slot == 0) {
+        s_hist_slot  = slot;
+        s_hist_valid = 1;
+        return;
+    }
+    if (slot <= s_hist_slot) {
+        return;
+    }
+
+    const int64_t delta = slot - s_hist_slot;
+    if (delta >= NETDASH_HISTORY_SLOTS) {
+        /* Away for longer than the window: nothing in it is known any more. */
+        memset(s_hist, 0, sizeof(s_hist));
+        s_hist_valid = 1;
+    } else {
+        for (int64_t k = 1; k <= delta; k++) {
+            const uint16_t pos  = (uint16_t)((s_hist_slot + k) % NETDASH_HISTORY_SLOTS);
+            const uint8_t  mask = (uint8_t) ~(1u << (pos % 8));
+            for (size_t i = 0; i < s_count; i++) {
+                s_hist[i][pos / 8] &= mask;
+            }
+        }
+        const uint32_t grown = (uint32_t)s_hist_valid + (uint32_t)delta;
+        s_hist_valid = grown > NETDASH_HISTORY_SLOTS ? NETDASH_HISTORY_SLOTS : (uint16_t)grown;
+    }
+    s_hist_slot = slot;
+}
+
+/* Marks the device at idx present in the current slot. Caller holds the lock. */
+static void history_mark_locked(size_t idx, int64_t now)
+{
+    if (now == 0 || s_hist_slot == 0 || idx >= NETDASH_MAX_DEVICES) {
+        return;
+    }
+    const uint16_t pos = (uint16_t)(s_hist_slot % NETDASH_HISTORY_SLOTS);
+    s_hist[idx][pos / 8] |= (uint8_t)(1u << (pos % 8));
+}
+
+bool device_db_get_history(const uint8_t mac[6], uint8_t *out, size_t cap, uint16_t *out_valid)
+{
+    if (mac == NULL || out == NULL || cap < NETDASH_HISTORY_BYTES) {
+        return false;
+    }
+    memset(out, 0, NETDASH_HISTORY_BYTES);
+    if (out_valid != NULL) {
+        *out_valid = 0;
+    }
+
+    device_db_lock();
+    const int idx = find_index_locked(mac);
+    if (idx < 0 || s_hist_slot == 0) {
+        device_db_unlock();
+        return false;
+    }
+
+    const uint16_t valid = s_hist_valid;
+    /* Unwind the ring so bit 0 is the oldest slot still in the window. */
+    for (uint16_t j = 0; j < valid; j++) {
+        const int64_t abs = s_hist_slot - (valid - 1) + j;
+        const uint16_t src =
+            (uint16_t)(((abs % NETDASH_HISTORY_SLOTS) + NETDASH_HISTORY_SLOTS) %
+                       NETDASH_HISTORY_SLOTS);
+        if (s_hist[idx][src / 8] & (1u << (src % 8))) {
+            out[j / 8] |= (uint8_t)(1u << (j % 8));
+        }
+    }
+    device_db_unlock();
+
+    if (out_valid != NULL) {
+        *out_valid = valid;
+    }
+    return true;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -748,6 +851,21 @@ void device_db_finish_tier(const uint8_t mac[6], uint8_t tier, int64_t now)
     device_db_unlock();
 }
 
+/* Drops the stored port record for mac. No lock needed: this is flash only. */
+static void ports_erase_nvs(const uint8_t mac[6])
+{
+    char key[13];
+    mac_to_key(mac, key);
+
+    nvs_handle_t h;
+    if (nvs_open(PORTS_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        if (nvs_erase_key(h, key) == ESP_OK) {
+            nvs_commit(h);
+        }
+        nvs_close(h);
+    }
+}
+
 void device_db_clear_ports(const uint8_t mac[6])
 {
     if (mac == NULL) {
@@ -757,17 +875,7 @@ void device_db_clear_ports(const uint8_t mac[6])
     const int idx = find_index_locked(mac);
     if (idx >= 0) {
         memset(&s_ports[idx], 0, sizeof(s_ports[idx]));
-
-        char key[13];
-        mac_to_key(mac, key);
-
-        nvs_handle_t h;
-        if (nvs_open(PORTS_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-            if (nvs_erase_key(h, key) == ESP_OK) {
-                nvs_commit(h);
-            }
-            nvs_close(h);
-        }
+        ports_erase_nvs(mac);
     }
     device_db_unlock();
 }
@@ -829,13 +937,17 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
     }
 
     netdash_device_t snapshot = {0};
-    bool inserted           = false;
-    bool became_online      = false;
-    bool ip_changed         = false;
-    bool persist_first_seen = false;
-    bool table_full         = false;
+    bool     inserted           = false;
+    bool     became_online      = false;
+    bool     ip_changed         = false;
+    bool     persist_first_seen = false;
+    bool     table_full         = false;
+    bool     was_gone           = false;
+    uint32_t prev_ip            = 0;
 
     device_db_lock();
+
+    history_advance_locked(now);
 
     int idx = find_index_locked(mac);
     if (idx < 0) {
@@ -848,6 +960,7 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
             memcpy(d->mac, mac, 6);
             d->rtt_ms = -1;
             memset(&s_ports[idx], 0, sizeof(s_ports[idx]));
+            memset(s_hist[idx], 0, NETDASH_HISTORY_BYTES);
             ports_restore_locked(idx);
 
             const char *vendor = oui_lookup(mac);
@@ -865,6 +978,10 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
 
         became_online = d->miss_count > 0;
         ip_changed    = !inserted && d->ip != 0 && ip != 0 && d->ip != ip;
+        prev_ip       = d->ip;
+        /* Only a device that had been declared offline counts as coming back;
+           one that merely missed a sweep or two never left. */
+        was_gone      = d->miss_count >= NETDASH_OFFLINE_AFTER_MISSES;
 
         if (d->first_seen == 0 && now != 0) {
             d->first_seen      = now;
@@ -876,6 +993,7 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
         d->rtt_ms     = rtt_ms;
         d->miss_count = 0;
         s_seen[idx]   = true;
+        history_mark_locked((size_t)idx, now);
 
         d->type = classify_device(d, wifi_mgr_get_gateway());
 
@@ -902,13 +1020,26 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
     if (inserted) {
         esp_event_post(NETDASH_EVENT, NETDASH_EVENT_DEVICE_NEW, &snapshot, sizeof(snapshot), 0);
         events_log_push(NETDASH_LOG_DEVICE_NEW, snapshot.mac, snapshot.ip, name);
+        notify_push(NETDASH_NOTIF_NEW_DEVICE, snapshot.mac, snapshot.ip,
+                    snapshot.vendor[0] != '\0' ? snapshot.vendor : "Not seen here before");
     } else if (became_online) {
         esp_event_post(NETDASH_EVENT, NETDASH_EVENT_DEVICE_ONLINE, &snapshot, sizeof(snapshot), 0);
         events_log_push(NETDASH_LOG_DEVICE_ONLINE, snapshot.mac, snapshot.ip, name);
+        if (was_gone) {
+            notify_push(NETDASH_NOTIF_DEVICE_BACK, snapshot.mac, snapshot.ip, "Back online");
+        }
     }
     if (ip_changed) {
         esp_event_post(NETDASH_EVENT, NETDASH_EVENT_DEVICE_IP_CHANGED, &snapshot, sizeof(snapshot), 0);
         events_log_push(NETDASH_LOG_DEVICE_IP_CHANGED, snapshot.mac, snapshot.ip, name);
+
+        /* The notification carries the new address in ip and names the old one
+           in the text, which is the half a reader cannot look up afterwards. */
+        char moved[NETDASH_NOTIF_TEXT];
+        snprintf(moved, sizeof(moved), "Was %u.%u.%u.%u", (unsigned)((prev_ip >> 24) & 0xff),
+                 (unsigned)((prev_ip >> 16) & 0xff), (unsigned)((prev_ip >> 8) & 0xff),
+                 (unsigned)(prev_ip & 0xff));
+        notify_push(NETDASH_NOTIF_IP_CHANGED, snapshot.mac, snapshot.ip, moved);
     }
 
     return inserted;
@@ -916,11 +1047,13 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
 
 void device_db_mark_sweep_end(int64_t now)
 {
-    (void)now; /* last_seen is only ever advanced by device_db_upsert_seen(). */
-
+    /* last_seen is only ever advanced by device_db_upsert_seen(); `now` is
+       here so the history window moves on even through a sweep that found
+       nothing at all. */
     size_t offline_count = 0;
 
     device_db_lock();
+    history_advance_locked(now);
     for (size_t i = 0; i < s_count; i++) {
         if (s_seen[i]) {
             s_seen[i] = false;
@@ -945,6 +1078,7 @@ void device_db_mark_sweep_end(int64_t now)
         device_db_display_name(&snap, name, sizeof(name));
         esp_event_post(NETDASH_EVENT, NETDASH_EVENT_DEVICE_OFFLINE, &snap, sizeof(snap), 0);
         events_log_push(NETDASH_LOG_DEVICE_OFFLINE, snap.mac, snap.ip, name);
+        notify_push(NETDASH_NOTIF_DEVICE_GONE, snap.mac, snap.ip, "Stopped answering");
     }
 }
 
@@ -1068,10 +1202,16 @@ esp_err_t device_db_remove(const uint8_t mac[6])
     if (found) {
         const size_t last = s_count - 1;
         if ((size_t)idx != last) {
+            /* Every array indexed by device position has to move together, or
+               the tail device inherits the deleted one's ports and history. */
             s_devices[idx]   = s_devices[last];
             s_seen[idx]      = s_seen[last];
             s_persisted[idx] = s_persisted[last];
+            s_ports[idx]     = s_ports[last];
+            memcpy(s_hist[idx], s_hist[last], NETDASH_HISTORY_BYTES);
         }
+        memset(&s_ports[last], 0, sizeof(s_ports[last]));
+        memset(s_hist[last], 0, NETDASH_HISTORY_BYTES);
         s_count--;
     }
     device_db_unlock();
@@ -1079,6 +1219,9 @@ esp_err_t device_db_remove(const uint8_t mac[6])
     if (!found) {
         return ESP_ERR_NOT_FOUND;
     }
+    /* Forgetting a device means forgetting what was written about it too. */
+    notes_forget_device(mac);
+    ports_erase_nvs(mac);
     return nvs_erase_device(mac);
 }
 
