@@ -809,10 +809,26 @@ static void sweep(const netdash_settings_t *cfg)
              (unsigned)s_sweep.replies, (unsigned)s_sweep.from_arp,
              (unsigned)s_sweep.fresh, (unsigned)(dur_ms / 1000), (unsigned)(dur_ms % 1000));
 
-    char line[48];
-    snprintf(line, sizeof(line), "sweep: %u alive / %u probed",
-             (unsigned)alive, (unsigned)s_sweep.probed);
-    events_log_push(NETDASH_LOG_SCAN, NULL, 0, line);
+    /*
+     * Only log a sweep that actually tells the user something.
+     *
+     * A sweep every couple of minutes, each writing "22 alive / 253 probed",
+     * fills the 100-entry ring in a few hours and pushes out the entries that
+     * matter - a device appearing, or going offline. The serial log above
+     * still records every sweep, and /api/status carries the live counts and
+     * the last sweep time, so nothing is lost by staying quiet here.
+     */
+    static uint16_t s_last_logged_alive;
+    static bool     s_logged_once;
+
+    if (!s_logged_once || alive != s_last_logged_alive) {
+        char line[48];
+        snprintf(line, sizeof(line), "%u device%s on the network",
+                 (unsigned)alive, alive == 1 ? "" : "s");
+        events_log_push(NETDASH_LOG_SCAN, NULL, 0, line);
+        s_last_logged_alive = alive;
+        s_logged_once       = true;
+    }
 
     sweep_finish_idle();
 }
