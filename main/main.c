@@ -28,6 +28,7 @@
 #include "display.h"
 #include "http_server.h"
 #include "links.h"
+#include "icons.h"
 #include "notes.h"
 #include "notify.h"
 #include "portscan.h"
@@ -68,6 +69,7 @@ void app_main(void)
     ESP_ERROR_CHECK(wifi_mgr_init());
     ESP_ERROR_CHECK(notify_init());
     ESP_ERROR_CHECK(notes_init());
+    ESP_ERROR_CHECK(icons_init());
     ESP_ERROR_CHECK(device_db_init());
     ESP_ERROR_CHECK(links_init());
     ESP_ERROR_CHECK(http_server_init());

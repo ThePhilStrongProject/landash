@@ -634,7 +634,7 @@ headings.
 |---|---|---|
 | `id` | number | stable while the link exists |
 | `group` | number | group id, `0` when ungrouped |
-| `icon` | string | icon override; empty means derive it from `service` |
+| `icon` | string | icon override: a sprite name, `u:<id>` for an uploaded image, or empty to derive it from `service` |
 | `service` | string | what the firmware makes of the port, e.g. `portainer` |
 | `mac`, `port`, `scheme` | | what is actually stored |
 | `label` | string | the user's name for it, defaulting to the device name |
@@ -976,3 +976,94 @@ Marks everything read. `{ "ok": true, "unread": 0 }`.
 
 Drops one. `DELETE /api/notifications` drops the lot. Returns
 `{ "ok": true, "unread": n, "count": n }`. 404 for an unknown id.
+
+## Uploaded icons
+
+A link can wear an actual logo instead of one of the drawn glyphs. Icons are
+small PNGs in the `storage` SPIFFS partition, one file each, referenced from a
+link's `icon` field as `u:<id>`.
+
+**The browser does the hard part.** It decodes whatever the user picked - PNG,
+JPEG, WebP, a screenshot, a 12-megapixel photo - draws it into a 64x64 canvas
+preserving aspect ratio, and uploads the result as PNG. So the firmware only
+ever sees a small PNG of known dimensions and never has to decode, rescale or
+sniff anything. It still validates, because a browser is not the only thing
+that can POST.
+
+A real 64x64 logo lands around 2 KB, so 48 icons cost under 100 KB of a 1 MB
+partition. The binding limit is the count, not the space.
+
+**Ids are never reused**, which is what lets `GET /api/icons/{id}` be served
+with a one-year immutable cache: the bytes behind an id can never change.
+Replacing an icon means uploading a new one.
+
+### GET /api/icons
+
+```json
+{
+  "icons": [{ "id": 4, "bytes": 1930 }],
+  "available": true,
+  "max_icons": 48,
+  "max_bytes": 16384,
+  "px": 64,
+  "used": 2259,
+  "total": 956561
+}
+```
+
+`available` is `false` when the storage partition could not be mounted. That
+is not fatal - uploaded icons are a convenience, and the dashboard boots
+without them - so clients should hide the upload control rather than treat it
+as an error.
+
+### POST /api/icons
+
+The PNG as the **raw request body**, with `Content-Type: image/png`. Not
+multipart: `esp_http_server` has no multipart parser, and a raw body needs no
+decoding and no temporary copy in heap, so the bytes go from the socket to
+flash a kilobyte at a time.
+
+```
+POST /api/icons
+Content-Type: image/png
+
+<png bytes>
+```
+
+```json
+{ "id": 4, "ref": "u:4" }
+```
+
+`ref` is exactly what a link's `icon` field wants, so the caller never has to
+know how an uploaded icon is spelled.
+
+| Status | Meaning |
+|---|---|
+| 413 | empty, or over `max_bytes` |
+| 415 | not a PNG, or larger than `px` square |
+| 409 | `max_icons` already stored |
+| 503 | storage is not mounted |
+
+Nothing is left behind on any failure path.
+
+**Why the dimensions are checked and not just the byte count**: flat colour
+compresses extraordinarily well. A 2000x2000 single-colour PNG is under 15 KB,
+so it would slip past a 16 KB cap and then be decoded at full size by every
+browser that loaded the dashboard. The check reads width and height straight
+out of the IHDR chunk.
+
+### GET /api/icons/{id}
+
+The PNG, with `Content-Type: image/png` and
+`Cache-Control: public, max-age=31536000, immutable`. 404 for an unknown id.
+
+### DELETE /api/icons/{id}
+
+```json
+{ "ok": true, "icons": [...] }
+```
+
+Links still pointing at the deleted icon are **not** rewritten. An icon
+reference that no longer resolves is not an error: the UI falls back to the
+derived icon, which is the same thing it would show if the reference had never
+been set.

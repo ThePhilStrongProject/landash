@@ -355,6 +355,17 @@ border-radius:var(--r-sm);background:var(--surface);color:var(--text);cursor:poi
 .iconpick button[aria-pressed="true"]{border-color:var(--accent);background:rgba(59,130,246,.14)}
 .iconpick .ic{width:19px;height:19px}
 .rowmark{width:13px;height:13px;color:var(--muted);flex:none}
+.upic{object-fit:contain;image-rendering:auto;border-radius:3px}
+.lc-icon.upic{width:1.15em;height:1.15em}
+.uploadtile{border-style:dashed !important;color:var(--muted) !important}
+.uploadtile:hover{color:var(--accent-2) !important}
+.uprow{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+.uprow span{flex:1;min-width:0}
+.iconmanage{display:flex;flex-direction:column;gap:2px;max-height:50vh;overflow:auto}
+.iconmrow{display:flex;align-items:center;gap:10px;padding:6px 4px;border-top:1px solid var(--border)}
+.iconmrow:first-child{border-top:0}
+.iconmrow .ic{width:24px;height:24px}
+.iconmrow .muted{margin-left:auto;font-size:var(--fs-xs)}
 .picksecthead{font-size:var(--fs-xs);color:var(--muted);text-transform:uppercase;
 letter-spacing:.06em;margin:12px 0 0}
 </style>
@@ -700,11 +711,36 @@ var GENERIC_SERVICE = {http:1, https:1, "http-alt":1, "https-alt":1, "":1};
  * device around as it is reclassified.
  */
 function linkIconId(l){
-if (l.icon) return l.icon;
+if (l.icon){
+/* An upload that has since been deleted falls back to the derived icon
+   rather than showing a broken image. */
+if (l.icon.slice(0,2) === "u:"){
+if (uploadExists(l.icon.slice(2))) return l.icon;
+} else {
+return l.icon;
+}
+}
 var svc = l.service || "";
 if (!GENERIC_SERVICE[svc] && SERVICE_ICON[svc]) return SERVICE_ICON[svc];
 if (l.type && l.type !== "unknown" && TYPE_ICON[l.type]) return TYPE_ICON[l.type];
 return SERVICE_ICON[svc] || "i-link";
+}
+
+function uploadExists(id){
+return (state.icons || []).some(function(ic){ return String(ic.id) === String(id); });
+}
+
+/*
+ * Markup for an icon reference, sprite or upload. Uploads are served with a
+ * one-year immutable cache, so the browser fetches each one once however many
+ * tiles use it.
+ */
+function iconRef(ref, cls){
+if (ref && ref.slice(0,2) === "u:"){
+return "<img class=\"ic upic" + (cls?(" "+cls):"") + "\" src=\"/api/icons/" +
+encodeURIComponent(ref.slice(2)) + "\" alt=\"\" loading=\"lazy\">";
+}
+return icon(ref, cls);
 }
 
 /* Every icon a link may be given, grouped for the picker. */
@@ -740,6 +776,8 @@ links: [],
 groups: [],
 maxGroups: 8,
 notifs: [],
+icons: [],
+iconsMeta: null,
 notifUnread: 0,
 notifRendered: false,
 vault: null,
@@ -1721,9 +1759,9 @@ var editing = state.linksEditMode;
 var cls = "linkcard" + (!known ? " unknown" : (!l.online ? " offline" : ""));
 var host = known ? (esc(l.ip) + ":" + esc(l.port)) : "device not on the network";
 var statusText = !known ? "Unknown device" : (l.online ? "Online" : "Offline");
-var iconId = linkIconId(l);
+var iconRefId = linkIconId(l);
 var topStyle = editing ? " style=\"padding-right:90px\"" : "";
-var body = "<div class=\"lc-top\"" + topStyle + ">" + icon(iconId, "lc-icon") +
+var body = "<div class=\"lc-top\"" + topStyle + ">" + iconRef(iconRefId, "lc-icon") +
 "<span class=\"lc-label\">" + esc(l.label) + "</span></div>" +
 "<div class=\"lc-host mono\">" + host + "</div>" +
 ((known && l.online) ? "" : "<div class=\"lc-status\"><span class=\"lc-dot\"></span>" + statusText + "</div>");
@@ -1891,9 +1929,176 @@ return "<button type=\"button\" data-v=\"" + it.v + "\"" + (sel?" aria-current=\
 }).join("");
 openPopover(anchor, html, function(v){ setLinkGroup(id, Number(v)); });
 }
+/*
+ * Draws whatever the user picked into a square canvas and re-encodes it as a
+ * PNG. Doing it here rather than on the dongle means any format the browser
+ * can decode is accepted - a photo, a screenshot, an SVG - and the firmware
+ * only ever receives a small PNG of known size. Aspect ratio is preserved and
+ * the remainder left transparent, so a wide logo is letterboxed rather than
+ * squashed.
+ */
+function resizeToIcon(file, px){
+return new Promise(function(resolve, reject){
+if (!/^image\//.test(file.type||"")) { reject(new Error("that is not an image")); return; }
+var url = URL.createObjectURL(file);
+var img = new Image();
+img.onload = function(){
+try {
+var c = document.createElement("canvas");
+c.width = px; c.height = px;
+var g = c.getContext("2d");
+g.imageSmoothingEnabled = true;
+g.imageSmoothingQuality = "high";
+var scale = Math.min(px / img.width, px / img.height);
+var w = Math.max(1, Math.round(img.width * scale));
+var h = Math.max(1, Math.round(img.height * scale));
+g.drawImage(img, Math.round((px - w) / 2), Math.round((px - h) / 2), w, h);
+URL.revokeObjectURL(url);
+c.toBlob(function(b){
+if (b) resolve(b); else reject(new Error("could not encode the image"));
+}, "image/png");
+} catch(e){ URL.revokeObjectURL(url); reject(e); }
+};
+img.onerror = function(){ URL.revokeObjectURL(url); reject(new Error("could not read that image")); };
+img.src = url;
+});
+}
+
+function loadIcons(){
+return api("GET","/api/icons").then(function(r){
+var next = r.icons || [];
+/* The grid may already have painted without this list, in which case every
+   uploaded icon fell back to its derived glyph. The link data has not
+   changed, so the poll will not repaint on its own - do it here. */
+var changed = JSON.stringify(next) !== JSON.stringify(state.icons);
+state.icons = next;
+state.iconsMeta = r;
+if (changed){
+state.linksRendered = false;
+if (state.tab === "dashboard" && state.linksRenamingId == null) renderDashboard();
+}
+return r;
+}).catch(function(){ state.icons = state.icons || []; });
+}
+
+function uploadSectionHtml(current){
+var meta = state.iconsMeta || {};
+if (meta.available === false){
+return "<p class=\"picksecthead\">Uploaded</p>" +
+"<p class=\"muted\" style=\"margin:4px 0 0;font-size:var(--fs-sm)\">" +
+"Storage is not mounted, so custom icons are unavailable.</p>";
+}
+var mine = state.icons || [];
+var full = mine.length >= (meta.max_icons || 48);
+var tiles = mine.map(function(ic){
+var ref = "u:" + ic.id;
+return "<button type=\"button\" data-icon=\"" + esc(ref) + "\" aria-pressed=\"" +
+(current===ref?"true":"false") + "\" title=\"Uploaded icon " + ic.id + "\">" +
+iconRef(ref) + "</button>";
+}).join("");
+return "<p class=\"picksecthead\">Uploaded</p>" +
+"<div class=\"iconpick\">" + tiles +
+(full ? "" : "<button type=\"button\" id=\"iconUploadBtn\" class=\"uploadtile\" title=\"Upload an image\">" +
+icon("i-plus") + "</button>") + "</div>" +
+"<div class=\"uprow\">" +
+"<input type=\"file\" id=\"iconFile\" accept=\"image/*\" hidden>" +
+"<span class=\"muted\" style=\"font-size:var(--fs-xs)\">" +
+"Any image works &mdash; it is scaled to " + (meta.px||64) + "&times;" + (meta.px||64) +
+" in your browser before upload. " + mine.length + " of " + (meta.max_icons||48) + " used." +
+"</span>" +
+(mine.length ? "<button type=\"button\" class=\"btn small\" id=\"iconManageBtn\">Manage</button>" : "") +
+"</div>";
+}
+
+function wireIconPicker(root, linkId, current){
+root.querySelectorAll("[data-icon]").forEach(function(b){
+b.addEventListener("click", function(){
+api("PATCH","/api/links/"+linkId,{icon:b.dataset.icon})
+.then(function(){ closeModal(); state.linksRendered = false; loadLinks(); })
+.catch(toastErr);
+});
+});
+
+var up = root.querySelector("#iconUploadBtn"), fi = root.querySelector("#iconFile");
+if (up && fi){
+up.addEventListener("click", function(){ fi.click(); });
+fi.addEventListener("change", function(){
+var f = fi.files && fi.files[0];
+fi.value = "";
+if (!f) return;
+up.disabled = true;
+var meta = state.iconsMeta || {};
+resizeToIcon(f, meta.px || 64).then(function(blob){
+if (blob.size > (meta.max_bytes || 16384)){
+throw new Error("that image is too detailed to store; try a simpler one");
+}
+return fetch("/api/icons", {method:"POST", headers:{"Content-Type":"image/png"}, body:blob});
+}).then(function(res){
+return res.text().then(function(t){
+var d = null; try { d = JSON.parse(t); } catch(e){}
+if (!res.ok) throw new Error((d && d.error) || ("upload failed (" + res.status + ")"));
+return d;
+});
+}).then(function(d){
+return loadIcons().then(function(){
+return api("PATCH","/api/links/"+linkId,{icon:d.ref});
+});
+}).then(function(){
+closeModal();
+toast("Icon uploaded","ok");
+state.linksRendered = false;
+loadLinks();
+}).catch(function(e){
+up.disabled = false;
+toast((e && e.message) || "upload failed","err");
+});
+});
+}
+
+var mg = root.querySelector("#iconManageBtn");
+if (mg) mg.addEventListener("click", function(){ openIconManager(linkId, current); });
+}
+
+/* A second pass over the same tiles, this time to delete rather than pick. */
+function openIconManager(linkId, current){
+var mine = state.icons || [];
+var html = "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Manage uploaded icons\">" +
+"<button type=\"button\" class=\"modalclose\" aria-label=\"Close\">" + icon("i-close") + "</button>" +
+"<h3>Uploaded icons</h3>" +
+"<p class=\"muted\" style=\"margin:0 0 8px;font-size:var(--fs-sm)\">" +
+"Deleting one leaves any tile using it on its automatic icon.</p>" +
+"<div class=\"iconmanage\">" + mine.map(function(ic){
+return "<div class=\"iconmrow\">" + iconRef("u:" + ic.id) +
+"<span class=\"mono\">#" + ic.id + "</span>" +
+"<span class=\"muted\">" + Math.round(ic.bytes/102.4)/10 + " KB</span>" +
+"<button type=\"button\" class=\"iconbtn\" data-del=\"" + ic.id +
+"\" aria-label=\"Delete icon " + ic.id + "\">" + icon("i-trash") + "</button></div>";
+}).join("") + "</div></div>";
+openModal(html, function(root){
+root.querySelector(".modalclose").addEventListener("click", function(){
+closeModal();
+if (linkId != null) openIconPicker(linkId);
+});
+root.querySelectorAll("[data-del]").forEach(function(b){
+b.addEventListener("click", function(){
+api("DELETE","/api/icons/"+b.dataset.del).then(function(){
+return loadIcons();
+}).then(function(){
+closeModal();
+state.linksRendered = false;
+loadLinks();
+if (linkId != null) openIconPicker(linkId);
+}).catch(toastErr);
+});
+});
+});
+}
+
 function openIconPicker(id){
 var l = (state.links||[]).find(function(x){ return x.id === id; });
 if (!l) return;
+/* Make sure the Uploaded section is current before the modal is built. */
+if (!state.iconsMeta){ loadIcons().then(function(){ openIconPicker(id); }); return; }
 var current = l.icon || "";
 var html = "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Choose an icon\">" +
 "<button type=\"button\" class=\"modalclose\" aria-label=\"Close\">" + icon("i-close") + "</button>" +
@@ -1904,7 +2109,8 @@ var html = "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=
 "<p class=\"picksecthead\">Automatic</p><div class=\"iconpick\">" +
 "<button type=\"button\" data-icon=\"\" aria-pressed=\"" + (current===""?"true":"false") +
 "\" title=\"Automatic\">" +
-icon(linkIconId({port:l.port, service:l.service, type:l.type})) + "</button></div>" +
+iconRef(linkIconId({port:l.port, service:l.service, type:l.type})) + "</button></div>" +
+uploadSectionHtml(current) +
 ICON_CHOICES.map(function(sect){
 return "<p class=\"picksecthead\">" + esc(sect[0]) + "</p><div class=\"iconpick\">" +
 sect.slice(1).map(function(ic){
@@ -1914,13 +2120,7 @@ return "<button type=\"button\" data-icon=\"" + ic + "\" aria-pressed=\"" +
 }).join("") + "</div>";
 openModal(html, function(root){
 root.querySelector(".modalclose").addEventListener("click", closeModal);
-root.querySelectorAll("[data-icon]").forEach(function(b){
-b.addEventListener("click", function(){
-api("PATCH","/api/links/"+id,{icon:b.dataset.icon})
-.then(function(){ closeModal(); state.linksRendered = false; loadLinks(); })
-.catch(toastErr);
-});
-});
+wireIconPicker(root, id, current);
 });
 }
 function removeLink(id){
@@ -2429,6 +2629,7 @@ loadStatus();
 loadDevices();
 loadPortscanStatus();
 loadNotifs();
+loadIcons();
 /* The vault state is needed before the first drawer opens, so the Secret
    section can say "locked" rather than flashing "no vault". */
 loadVault().then(renderVaultSettings).catch(function(){});

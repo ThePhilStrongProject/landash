@@ -36,6 +36,7 @@
 #include "classify.h"
 #include "device_db.h"
 #include "links.h"
+#include "icons.h"
 #include "notes.h"
 #include "notify.h"
 #include "portscan.h"
@@ -2577,6 +2578,182 @@ static esp_err_t devices_post_router(httpd_req_t *req)
     return send_json_error(req, "404 Not Found", "not found");
 }
 
+/* ------------------------------------------------------------------------- */
+/* Uploaded icons                                                            */
+/* ------------------------------------------------------------------------- */
+
+/* Adapter so icons_store() can pull straight off the socket. */
+static int icon_recv(void *ctx, char *buf, size_t len)
+{
+    httpd_req_t *req = (httpd_req_t *)ctx;
+    const int    n   = httpd_req_recv(req, buf, len);
+
+    if (n == HTTPD_SOCK_ERR_TIMEOUT) {
+        return 0;   /* treat a stalled client as end of input */
+    }
+    return n;
+}
+
+static cJSON *icons_array(void)
+{
+    cJSON       *arr = cJSON_CreateArray();
+    const size_t n   = icons_count();
+
+    for (size_t i = 0; i < n; i++) {
+        uint16_t id    = 0;
+        size_t   bytes = 0;
+        if (!icons_get_at(i, &id, &bytes)) {
+            break;
+        }
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddNumberToObject(o, "id", id);
+        cJSON_AddNumberToObject(o, "bytes", bytes);
+        cJSON_AddItemToArray(arr, o);
+    }
+    return arr;
+}
+
+static esp_err_t icons_list_handler(httpd_req_t *req)
+{
+    size_t used = 0, total = 0;
+    icons_usage(&used, &total);
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddItemToObject(o, "icons", icons_array());
+    cJSON_AddBoolToObject(o, "available", icons_available());
+    cJSON_AddNumberToObject(o, "max_icons", NETDASH_MAX_ICONS);
+    cJSON_AddNumberToObject(o, "max_bytes", NETDASH_ICON_MAX_BYTES);
+    cJSON_AddNumberToObject(o, "px", NETDASH_ICON_PX);
+    cJSON_AddNumberToObject(o, "used", used);
+    cJSON_AddNumberToObject(o, "total", total);
+    return send_json(req, "200 OK", o);
+}
+
+/*
+ * POST /api/icons with the PNG as the raw body. Not multipart: esp_http_server
+ * has no multipart parser, and a raw body needs no decoding and no temporary
+ * copy in heap - the bytes go from the socket to flash a kilobyte at a time.
+ */
+static esp_err_t icons_post_handler(httpd_req_t *req)
+{
+    if (!icons_available()) {
+        return send_json_error(req, "503 Service Unavailable",
+                               "icon storage is not mounted");
+    }
+    if (req->content_len > NETDASH_ICON_MAX_BYTES) {
+        return send_json_error(req, "413 Payload Too Large", "icon is too large");
+    }
+
+    uint16_t        id  = 0;
+    const esp_err_t err = icons_store(icon_recv, req, &id);
+
+    if (err == ESP_ERR_INVALID_SIZE) {
+        return send_json_error(req, "413 Payload Too Large", "icon is empty or too large");
+    }
+    if (err == ESP_ERR_INVALID_RESPONSE) {
+        return send_json_error(req, "415 Unsupported Media Type",
+                               "expected a PNG of at most 64x64");
+    }
+    if (err == ESP_ERR_NO_MEM) {
+        return send_json_error(req, "409 Conflict", "no room for another icon");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "could not store icon");
+    }
+
+    /* `ref` is exactly what a link's `icon` field wants, so the caller never
+       has to know how an uploaded icon is spelled. */
+    char ref[16];
+    snprintf(ref, sizeof(ref), "u:%u", (unsigned)id);
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddNumberToObject(o, "id", id);
+    cJSON_AddStringToObject(o, "ref", ref);
+    return send_json(req, "200 OK", o);
+}
+
+/* Pulls the id out of /api/icons/{id}. 0 when malformed. */
+static uint16_t icon_id_from_uri(const char *uri)
+{
+    char tail[24];
+    if (!extract_tail(uri, "/api/icons/", tail, sizeof(tail))) {
+        return 0;
+    }
+    char      *end = NULL;
+    const long v   = strtol(tail, &end, 10);
+    if (end == tail || end == NULL || *end != 0 || v < 1 || v > 65534) {
+        return 0;
+    }
+    return (uint16_t)v;
+}
+
+static esp_err_t icons_get_handler(httpd_req_t *req)
+{
+    const uint16_t id = icon_id_from_uri(req->uri);
+    if (id == 0) {
+        return send_json_error(req, "400 Bad Request", "bad icon id");
+    }
+
+    size_t bytes = 0;
+    FILE  *f     = icons_open(id, &bytes);
+    if (f == NULL) {
+        return send_json_error(req, "404 Not Found", "no such icon");
+    }
+
+    httpd_resp_set_type(req, "image/png");
+    /* Ids are never reused, so the bytes behind one can never change. */
+    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000, immutable");
+
+    char     *buf = malloc(1024);
+    esp_err_t err = ESP_OK;
+    if (buf == NULL) {
+        fclose(f);
+        return send_json_error(req, "500 Internal Server Error", "out of memory");
+    }
+
+    for (;;) {
+        const size_t n = fread(buf, 1, 1024, f);
+        if (n == 0) {
+            break;
+        }
+        err = httpd_resp_send_chunk(req, buf, n);
+        if (err != ESP_OK) {
+            break;
+        }
+    }
+    free(buf);
+    fclose(f);
+
+    httpd_resp_send_chunk(req, NULL, 0);
+    return err;
+}
+
+static esp_err_t icons_delete_handler(httpd_req_t *req)
+{
+    const uint16_t id = icon_id_from_uri(req->uri);
+    if (id == 0) {
+        return send_json_error(req, "400 Bad Request", "bad icon id");
+    }
+
+    const esp_err_t err = icons_delete(id);
+    if (err == ESP_ERR_NOT_FOUND) {
+        return send_json_error(req, "404 Not Found", "no such icon");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "could not delete icon");
+    }
+
+    /*
+     * Any link still pointing at it falls back to its derived icon on the next
+     * read, so there is nothing to clean up in the link list - an icon
+     * reference that no longer resolves is not an error, just a default.
+     */
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    cJSON_AddItemToObject(o, "icons", icons_array());
+    return send_json(req, "200 OK", o);
+}
+
 static const httpd_uri_t s_uri_handlers[] = {
     {.uri = "/api/status",               .method = HTTP_GET,    .handler = status_handler},
     {.uri = "/api/devices",              .method = HTTP_GET,    .handler = devices_list_handler},
@@ -2607,6 +2784,10 @@ static const httpd_uri_t s_uri_handlers[] = {
     {.uri = "/api/notifications/read",   .method = HTTP_POST,   .handler = notifications_read_handler},
     {.uri = "/api/notifications",        .method = HTTP_DELETE, .handler = notifications_delete_handler},
     {.uri = "/api/notifications/*",      .method = HTTP_DELETE, .handler = notifications_delete_handler},
+    {.uri = "/api/icons",                .method = HTTP_GET,    .handler = icons_list_handler},
+    {.uri = "/api/icons",                .method = HTTP_POST,   .handler = icons_post_handler},
+    {.uri = "/api/icons/*",              .method = HTTP_GET,    .handler = icons_get_handler},
+    {.uri = "/api/icons/*",              .method = HTTP_DELETE, .handler = icons_delete_handler},
     {.uri = "/api/wan",                  .method = HTTP_GET,    .handler = wan_get_handler},
     {.uri = "/api/wan/check",            .method = HTTP_POST,   .handler = wan_check_handler},
     {.uri = "/api/vault",                .method = HTTP_GET,    .handler = vault_get_handler},

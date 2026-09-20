@@ -16,15 +16,64 @@ Usage:
 """
 
 import json
+import struct
 import sys
 import urllib.error
 import urllib.request
+import zlib
 
 TIMEOUT = 10
 
 passed = 0
 failed = 0
 failures = []
+
+
+def png(w, h, rgb=(59, 130, 246)):
+    """A minimal valid RGB PNG, built by hand so the test needs no image
+    library. Flat colour, which is also why it compresses to almost nothing -
+    the reason the firmware checks dimensions and not just byte count."""
+    raw = b""
+    for _ in range(h):
+        raw += b"\x00" + bytes(rgb) * w
+
+    def chunk(tag, data):
+        c = tag + data
+        return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xffffffff)
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9))
+            + chunk(b"IEND", b""))
+
+
+def post_raw(base, path, body, ctype="image/png"):
+    """Returns (status, parsed_json_or_raw, headers). request() always sends
+    JSON, and an icon upload is the raw file."""
+    req = urllib.request.Request(base + path, data=bytes(body), method="POST")
+    req.add_header("Content-Type", ctype)
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            return r.status, json.loads(r.read() or b"null"), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, json.loads(raw or b"null"), dict(e.headers)
+        except Exception:  # noqa: BLE001
+            return e.code, raw, dict(e.headers)
+    except Exception as e:  # noqa: BLE001
+        return None, str(e), {}
+
+
+def get_raw(base, path):
+    """Fetches a non-JSON body, such as an icon's PNG bytes."""
+    try:
+        with urllib.request.urlopen(base + path, timeout=TIMEOUT) as r:
+            return r.status, r.read(), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), dict(e.headers)
+    except Exception as e:  # noqa: BLE001
+        return None, str(e).encode(), {}
 
 
 def check(name, condition, detail=""):
@@ -376,6 +425,74 @@ def main():
         st, v3, _ = request(base, "DELETE", "/api/vault", {"confirm": "destroy secrets"})
         check("destroy the vault", st == 200 and not (v3 or {}).get("configured"),
               f"status {st}")
+
+
+    # --- uploaded icons -----------------------------------------------------
+    print("\nuploaded icons")
+    st, ic, _ = request(base, "GET", "/api/icons")
+    check("icon endpoint answers", st == 200 and isinstance(ic, dict), f"status {st}")
+
+    if not (ic or {}).get("available"):
+        print("       storage is not mounted - skipping the upload checks")
+    else:
+        check("icon limits are reported",
+              (ic or {}).get("px") and (ic or {}).get("max_icons") and (ic or {}).get("max_bytes"),
+              repr(ic)[:120])
+        print(f"       {ic.get('used', 0)} of {ic.get('total', 0)} bytes used, "
+              f"{len(ic.get('icons', []))} stored")
+
+        blob = png(64, 64)
+        st, r, _ = post_raw(base, "/api/icons", blob)
+        icon_id = (r or {}).get("id") if isinstance(r, dict) else None
+        check("upload a 64x64 png", st == 200 and icon_id, f"status {st} {r!r}"[:120])
+        check("upload returns a link-ready ref",
+              isinstance(r, dict) and r.get("ref") == f"u:{icon_id}", repr(r)[:80])
+
+        if icon_id:
+            st, raw, hdrs = get_raw(base, f"/api/icons/{icon_id}")
+            check("serve the icon back", st == 200 and raw == blob,
+                  f"{len(raw)} bytes vs {len(blob)}")
+            check("served as image/png",
+                  hdrs.get("Content-Type", "").startswith("image/png"),
+                  hdrs.get("Content-Type"))
+            check("served with an immutable cache",
+                  "immutable" in hdrs.get("Cache-Control", ""), hdrs.get("Cache-Control"))
+
+        st, r, _ = post_raw(base, "/api/icons", b"definitely not a png")
+        check("a non-png is rejected", st == 415, f"status {st}")
+
+        # Flat colour at 2000x2000 compresses to well under the byte cap, so
+        # this only fails if the dimensions are actually being checked.
+        big = png(2000, 2000)
+        st, r, _ = post_raw(base, "/api/icons", big)
+        check("an oversized png is rejected on its dimensions", st == 415,
+              f"status {st}, {len(big)} bytes")
+
+        st, r, _ = post_raw(base, "/api/icons", b"")
+        check("an empty upload is rejected", st in (400, 413), f"status {st}")
+
+        st, _, _ = get_raw(base, "/api/icons/65000")
+        check("an unknown icon is 404", st == 404, f"status {st}")
+
+        st, r, _ = request(base, "GET", "/api/icons")
+        check("failed uploads leave nothing behind",
+              len([i for i in r.get("icons", []) if i["id"] != icon_id]) == 0,
+              repr(r.get("icons"))[:120])
+
+        if icon_id:
+            st, r2, _ = post_raw(base, "/api/icons", png(48, 48))
+            second = (r2 or {}).get("id") if isinstance(r2, dict) else None
+            request(base, "DELETE", f"/api/icons/{second}")
+            st, r3, _ = post_raw(base, "/api/icons", png(32, 32))
+            third = (r3 or {}).get("id") if isinstance(r3, dict) else None
+            check("ids are never reused", third and second and third != second,
+                  f"second {second}, third {third}")
+            request(base, "DELETE", f"/api/icons/{third}")
+
+            st, _, _ = request(base, "DELETE", f"/api/icons/{icon_id}")
+            check("delete an icon", st == 200, f"status {st}")
+            st, _, _ = get_raw(base, f"/api/icons/{icon_id}")
+            check("it is gone afterwards", st == 404, f"status {st}")
 
     # --- destructive endpoints, non-destructively ---------------------------
     print("\nguards")

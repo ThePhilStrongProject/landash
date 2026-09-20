@@ -33,6 +33,8 @@ idf_component_register(
         driver
         # AES-GCM and PBKDF2 for the secret vault in db/notes.c.
         mbedtls
+        # The storage partition, where uploaded dashboard icons live.
+        spiffs
         app_update
         esp_app_format
         espressif__mdns

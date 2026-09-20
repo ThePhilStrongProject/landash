@@ -120,6 +120,15 @@ main/
                             a DHCP change; http_server resolves the address on
                             every read. One versioned blob, with a v1 migration.
 
+  db/icons.c/.h             uploaded dashboard icons in the "storage" SPIFFS
+                            partition, one small PNG per file. The browser
+                            resizes to 64x64 and re-encodes as PNG before
+                            uploading, so the firmware never decodes an image -
+                            it checks the PNG signature and the IHDR dimensions
+                            and streams the bytes to flash. Ids are never
+                            reused, which is what makes the served bytes
+                            immutably cacheable.
+
   db/notes.c/.h             per-device plain-text notes (NVS "note") and the
                             AES-256-GCM secret vault (NVS "sec", metadata in
                             "vault"). The vault key is derived from a passphrase
@@ -158,7 +167,9 @@ docs/API.md                 the REST contract. Firmware and UI both follow it;
                             change this file before changing either side.
 tools/gen_oui.py            IEEE oui.csv -> oui_table.inc (--curated | --full).
 partitions.csv              nvs 64K, otadata 8K, phy 4K, ota_0 3M, ota_1 3M,
-                            storage 1M.
+                            storage 1M. "storage" is a SPIFFS volume mounted
+                            at /ic by db/icons.c; it is formatted on first use,
+                            which costs a few seconds on one boot only.
 ```
 
 ## Conventions
@@ -297,8 +308,12 @@ Verified on a live /24 home network (23 devices):
   nodes. 253 addresses probed, 23 alive.
 - Naming works from mDNS, the router's reverse DNS and SSDP; vendors resolve
   for every device that is not using a randomised MAC.
-- `tools/smoke_test.py` passes all 81 checks against the real device, which
-  now covers groups, notes, the vault lifecycle, history, WAN and the feed.
+- `tools/smoke_test.py` passes all 96 checks against the real device, which
+  now covers groups, notes, the vault lifecycle, history, WAN, the feed and
+  uploaded icons.
+- The browser half of the icon upload - decode, resize, re-encode, POST, and
+  the tile repainting with the result - was driven end to end in headless Edge
+  against the live dongle. A 300x120 JPEG became a 1,930-byte 64x64 PNG.
 - Free heap about 112 KB with a low-water mark of 88 KB in normal polling.
 
 ### Heap, and the one endpoint that still costs
