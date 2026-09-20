@@ -45,12 +45,29 @@ static volatile bool     s_check_now;
 static uint8_t           s_fail_streak;
 static uint8_t           s_ok_streak;
 
-/* Per-check result handed between the ping callbacks and the task. */
+/*
+ * Result of the check in flight, shared with the ping callbacks.
+ *
+ * Both this and the session below outlive any single check on purpose. The
+ * obvious shape - create a session, wait, delete it, with the context on the
+ * caller's stack - races: the ping task can still be inside recvfrom() when
+ * the session is deleted, and its end callback then gives a semaphore that has
+ * already been deleted, through a stack frame that no longer exists. That
+ * asserts inside the queue code and reboots the dongle.
+ *
+ * Keeping both alive for the lifetime of the task removes the race entirely. A
+ * callback that arrives late writes to memory that is still valid and gives a
+ * semaphore that the next probe drains before it starts.
+ */
 typedef struct {
     SemaphoreHandle_t done;
     bool              ok;
     uint32_t          rtt_ms;
 } ping_ctx_t;
+
+static ping_ctx_t        s_ping;
+static esp_ping_handle_t s_ping_hdl;
+static char              s_ping_target[40];   /* what s_ping_hdl was built for */
 
 /* ------------------------------------------------------------------------- */
 
@@ -111,16 +128,27 @@ static bool resolve_host(const char *host, ip_addr_t *out)
     return true;
 }
 
-static bool probe_icmp(const char *host, uint32_t *out_rtt_ms)
+/*
+ * Makes sure s_ping_hdl is a session aimed at host. Only rebuilds it when the
+ * configured target actually changes, which is a settings edit rather than
+ * something that happens on every check. Caller is the wan task, which is the
+ * only thing that ever starts or stops the session.
+ */
+static bool ensure_session(const char *host)
 {
+    if (s_ping_hdl != NULL && strcmp(s_ping_target, host) == 0) {
+        return true;
+    }
+
     ip_addr_t target;
     if (!resolve_host(host, &target)) {
         return false;
     }
 
-    ping_ctx_t ctx = {.done = xSemaphoreCreateBinary(), .ok = false, .rtt_ms = 0};
-    if (ctx.done == NULL) {
-        return false;
+    if (s_ping_hdl != NULL) {
+        esp_ping_stop(s_ping_hdl);
+        esp_ping_delete_session(s_ping_hdl);
+        s_ping_hdl = NULL;
     }
 
     esp_ping_config_t cfg = ESP_PING_DEFAULT_CONFIG();
@@ -133,28 +161,46 @@ static bool probe_icmp(const char *host, uint32_t *out_rtt_ms)
         .on_ping_success = on_ping_success,
         .on_ping_timeout = on_ping_timeout,
         .on_ping_end     = on_ping_end,
-        .cb_args         = &ctx,
+        .cb_args         = &s_ping,
     };
 
-    esp_ping_handle_t hdl = NULL;
-    if (esp_ping_new_session(&cfg, &cbs, &hdl) != ESP_OK) {
-        vSemaphoreDelete(ctx.done);
+    if (esp_ping_new_session(&cfg, &cbs, &s_ping_hdl) != ESP_OK) {
+        s_ping_hdl = NULL;
+        return false;
+    }
+    snprintf(s_ping_target, sizeof(s_ping_target), "%s", host);
+    return true;
+}
+
+static bool probe_icmp(const char *host, uint32_t *out_rtt_ms)
+{
+    if (!ensure_session(host)) {
         return false;
     }
 
-    bool ok = false;
-    if (esp_ping_start(hdl) == ESP_OK) {
-        /* The session ends itself after one echo; the timeout is a backstop. */
-        if (xSemaphoreTake(ctx.done, pdMS_TO_TICKS(WAN_PING_TMO_MS + 1000)) == pdTRUE) {
-            ok = ctx.ok;
-            if (ok && out_rtt_ms != NULL) {
-                *out_rtt_ms = ctx.rtt_ms;
-            }
-        }
-        esp_ping_stop(hdl);
+    /* Drop anything a previous check's callback left behind, so a late give
+       cannot be mistaken for this check finishing instantly. */
+    while (xSemaphoreTake(s_ping.done, 0) == pdTRUE) {
     }
-    esp_ping_delete_session(hdl);
-    vSemaphoreDelete(ctx.done);
+    s_ping.ok     = false;
+    s_ping.rtt_ms = 0;
+
+    if (esp_ping_start(s_ping_hdl) != ESP_OK) {
+        return false;
+    }
+
+    /* The session ends itself after one echo; the wait is a backstop. */
+    bool ok = false;
+    if (xSemaphoreTake(s_ping.done, pdMS_TO_TICKS(WAN_PING_TMO_MS + 1000)) == pdTRUE) {
+        ok = s_ping.ok;
+        if (ok && out_rtt_ms != NULL) {
+            *out_rtt_ms = s_ping.rtt_ms;
+        }
+    } else {
+        /* It did not finish in time. Stop it so the next check starts clean;
+           the session itself stays alive. */
+        esp_ping_stop(s_ping_hdl);
+    }
     return ok;
 }
 
@@ -305,6 +351,13 @@ esp_err_t wan_init(void)
     if (s_lock == NULL) {
         s_lock = xSemaphoreCreateMutex();
         if (s_lock == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    if (s_ping.done == NULL) {
+        s_ping.done = xSemaphoreCreateBinary();
+        if (s_ping.done == NULL) {
             return ESP_ERR_NO_MEM;
         }
     }

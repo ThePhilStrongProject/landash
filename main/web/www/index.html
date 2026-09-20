@@ -687,6 +687,13 @@ http:"i-globe", https:"i-globe", "http-alt":"i-globe", "https-alt":"i-globe"
 };
 
 /*
+ * Services that only tell you "this speaks HTTP", which is true of nearly
+ * every tile and so distinguishes nothing. For these the device type is the
+ * more informative icon.
+ */
+var GENERIC_SERVICE = {http:1, https:1, "http-alt":1, "https-alt":1, "":1};
+
+/*
  * The icon shown on a dashboard tile, in priority order: what the user picked,
  * then what the service on that port suggests, then the device type, then a
  * generic link. Only the first is stored on the device; the rest follow the
@@ -694,8 +701,10 @@ http:"i-globe", https:"i-globe", "http-alt":"i-globe", "https-alt":"i-globe"
  */
 function linkIconId(l){
 if (l.icon) return l.icon;
-if (l.service && SERVICE_ICON[l.service]) return SERVICE_ICON[l.service];
-return TYPE_ICON[l.type] || "i-link";
+var svc = l.service || "";
+if (!GENERIC_SERVICE[svc] && SERVICE_ICON[svc]) return SERVICE_ICON[svc];
+if (l.type && l.type !== "unknown" && TYPE_ICON[l.type]) return TYPE_ICON[l.type];
+return SERVICE_ICON[svc] || "i-link";
 }
 
 /* Every icon a link may be given, grouped for the picker. */
