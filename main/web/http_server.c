@@ -1509,6 +1509,7 @@ static cJSON *link_to_json(const netdash_link_t *l)
     char note[NETDASH_LINK_NOTE_MAX];
     link_note_get(l->id, note, sizeof(note));
     cJSON_AddStringToObject(o, "note", note);
+    cJSON_AddBoolToObject(o, "has_secret", link_secret_exists(l->id));
 
     /* The service on this port, so the UI can pick an icon when none is set. */
     const char *svc = netdash_port_service(l->port);
@@ -2188,6 +2189,7 @@ static cJSON *vault_state_json(void)
     cJSON_AddNumberToObject(o, "idle_timeout_s", NETDASH_VAULT_IDLE_S);
     cJSON_AddNumberToObject(o, "expires_in_s", vault_idle_remaining());
     cJSON_AddNumberToObject(o, "secrets", secret_count());
+    cJSON_AddNumberToObject(o, "link_secrets", link_secret_count());
     cJSON_AddNumberToObject(o, "max_len", NETDASH_SECRET_MAX - 1);
     cJSON_AddNumberToObject(o, "min_passphrase", NETDASH_VAULT_PASS_MIN);
     return o;
@@ -2778,6 +2780,146 @@ static esp_err_t icons_delete_handler(httpd_req_t *req)
     return send_json(req, "200 OK", o);
 }
 
+/* ------------------------------------------------------------------------- */
+/* Credentials on a link                                                     */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Splits /api/links/{id} or /api/links/{id}/{sub}. out_sub is empty when the
+ * URI names the link itself. False when the id will not parse, which is also
+ * how "/api/links/groups/..." is kept out of here.
+ */
+static bool link_uri_split(const char *uri, uint16_t *out_id, char *out_sub, size_t sub_cap)
+{
+    char tail[40];
+
+    if (out_sub != NULL && sub_cap > 0) {
+        out_sub[0] = 0;
+    }
+    if (!extract_tail(uri, "/api/links/", tail, sizeof(tail))) {
+        return false;
+    }
+
+    char *slash = strchr(tail, '/');
+    if (slash != NULL) {
+        *slash = 0;
+        if (out_sub != NULL && sub_cap > 0) {
+            snprintf(out_sub, sub_cap, "%s", slash + 1);
+        }
+    }
+
+    char      *end = NULL;
+    const long v   = strtol(tail, &end, 10);
+    if (end == tail || end == NULL || *end != 0 || v < 1 || v > 65534) {
+        return false;
+    }
+    *out_id = (uint16_t)v;
+    return true;
+}
+
+static esp_err_t link_secret_get_handler(httpd_req_t *req, uint16_t id)
+{
+    if (!vault_authorised(req)) {
+        return send_json_error(req, "401 Unauthorized", "vault is locked");
+    }
+
+    char            text[NETDASH_SECRET_MAX];
+    const esp_err_t err = link_secret_get(id, text, sizeof(text));
+
+    if (err == ESP_ERR_NOT_FOUND) {
+        return send_json_error(req, "404 Not Found", "no credentials for this link");
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_json_error(req, "401 Unauthorized", "vault is locked");
+    }
+    if (err == ESP_ERR_INVALID_MAC) {
+        return send_json_error(req, "409 Conflict", "credentials failed their integrity check");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "could not read credentials");
+    }
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "secret", text);
+    memset(text, 0, sizeof(text));
+    return send_json(req, "200 OK", o);
+}
+
+static esp_err_t link_secret_put_handler(httpd_req_t *req, uint16_t id)
+{
+    if (!vault_authorised(req)) {
+        return send_json_error(req, "401 Unauthorized", "vault is locked");
+    }
+
+    netdash_link_t probe;
+    if (!links_get_by_id(id, &probe)) {
+        return send_json_error(req, "404 Not Found", "link not found");
+    }
+
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_OK;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    if (json == NULL) {
+        return send_json_error(req, "400 Bad Request", "invalid json");
+    }
+
+    const cJSON *j = cJSON_GetObjectItemCaseSensitive(json, "secret");
+    if (!cJSON_IsString(j) || strlen(j->valuestring) >= NETDASH_SECRET_MAX) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request", "credentials too long");
+    }
+
+    const esp_err_t err = link_secret_set(id, j->valuestring);
+    /* Do not let the plaintext outlive the request in the parsed body. */
+    memset(j->valuestring, 0, strlen(j->valuestring));
+    cJSON_Delete(json);
+
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_json_error(req, "401 Unauthorized", "vault is locked");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "500 Internal Server Error", "could not save credentials");
+    }
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    cJSON_AddBoolToObject(o, "has_secret", link_secret_exists(id));
+    return send_json(req, "200 OK", o);
+}
+
+/* See the note on the device routers: a wildcard only matches at the end of a
+   template, so sub-resources are dispatched rather than routed. */
+static esp_err_t links_get_router(httpd_req_t *req)
+{
+    uint16_t id = 0;
+    char     sub[24];
+
+    if (!link_uri_split(req->uri, &id, sub, sizeof(sub))) {
+        return send_json_error(req, "404 Not Found", "not found");
+    }
+    if (strcmp(sub, "secret") == 0) {
+        return link_secret_get_handler(req, id);
+    }
+    return send_json_error(req, "404 Not Found", "not found");
+}
+
+static esp_err_t links_put_router(httpd_req_t *req)
+{
+    uint16_t id = 0;
+    char     sub[24];
+
+    if (!link_uri_split(req->uri, &id, sub, sizeof(sub))) {
+        return send_json_error(req, "404 Not Found", "not found");
+    }
+    if (strcmp(sub, "secret") == 0) {
+        return link_secret_put_handler(req, id);
+    }
+    return send_json_error(req, "404 Not Found", "not found");
+}
+
 static const httpd_uri_t s_uri_handlers[] = {
     {.uri = "/api/status",               .method = HTTP_GET,    .handler = status_handler},
     {.uri = "/api/devices",              .method = HTTP_GET,    .handler = devices_list_handler},
@@ -2794,6 +2936,8 @@ static const httpd_uri_t s_uri_handlers[] = {
     {.uri = "/api/links/groups",         .method = HTTP_PUT,    .handler = groups_put_handler},
     {.uri = "/api/links/groups/*",       .method = HTTP_PATCH,  .handler = groups_patch_handler},
     {.uri = "/api/links/groups/*",       .method = HTTP_DELETE, .handler = groups_delete_handler},
+    {.uri = "/api/links/*",              .method = HTTP_GET,    .handler = links_get_router},
+    {.uri = "/api/links/*",              .method = HTTP_PUT,    .handler = links_put_router},
     {.uri = "/api/links/*",              .method = HTTP_PATCH,  .handler = links_patch_handler},
     {.uri = "/api/links/*",              .method = HTTP_DELETE, .handler = links_delete_handler},
     /* One route per method; the routers above pick the sub-resource. */

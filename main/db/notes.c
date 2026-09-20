@@ -29,6 +29,7 @@ static const char *TAG = "notes";
 
 #define NOTE_NVS_NS  "note"
 #define LNOTE_NVS_NS "lnote"
+#define LSEC_NVS_NS  "lsec"
 #define SEC_NVS_NS   "sec"
 #define VAULT_NVS_NS "vault"
 #define VAULT_KEY    "meta"
@@ -89,9 +90,12 @@ typedef struct __attribute__((packed)) {
 #define LNOTE_MAX 64
 static uint16_t s_lnote_ids[LNOTE_MAX];
 static size_t   s_lnote_count;
+static uint16_t s_lsec_ids[LNOTE_MAX];
+static size_t   s_lsec_count;
 
-/* Defined with the rest of the link-note code further down. */
+/* Defined with the rest of the link code further down. */
 static void index_link_notes_locked(void);
+static void index_link_secrets_locked(void);
 
 /* In-RAM mirrors of which MACs have an entry. */
 static uint8_t s_note_macs[NETDASH_MAX_DEVICES][6];
@@ -295,13 +299,15 @@ esp_err_t notes_init(void)
     index_namespace(NOTE_NVS_NS, s_note_macs, &s_note_count);
     index_namespace(SEC_NVS_NS, s_sec_macs, &s_sec_count);
     index_link_notes_locked();
+    index_link_secrets_locked();
     const size_t notes  = s_note_count;
     const size_t secs   = s_sec_count;
     const size_t lnotes = s_lnote_count;
+    const size_t lsecs  = s_lsec_count;
     unlock();
 
-    ESP_LOGI(TAG, "%u device note(s), %u link note(s), %u secret(s), vault %s",
-             (unsigned)notes, (unsigned)lnotes, (unsigned)secs,
+    ESP_LOGI(TAG, "notes: %u device / %u link, secrets: %u device / %u link, vault %s",
+             (unsigned)notes, (unsigned)lnotes, (unsigned)secs, (unsigned)lsecs,
              vault_configured() ? "configured" : "not set up");
     return ESP_OK;
 }
@@ -408,46 +414,43 @@ static void lnote_key(uint16_t id, char out[8])
     snprintf(out, 8, "%u", (unsigned)id);
 }
 
-/* Caller holds the lock. */
-static bool lnote_has_locked(uint16_t id)
+/* The three below work on either id set. Caller holds the lock. */
+static bool ids_have(const uint16_t *set, size_t count, uint16_t id)
 {
-    for (size_t i = 0; i < s_lnote_count; i++) {
-        if (s_lnote_ids[i] == id) {
+    for (size_t i = 0; i < count; i++) {
+        if (set[i] == id) {
             return true;
         }
     }
     return false;
 }
 
-/* Caller holds the lock. */
-static void lnote_add_locked(uint16_t id)
+static void ids_add(uint16_t *set, size_t *count, uint16_t id)
 {
-    if (lnote_has_locked(id) || s_lnote_count >= LNOTE_MAX) {
+    if (ids_have(set, *count, id) || *count >= LNOTE_MAX) {
         return;
     }
-    s_lnote_ids[s_lnote_count++] = id;
+    set[(*count)++] = id;
 }
 
-/* Caller holds the lock. */
-static void lnote_remove_locked(uint16_t id)
+static void ids_remove(uint16_t *set, size_t *count, uint16_t id)
 {
-    for (size_t i = 0; i < s_lnote_count; i++) {
-        if (s_lnote_ids[i] == id) {
-            memmove(&s_lnote_ids[i], &s_lnote_ids[i + 1],
-                    sizeof(s_lnote_ids[0]) * (s_lnote_count - i - 1));
-            s_lnote_count--;
+    for (size_t i = 0; i < *count; i++) {
+        if (set[i] == id) {
+            memmove(&set[i], &set[i + 1], sizeof(set[0]) * (*count - i - 1));
+            (*count)--;
             return;
         }
     }
 }
 
-/* Caller holds the lock. */
-static void index_link_notes_locked(void)
+/* Fills an id set from every numeric key in a namespace. Caller holds the lock. */
+static void index_id_namespace(const char *ns, uint16_t *set, size_t *count)
 {
-    s_lnote_count = 0;
+    *count = 0;
 
     nvs_handle_t h;
-    if (nvs_open(LNOTE_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+    if (nvs_open(ns, NVS_READONLY, &h) != ESP_OK) {
         return;
     }
 
@@ -460,12 +463,22 @@ static void index_link_notes_locked(void)
         char      *end = NULL;
         const long id  = strtol(info.key, &end, 10);
         if (end != info.key && end != NULL && *end == 0 && id > 0 && id < 65535) {
-            lnote_add_locked((uint16_t)id);
+            ids_add(set, count, (uint16_t)id);
         }
         fres = nvs_entry_next(&it);
     }
     nvs_release_iterator(it);
     nvs_close(h);
+}
+
+static void index_link_notes_locked(void)
+{
+    index_id_namespace(LNOTE_NVS_NS, s_lnote_ids, &s_lnote_count);
+}
+
+static void index_link_secrets_locked(void)
+{
+    index_id_namespace(LSEC_NVS_NS, s_lsec_ids, &s_lsec_count);
 }
 
 esp_err_t link_note_set(uint16_t link_id, const char *text)
@@ -481,7 +494,7 @@ esp_err_t link_note_set(uint16_t link_id, const char *text)
         esp_err_t err = blob_erase(LNOTE_NVS_NS, key);
         if (err == ESP_OK) {
             lock();
-            lnote_remove_locked(link_id);
+            ids_remove(s_lnote_ids, &s_lnote_count, link_id);
             unlock();
         }
         return err;
@@ -494,7 +507,7 @@ esp_err_t link_note_set(uint16_t link_id, const char *text)
     esp_err_t err = blob_write(LNOTE_NVS_NS, key, &blob, sizeof(blob));
     if (err == ESP_OK) {
         lock();
-        lnote_add_locked(link_id);
+        ids_add(s_lnote_ids, &s_lnote_count, link_id);
         unlock();
     } else {
         ESP_LOGW(TAG, "link note not saved for %s: %s", key, esp_err_to_name(err));
@@ -529,7 +542,7 @@ bool link_note_get(uint16_t link_id, char *out, size_t cap)
 bool link_note_exists(uint16_t link_id)
 {
     lock();
-    const bool has = lnote_has_locked(link_id);
+    const bool has = ids_have(s_lnote_ids, s_lnote_count, link_id);
     unlock();
     return has;
 }
@@ -575,33 +588,33 @@ static void make_verifier(const uint8_t key[VAULT_KEY_LEN], uint8_t out[32])
  * of one device's slot and dropped into another's fails its tag rather than
  * quietly decrypting under the wrong name.
  */
-static esp_err_t gcm_encrypt(const uint8_t key[VAULT_KEY_LEN], const uint8_t mac[6],
-                             const uint8_t *iv, const uint8_t *pt, size_t len,
-                             uint8_t *ct, uint8_t *tag)
+static esp_err_t gcm_encrypt(const uint8_t key[VAULT_KEY_LEN], const uint8_t *aad,
+                             size_t aad_len, const uint8_t *iv, const uint8_t *pt,
+                             size_t len, uint8_t *ct, uint8_t *tag)
 {
     mbedtls_gcm_context ctx;
     mbedtls_gcm_init(&ctx);
 
     int rc = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, key, VAULT_KEY_LEN * 8);
     if (rc == 0) {
-        rc = mbedtls_gcm_crypt_and_tag(&ctx, MBEDTLS_GCM_ENCRYPT, len, iv, VAULT_IV_LEN, mac, 6,
-                                       pt, ct, VAULT_TAG_LEN, tag);
+        rc = mbedtls_gcm_crypt_and_tag(&ctx, MBEDTLS_GCM_ENCRYPT, len, iv, VAULT_IV_LEN,
+                                       aad, aad_len, pt, ct, VAULT_TAG_LEN, tag);
     }
     mbedtls_gcm_free(&ctx);
     return rc == 0 ? ESP_OK : ESP_FAIL;
 }
 
-static esp_err_t gcm_decrypt(const uint8_t key[VAULT_KEY_LEN], const uint8_t mac[6],
-                             const uint8_t *iv, const uint8_t *tag, const uint8_t *ct,
-                             size_t len, uint8_t *pt)
+static esp_err_t gcm_decrypt(const uint8_t key[VAULT_KEY_LEN], const uint8_t *aad,
+                             size_t aad_len, const uint8_t *iv, const uint8_t *tag,
+                             const uint8_t *ct, size_t len, uint8_t *pt)
 {
     mbedtls_gcm_context ctx;
     mbedtls_gcm_init(&ctx);
 
     int rc = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, key, VAULT_KEY_LEN * 8);
     if (rc == 0) {
-        rc = mbedtls_gcm_auth_decrypt(&ctx, len, iv, VAULT_IV_LEN, mac, 6, tag, VAULT_TAG_LEN,
-                                      ct, pt);
+        rc = mbedtls_gcm_auth_decrypt(&ctx, len, iv, VAULT_IV_LEN, aad, aad_len, tag,
+                                      VAULT_TAG_LEN, ct, pt);
     }
     mbedtls_gcm_free(&ctx);
     return rc == 0 ? ESP_OK : ESP_ERR_INVALID_MAC;
@@ -634,6 +647,103 @@ static bool session_key(uint8_t out[VAULT_KEY_LEN])
     }
     unlock();
     return ok;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Secret references                                                         */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Everything the vault holds, addressed uniformly: which namespace, which key
+ * within it, and the additional authenticated data that binds the ciphertext
+ * to its owner. Rotation walks a list of these rather than looping over MACs,
+ * so a third kind of secret is a matter of extending build_refs().
+ *
+ * The two kinds deliberately use differently shaped AAD - six raw MAC bytes
+ * against the text "link:<id>" - so a ciphertext can never be moved from one
+ * domain to the other and still authenticate.
+ */
+typedef struct {
+    const char *ns;
+    char        key[13];
+    uint8_t     aad[16];
+    size_t      aad_len;
+} sec_ref_t;
+
+static void ref_for_device(sec_ref_t *r, const uint8_t mac[6])
+{
+    r->ns = SEC_NVS_NS;
+    mac_to_key(mac, r->key);
+    memcpy(r->aad, mac, 6);
+    r->aad_len = 6;
+}
+
+static void ref_for_link(sec_ref_t *r, uint16_t id)
+{
+    r->ns = LSEC_NVS_NS;
+    snprintf(r->key, sizeof(r->key), "%u", (unsigned)id);
+    r->aad_len = (size_t)snprintf((char *)r->aad, sizeof(r->aad), "link:%u", (unsigned)id);
+}
+
+/* Fills out with every stored secret. Returns how many. Takes the lock. */
+static size_t build_refs(sec_ref_t *out, size_t cap)
+{
+    size_t n = 0;
+
+    lock();
+    for (size_t i = 0; i < s_sec_count && n < cap; i++) {
+        ref_for_device(&out[n++], s_sec_macs[i]);
+    }
+    for (size_t i = 0; i < s_lsec_count && n < cap; i++) {
+        ref_for_link(&out[n++], s_lsec_ids[i]);
+    }
+    unlock();
+    return n;
+}
+
+/* Reads and decrypts one secret into out, which must hold NETDASH_SECRET_MAX. */
+static esp_err_t ref_read(const sec_ref_t *r, const uint8_t key[VAULT_KEY_LEN], char *out)
+{
+    sec_blob_t blob;
+    esp_err_t  err = blob_read(r->ns, r->key, &blob, sizeof(blob));
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (blob.version != SEC_BLOB_VERSION || blob.len >= NETDASH_SECRET_MAX) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    const size_t len = blob.len;
+    err = gcm_decrypt(key, r->aad, r->aad_len, blob.iv, blob.tag, blob.ct, len,
+                      (uint8_t *)out);
+    if (err == ESP_OK) {
+        out[len] = '\0';
+    }
+    memset(&blob, 0, sizeof(blob));
+    return err;
+}
+
+/* Encrypts text under key and stores it at r. */
+static esp_err_t ref_write(const sec_ref_t *r, const uint8_t key[VAULT_KEY_LEN],
+                           const char *text)
+{
+    const size_t len = strlen(text);
+    if (len >= NETDASH_SECRET_MAX) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    sec_blob_t blob = {0};
+    blob.version    = SEC_BLOB_VERSION;
+    blob.len        = (uint16_t)len;
+    esp_fill_random(blob.iv, sizeof(blob.iv));
+
+    esp_err_t err = gcm_encrypt(key, r->aad, r->aad_len, blob.iv, (const uint8_t *)text,
+                                len, blob.ct, blob.tag);
+    if (err == ESP_OK) {
+        err = blob_write(r->ns, r->key, &blob, sizeof(blob));
+    }
+    memset(&blob, 0, sizeof(blob));
+    return err;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -779,6 +889,7 @@ esp_err_t vault_set_passphrase(const char *old_pass, const char *new_pass,
     fresh.iters        = VAULT_PBKDF2_ITERS;
     esp_fill_random(fresh.salt, sizeof(fresh.salt));
 
+    size_t  rotated = 0;
     uint8_t new_key[VAULT_KEY_LEN];
     if (derive_key(new_pass, fresh.salt, fresh.iters, new_key) != ESP_OK) {
         memset(old_key, 0, sizeof(old_key));
@@ -787,60 +898,38 @@ esp_err_t vault_set_passphrase(const char *old_pass, const char *new_pass,
     make_verifier(new_key, fresh.verifier);
 
     /*
-     * Re-encrypt everything already stored. Every secret is decrypted into a
-     * scratch buffer first, so a single unreadable blob aborts the rotation
-     * before anything has been overwritten with a key the rest cannot open.
+     * Re-encrypt everything already stored, devices and links alike. Every
+     * secret is decrypted into a scratch buffer first, so a single unreadable
+     * blob aborts the rotation before anything has been overwritten with a key
+     * the rest cannot open.
      */
     esp_err_t err = ESP_OK;
 
-    lock();
-    const size_t n_sec = s_sec_count;
-    static uint8_t macs[NETDASH_MAX_DEVICES][6];
-    memcpy(macs, s_sec_macs, sizeof(macs));
-    unlock();
-
-    if (exists && n_sec > 0) {
-        char *scratch = calloc(n_sec, NETDASH_SECRET_MAX);
-        if (scratch == NULL) {
+    if (exists) {
+        const size_t cap  = NETDASH_MAX_DEVICES + LNOTE_MAX;
+        sec_ref_t   *refs = calloc(cap, sizeof(*refs));
+        if (refs == NULL) {
             err = ESP_ERR_NO_MEM;
         } else {
-            for (size_t i = 0; i < n_sec && err == ESP_OK; i++) {
-                char key_str[13];
-                mac_to_key(macs[i], key_str);
+            const size_t n = build_refs(refs, cap);
 
-                sec_blob_t blob;
-                if (blob_read(SEC_NVS_NS, key_str, &blob, sizeof(blob)) != ESP_OK ||
-                    blob.version != SEC_BLOB_VERSION || blob.len >= NETDASH_SECRET_MAX) {
-                    err = ESP_ERR_INVALID_SIZE;
-                    break;
-                }
-                uint8_t *dst = (uint8_t *)(scratch + i * NETDASH_SECRET_MAX);
-                err = gcm_decrypt(old_key, macs[i], blob.iv, blob.tag, blob.ct, blob.len, dst);
-                if (err == ESP_OK) {
-                    dst[blob.len] = '\0';
+            if (n > 0) {
+                char *scratch = calloc(n, NETDASH_SECRET_MAX);
+                if (scratch == NULL) {
+                    err = ESP_ERR_NO_MEM;
+                } else {
+                    for (size_t i = 0; i < n && err == ESP_OK; i++) {
+                        err = ref_read(&refs[i], old_key, scratch + i * NETDASH_SECRET_MAX);
+                    }
+                    for (size_t i = 0; i < n && err == ESP_OK; i++) {
+                        err = ref_write(&refs[i], new_key, scratch + i * NETDASH_SECRET_MAX);
+                    }
+                    memset(scratch, 0, n * NETDASH_SECRET_MAX);
+                    free(scratch);
                 }
             }
-
-            for (size_t i = 0; i < n_sec && err == ESP_OK; i++) {
-                const char *pt  = scratch + i * NETDASH_SECRET_MAX;
-                const size_t len = strlen(pt);
-
-                sec_blob_t blob = {0};
-                blob.version    = SEC_BLOB_VERSION;
-                blob.len        = (uint16_t)len;
-                esp_fill_random(blob.iv, sizeof(blob.iv));
-                err = gcm_encrypt(new_key, macs[i], blob.iv, (const uint8_t *)pt, len, blob.ct,
-                                  blob.tag);
-                if (err == ESP_OK) {
-                    char key_str[13];
-                    mac_to_key(macs[i], key_str);
-                    err = blob_write(SEC_NVS_NS, key_str, &blob, sizeof(blob));
-                }
-                memset(&blob, 0, sizeof(blob));
-            }
-
-            memset(scratch, 0, n_sec * NETDASH_SECRET_MAX);
-            free(scratch);
+            rotated = n;
+            free(refs);
         }
     }
 
@@ -867,7 +956,7 @@ esp_err_t vault_set_passphrase(const char *old_pass, const char *new_pass,
         unlock();
 
         ESP_LOGI(TAG, "vault passphrase %s (%u secret(s) re-encrypted)",
-                 exists ? "changed" : "set", (unsigned)(exists ? n_sec : 0));
+                 exists ? "changed" : "set", (unsigned)rotated);
     } else {
         ESP_LOGE(TAG, "passphrase change failed: %s", esp_err_to_name(err));
     }
@@ -879,22 +968,24 @@ esp_err_t vault_set_passphrase(const char *old_pass, const char *new_pass,
 
 esp_err_t vault_reset(void)
 {
-    lock();
-    const size_t n = s_sec_count;
-    static uint8_t macs[NETDASH_MAX_DEVICES][6];
-    memcpy(macs, s_sec_macs, sizeof(macs));
-    unlock();
+    const size_t cap  = NETDASH_MAX_DEVICES + LNOTE_MAX;
+    sec_ref_t   *refs = calloc(cap, sizeof(*refs));
+    size_t       n    = 0;
 
-    for (size_t i = 0; i < n; i++) {
-        char key[13];
-        mac_to_key(macs[i], key);
-        blob_erase(SEC_NVS_NS, key);
+    if (refs != NULL) {
+        n = build_refs(refs, cap);
+        for (size_t i = 0; i < n; i++) {
+            blob_erase(refs[i].ns, refs[i].key);
+        }
+        free(refs);
     }
     esp_err_t err = blob_erase(VAULT_NVS_NS, VAULT_KEY);
 
     lock();
-    s_sec_count = 0;
+    s_sec_count  = 0;
+    s_lsec_count = 0;
     memset(s_sec_macs, 0, sizeof(s_sec_macs));
+    memset(s_lsec_ids, 0, sizeof(s_lsec_ids));
     memset(s_key, 0, sizeof(s_key));
     memset(s_token, 0, sizeof(s_token));
     s_unlocked = false;
@@ -908,27 +999,26 @@ esp_err_t vault_reset(void)
 /* Secrets                                                                   */
 /* ------------------------------------------------------------------------- */
 
-esp_err_t secret_set(const uint8_t mac[6], const char *text)
+/* Shared by the device and link forms; only the reference differs. */
+static esp_err_t secret_store(const sec_ref_t *r, const char *text, uint16_t *id_set,
+                              size_t *id_count, uint16_t id, uint8_t (*mac_set)[6],
+                              size_t *mac_count, const uint8_t *mac)
 {
-    if (mac == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    char key_str[13];
-    mac_to_key(mac, key_str);
-
     if (text == NULL || text[0] == '\0') {
-        esp_err_t err = blob_erase(SEC_NVS_NS, key_str);
+        esp_err_t err = blob_erase(r->ns, r->key);
         if (err == ESP_OK) {
             lock();
-            set_remove(s_sec_macs, &s_sec_count, mac);
+            if (id_set != NULL) {
+                ids_remove(id_set, id_count, id);
+            } else {
+                set_remove(mac_set, mac_count, mac);
+            }
             unlock();
         }
         return err;
     }
 
-    const size_t len = strlen(text);
-    if (len >= NETDASH_SECRET_MAX) {
+    if (strlen(text) >= NETDASH_SECRET_MAX) {
         return ESP_ERR_INVALID_SIZE;
     }
 
@@ -937,28 +1027,50 @@ esp_err_t secret_set(const uint8_t mac[6], const char *text)
         return ESP_ERR_INVALID_STATE;
     }
 
-    sec_blob_t blob = {0};
-    blob.version    = SEC_BLOB_VERSION;
-    blob.len        = (uint16_t)len;
-    esp_fill_random(blob.iv, sizeof(blob.iv));
-
-    esp_err_t err =
-        gcm_encrypt(key, mac, blob.iv, (const uint8_t *)text, len, blob.ct, blob.tag);
+    esp_err_t err = ref_write(r, key, text);
     memset(key, 0, sizeof(key));
 
     if (err == ESP_OK) {
-        err = blob_write(SEC_NVS_NS, key_str, &blob, sizeof(blob));
-    }
-    memset(&blob, 0, sizeof(blob));
-
-    if (err == ESP_OK) {
         lock();
-        set_add(s_sec_macs, &s_sec_count, mac);
+        if (id_set != NULL) {
+            ids_add(id_set, id_count, id);
+        } else {
+            set_add(mac_set, mac_count, mac);
+        }
         unlock();
     } else {
-        ESP_LOGW(TAG, "secret not saved for %s: %s", key_str, esp_err_to_name(err));
+        ESP_LOGW(TAG, "secret not saved for %s: %s", r->key, esp_err_to_name(err));
     }
     return err;
+}
+
+static esp_err_t secret_fetch(const sec_ref_t *r, char *out, size_t cap)
+{
+    uint8_t key[VAULT_KEY_LEN];
+    if (!session_key(key)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    char      pt[NETDASH_SECRET_MAX];
+    esp_err_t err = ref_read(r, key, pt);
+    memset(key, 0, sizeof(key));
+
+    if (err == ESP_OK) {
+        strncpy(out, pt, cap - 1);
+        out[cap - 1] = '\0';
+    }
+    memset(pt, 0, sizeof(pt));
+    return err;
+}
+
+esp_err_t secret_set(const uint8_t mac[6], const char *text)
+{
+    if (mac == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    sec_ref_t r;
+    ref_for_device(&r, mac);
+    return secret_store(&r, text, NULL, NULL, 0, s_sec_macs, &s_sec_count, mac);
 }
 
 esp_err_t secret_get(const uint8_t mac[6], char *out, size_t cap)
@@ -967,44 +1079,12 @@ esp_err_t secret_get(const uint8_t mac[6], char *out, size_t cap)
         return ESP_ERR_INVALID_ARG;
     }
     out[0] = '\0';
-
     if (!secret_exists(mac)) {
         return ESP_ERR_NOT_FOUND;
     }
-
-    uint8_t key[VAULT_KEY_LEN];
-    if (!session_key(key)) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    char key_str[13];
-    mac_to_key(mac, key_str);
-
-    sec_blob_t blob;
-    esp_err_t  err = blob_read(SEC_NVS_NS, key_str, &blob, sizeof(blob));
-    if (err != ESP_OK) {
-        memset(key, 0, sizeof(key));
-        return err;
-    }
-    if (blob.version != SEC_BLOB_VERSION || blob.len >= NETDASH_SECRET_MAX) {
-        memset(key, 0, sizeof(key));
-        return ESP_ERR_INVALID_SIZE;
-    }
-
-    const size_t len = blob.len;
-    uint8_t      pt[NETDASH_SECRET_MAX];
-
-    err = gcm_decrypt(key, mac, blob.iv, blob.tag, blob.ct, len, pt);
-    memset(key, 0, sizeof(key));
-    memset(&blob, 0, sizeof(blob));
-
-    if (err == ESP_OK) {
-        pt[len] = '\0';
-        strncpy(out, (const char *)pt, cap - 1);
-        out[cap - 1] = '\0';
-    }
-    memset(pt, 0, sizeof(pt));
-    return err;
+    sec_ref_t r;
+    ref_for_device(&r, mac);
+    return secret_fetch(&r, out, cap);
 }
 
 bool secret_exists(const uint8_t mac[6])
@@ -1024,4 +1104,63 @@ size_t secret_count(void)
     const size_t n = s_sec_count;
     unlock();
     return n;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Secrets on links                                                          */
+/* ------------------------------------------------------------------------- */
+
+esp_err_t link_secret_set(uint16_t link_id, const char *text)
+{
+    if (link_id == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    sec_ref_t r;
+    ref_for_link(&r, link_id);
+    return secret_store(&r, text, s_lsec_ids, &s_lsec_count, link_id, NULL, NULL, NULL);
+}
+
+esp_err_t link_secret_get(uint16_t link_id, char *out, size_t cap)
+{
+    if (out == NULL || cap == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    out[0] = '\0';
+    if (!link_secret_exists(link_id)) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    sec_ref_t r;
+    ref_for_link(&r, link_id);
+    return secret_fetch(&r, out, cap);
+}
+
+bool link_secret_exists(uint16_t link_id)
+{
+    lock();
+    const bool has = ids_have(s_lsec_ids, s_lsec_count, link_id);
+    unlock();
+    return has;
+}
+
+size_t link_secret_count(void)
+{
+    lock();
+    const size_t n = s_lsec_count;
+    unlock();
+    return n;
+}
+
+esp_err_t link_secret_forget(uint16_t link_id)
+{
+    /* Deleting needs no key: the ciphertext is simply erased. */
+    sec_ref_t r;
+    ref_for_link(&r, link_id);
+
+    esp_err_t err = blob_erase(r.ns, r.key);
+    if (err == ESP_OK) {
+        lock();
+        ids_remove(s_lsec_ids, &s_lsec_count, link_id);
+        unlock();
+    }
+    return err;
 }

@@ -129,13 +129,19 @@ main/
                             reused, which is what makes the served bytes
                             immutably cacheable.
 
-  db/notes.c/.h             per-device plain-text notes (NVS "note"), per-link
-                            notes (NVS "lnote", keyed by link id) and the
-                            AES-256-GCM secret vault (NVS "sec", metadata in
-                            "vault"). The vault key is derived from a passphrase
-                            with PBKDF2 on every unlock and never stored. Read
-                            the header before trusting it with anything: it does
-                            not defend against LAN traffic capture, because the
+  db/notes.c/.h             plain-text notes for devices (NVS "note") and links
+                            (NVS "lnote"), plus the AES-256-GCM vault holding
+                            secrets for devices (NVS "sec") and credentials for
+                            links (NVS "lsec"), with its metadata in "vault".
+                            The key is derived from a passphrase with PBKDF2 on
+                            every unlock and never stored. Everything encrypted
+                            is addressed through a sec_ref_t - namespace, key,
+                            and the AAD that binds it to its owner - so a
+                            passphrase change re-encrypts every kind in one
+                            pass, and a third kind means extending build_refs()
+                            rather than writing another rotation loop. Read the
+                            header before trusting it with anything: it does not
+                            defend against LAN traffic capture, because the
                             dashboard is plain HTTP.
 
   db/notify.c/.h            the notification feed: the short, read/unread list
@@ -309,9 +315,10 @@ Verified on a live /24 home network (23 devices):
   nodes. 253 addresses probed, 23 alive.
 - Naming works from mDNS, the router's reverse DNS and SSDP; vendors resolve
   for every device that is not using a randomised MAC.
-- `tools/smoke_test.py` passes all 103 checks against the real device, which
-  now covers groups, device and link notes, the vault lifecycle, history, WAN,
-  the feed and uploaded icons.
+- `tools/smoke_test.py` passes all 115 checks against the real device, which
+  now covers groups, device and link notes, both kinds of vault secret and a
+  passphrase rotation carrying both, history, WAN, the feed and uploaded
+  icons.
 - The browser half of the icon upload - decode, resize, re-encode, POST, and
   the tile repainting with the result - was driven end to end in headless Edge
   against the live dongle. A 300x120 JPEG became a 1,930-byte 64x64 PNG.

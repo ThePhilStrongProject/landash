@@ -1778,6 +1778,8 @@ var body = "<div class=\"lc-top\">" + iconRef(iconRefId, "lc-icon") +
 "<div class=\"lc-host mono\">" + host + "</div>" +
 (l.note ? ("<div class=\"lc-note\" title=\"" + esc(l.note) + "\">" +
 icon("i-note") + esc(l.note) + "</div>") : "") +
+(l.has_secret ? ("<div class=\"lc-note\">" + icon("i-key") +
+"<span class=\"muted\">Credentials stored</span></div>") : "") +
 ((known && l.online) ? "" : "<div class=\"lc-status\"><span class=\"lc-dot\"></span>" + statusText + "</div>");
 var cardTag;
 if (known && !editing){
@@ -1798,7 +1800,7 @@ return "<button type=\"button\" data-linkact=\"" + act + "\" data-id=\"" + l.id 
 }
 editControls = "<div class=\"linkedit\">" +
 ctl("rename", "i-pencil", "Rename " + l.label) +
-ctl("note", "i-note", (l.note ? "Edit the note on " : "Add a note to ") + l.label) +
+ctl("note", "i-note", "Notes and credentials for " + l.label) +
 ctl("icon", "i-tag", "Change the icon for " + l.label) +
 (state.groups.length ? ctl("group", "i-folder", "Move " + l.label + " to a group") : "") +
 ctl("up", "i-up", "Move up", i === 0) +
@@ -2123,18 +2125,25 @@ if (linkId != null) openIconPicker(linkId);
 function openLinkNote(id){
 var l = (state.links||[]).find(function(x){ return x.id === id; });
 if (!l) return;
+if (!state.vault){ loadVault().then(function(){ openLinkNote(id); }); return; }
+linkSecState = {shown:false, text:null, editing:false};
 var max = (state.linksMeta && state.linksMeta.max_note) || 159;
 var html = "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Note\">" +
 "<button type=\"button\" class=\"modalclose\" aria-label=\"Close\">" + icon("i-close") + "</button>" +
-"<h3>Note on " + esc(l.label) + "</h3>" +
+"<h3>" + esc(l.label) + "</h3>" +
 "<p class=\"muted\" style=\"margin:0 0 8px;font-size:var(--fs-sm)\">" +
-"Shown on the tile. For what you would otherwise have to look up &mdash; which " +
-"account it wants, what it is actually for, what breaks if you restart it. " +
-"Anything secret belongs in a device's vault entry, not here.</p>" +
+"Shown on the tile, in plain text. For what you would otherwise have to look " +
+"up &mdash; what it is actually for, what breaks if you restart it, where its " +
+"config lives. Logins go in Credentials below, where they are encrypted.</p>" +
 "<textarea class=\"notebox\" id=\"linkNoteBox\" maxlength=\"" + max + "\"></textarea>" +
 "<div class=\"uprow\"><span class=\"muted\" style=\"font-size:var(--fs-xs)\" id=\"linkNoteCount\"></span>" +
 "<button type=\"button\" class=\"btn\" id=\"linkNoteClear\">Clear</button>" +
-"<button type=\"button\" class=\"btn btn-accent\" id=\"linkNoteSave\">Save</button></div></div>";
+"<button type=\"button\" class=\"btn btn-accent\" id=\"linkNoteSave\">Save</button></div>" +
+"<p class=\"picksecthead\">Credentials</p>" +
+"<p class=\"muted\" style=\"margin:0 0 8px;font-size:var(--fs-sm)\">" +
+"For this service specifically. Encrypted with the vault passphrase and never " +
+"shown until it is unlocked.</p>" +
+"<div id=\"linkSecHost\"></div></div>";
 openModal(html, function(root){
 root.querySelector(".modalclose").addEventListener("click", closeModal);
 var ta = $("linkNoteBox"), cnt = $("linkNoteCount");
@@ -2152,10 +2161,116 @@ loadLinks();
 }
 $("linkNoteSave").addEventListener("click", function(){ save(ta.value); });
 $("linkNoteClear").addEventListener("click", function(){ save(""); });
+renderLinkSecret(l);
 /* Ctrl+Enter saves; plain Enter is a newline, which is what a note wants. */
 ta.addEventListener("keydown", function(ev){
 if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)){ ev.preventDefault(); save(ta.value); }
 });
+});
+}
+
+/*
+ * Per-link credentials. Same vault, same token, same fifteen-minute relock as
+ * the device secrets - only the thing they hang off differs, because one box
+ * can run half a dozen services each with its own login.
+ */
+var linkSecState = {shown:false, text:null, editing:false};
+
+function renderLinkSecret(l){
+var host = $("linkSecHost");
+if (!host) return;
+var v = state.vault || {};
+
+if (!v.configured){
+host.innerHTML = "<div class=\"lockedhint\">" + icon("i-lock") +
+"<span>No vault yet. Set a passphrase in Settings to store logins here.</span></div>";
+return;
+}
+if (!vaultUnlocked()){
+host.innerHTML = "<div class=\"lockedhint\">" + icon("i-lock") + "<span>" +
+(l.has_secret ? "Credentials are stored for this link." : "Vault is locked.") +
+"</span></div><div class=\"uprow\"><span></span>" +
+"<button type=\"button\" class=\"btn\" id=\"lsUnlock\">Unlock vault</button></div>";
+$("lsUnlock").addEventListener("click", function(){
+openUnlockModal(function(){ openLinkNote(l.id); });
+});
+return;
+}
+
+if (linkSecState.editing){
+host.innerHTML = "<textarea class=\"notebox\" id=\"lsBox\" maxlength=\"190\" " +
+"placeholder=\"admin / hunter2&#10;TOTP seed in Bitwarden\"></textarea>" +
+"<div class=\"uprow\"><span></span>" +
+"<button type=\"button\" class=\"btn\" id=\"lsCancel\">Cancel</button>" +
+"<button type=\"button\" class=\"btn btn-accent\" id=\"lsSave\">Save</button></div>";
+var box = $("lsBox");
+box.value = linkSecState.text || "";
+box.focus();
+$("lsSave").addEventListener("click", function(){
+apiAuth("PUT","/api/links/"+l.id+"/secret",{secret:box.value}).then(function(){
+linkSecState = {shown:false, text:null, editing:false};
+box.value = "";
+toast("Credentials saved","ok");
+state.linksRendered = false;
+loadLinks();
+closeModal();
+}).catch(toastErr);
+});
+$("lsCancel").addEventListener("click", function(){
+linkSecState.editing = false; linkSecState.text = null; renderLinkSecret(l);
+});
+return;
+}
+
+if (!l.has_secret){
+host.innerHTML = "<p class=\"muted\" style=\"margin:0;font-size:var(--fs-sm)\">" +
+"Nothing stored.</p><div class=\"uprow\"><span></span>" +
+"<button type=\"button\" class=\"btn\" id=\"lsAdd\">" + icon("i-key") + " Add credentials</button></div>";
+$("lsAdd").addEventListener("click", function(){
+linkSecState = {shown:false, text:"", editing:true}; renderLinkSecret(l);
+});
+return;
+}
+
+host.innerHTML = "<pre class=\"secretval\">" +
+(linkSecState.shown ? esc(linkSecState.text || "") : "\u2022".repeat(12)) + "</pre>" +
+"<div class=\"uprow\"><span></span>" +
+"<button type=\"button\" class=\"btn\" id=\"lsShow\">" +
+icon(linkSecState.shown ? "i-eye-off" : "i-eye") + " " +
+(linkSecState.shown ? "Hide" : "Reveal") + "</button>" +
+(linkSecState.shown ? "<button type=\"button\" class=\"btn\" id=\"lsCopy\">Copy</button>" : "") +
+"<button type=\"button\" class=\"btn\" id=\"lsEdit\">Replace</button>" +
+"<button type=\"button\" class=\"btn btn-danger-outline\" id=\"lsDel\">Delete</button></div>";
+
+$("lsShow").addEventListener("click", function(){
+if (linkSecState.shown){
+linkSecState.shown = false; linkSecState.text = null; renderLinkSecret(l); return;
+}
+apiAuth("GET","/api/links/"+l.id+"/secret").then(function(r){
+linkSecState.text = r.secret || ""; linkSecState.shown = true; renderLinkSecret(l);
+}).catch(toastErr);
+});
+var c = $("lsCopy");
+if (c) c.addEventListener("click", function(){
+if (!navigator.clipboard){ toast("Clipboard unavailable","err"); return; }
+navigator.clipboard.writeText(linkSecState.text || "")
+.then(function(){ toast("Copied","ok"); })
+.catch(function(){ toast("Could not copy","err"); });
+});
+$("lsEdit").addEventListener("click", function(){
+apiAuth("GET","/api/links/"+l.id+"/secret").then(function(r){
+linkSecState.text = r.secret || ""; linkSecState.editing = true; renderLinkSecret(l);
+}).catch(toastErr);
+});
+$("lsDel").addEventListener("click", function(){
+if (!confirm("Delete the stored credentials for \"" + l.label + "\"?")) return;
+apiAuth("PUT","/api/links/"+l.id+"/secret",{secret:""}).then(function(){
+linkSecState = {shown:false, text:null, editing:false};
+toast("Credentials deleted","ok");
+state.linksRendered = false;
+loadLinks();
+closeModal();
+}).catch(toastErr);
 });
 }
 

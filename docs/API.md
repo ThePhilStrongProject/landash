@@ -637,6 +637,7 @@ headings.
 | `icon` | string | icon override: a sprite name, `u:<id>` for an uploaded image, or empty to derive it from `service` |
 | `service` | string | what the firmware makes of the port, e.g. `portainer` |
 | `note` | string | the note shown on the tile, `""` when unset |
+| `has_secret` | bool | whether credentials are stored; the secret itself never appears here |
 | `mac`, `port`, `scheme` | | what is actually stored |
 | `label` | string | the user's name for it, defaulting to the device name |
 | `ip`, `url`, `display_name`, `type`, `online` | | resolved live on every request |
@@ -695,6 +696,52 @@ takes its note with it.
 
 Like a device note this is **plain text**, readable by anyone who can reach the
 web UI. Credentials belong in the vault.
+
+### Credentials on a link
+
+The vault holds two kinds of secret, because a device and a service are not the
+same thing. One box may run half a dozen services, each with its own login, so
+the service is usually the useful unit; the device-level secret is for the box
+itself, such as a console or BMC password.
+
+Same vault, same passphrase, same token, same fifteen-minute relock. Changing
+the passphrase re-encrypts **both** kinds in one pass.
+
+```
+GET /api/links/{id}/secret
+X-Vault-Token: <token>
+```
+
+```json
+{ "secret": "admin / hunter2" }
+```
+
+```
+PUT /api/links/{id}/secret
+X-Vault-Token: <token>
+
+{ "secret": "admin / hunter2" }
+```
+
+At most 191 characters; an empty string erases it. Returns
+`{ "ok": true, "has_secret": true }`.
+
+| Status | Meaning |
+|---|---|
+| 401 | the vault is locked, or the token is wrong or missing |
+| 404 | no such link, or nothing stored on it |
+| 409 | the ciphertext failed its authentication tag |
+
+Every link object carries `has_secret`, and **never** the secret itself.
+`GET /api/vault` reports `secrets` and `link_secrets` separately.
+
+Deleting a link destroys its credentials, including through the bulk delete in
+`PUT /api/links`.
+
+The two kinds use differently shaped additional authenticated data - six raw
+MAC bytes for a device, the text `link:<id>` for a link - so a ciphertext
+lifted from one slot and dropped into another fails its tag rather than
+decrypting under the wrong name, in either direction.
 
 ### DELETE /api/links/{id}
 
@@ -813,6 +860,7 @@ The vault relocks itself after 15 minutes idle and on every reboot.
   "idle_timeout_s": 900,
   "expires_in_s": 0,
   "secrets": 3,
+  "link_secrets": 5,
   "max_len": 191,
   "min_passphrase": 8
 }

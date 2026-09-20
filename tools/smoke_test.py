@@ -447,8 +447,76 @@ def main():
         check("the secret survives re-encryption",
               st == 200 and (r or {}).get("secret") == "hunter2", repr(r)[:80])
 
+        # --- credentials on a link, which share the vault -------------------
+        current_pass = "smoke test passphrase two"
+        st, ls, _ = request(base, "GET", "/api/links")
+        link_ids = [x["id"] for x in (ls or {}).get("links", [])]
+        if not link_ids:
+            print("       no links to attach credentials to - skipping")
+        else:
+            lid = link_ids[0]
+            auth2 = {"X-Vault-Token": token2 or ""}
+            check("links advertise a credentials flag",
+                  "has_secret" in ls["links"][0], sorted(ls["links"][0])[:10])
+
+            st, r, _ = request(base, "PUT", f"/api/links/{lid}/secret",
+                               {"secret": "smoke / linkpass"})
+            check("link credentials need a token", st == 401, f"status {st}")
+
+            st, r, _ = request(base, "PUT", f"/api/links/{lid}/secret",
+                               {"secret": "smoke / linkpass"}, extra_headers=auth2)
+            check("store credentials on a link",
+                  st == 200 and (r or {}).get("has_secret"), f"status {st}")
+
+            st, r, _ = request(base, "GET", f"/api/links/{lid}/secret",
+                               extra_headers=auth2)
+            check("read link credentials back",
+                  st == 200 and (r or {}).get("secret") == "smoke / linkpass",
+                  repr(r)[:80])
+
+            st, r, _ = request(base, "GET", "/api/links")
+            got = [x for x in r.get("links", []) if x["id"] == lid]
+            check("the flag shows on the link", got and got[0].get("has_secret"),
+                  repr(got)[:100])
+            check("credentials never ride on the link object",
+                  got and "secret" not in got[0], sorted(got[0])[:12] if got else "")
+
+            # A rotation that forgot a namespace would lose these silently,
+            # so check both kinds come through the same one.
+            st, v5, _ = request(base, "PUT", "/api/vault",
+                                {"old_passphrase": "smoke test passphrase two",
+                                 "passphrase": "smoke test passphrase three"})
+            token3 = (v5 or {}).get("token")
+            check("rotate again with both kinds stored", st == 200 and token3,
+                  f"status {st}")
+            auth3 = {"X-Vault-Token": token3 or ""}
+
+            st, r, _ = request(base, "GET", f"/api/links/{lid}/secret",
+                               extra_headers=auth3)
+            check("link credentials survive rotation",
+                  st == 200 and (r or {}).get("secret") == "smoke / linkpass",
+                  repr(r)[:80])
+            st, r, _ = request(base, "GET", f"/api/devices/{mac}/secret",
+                               extra_headers=auth3)
+            check("device secrets survive the same rotation",
+                  st == 200 and (r or {}).get("secret") == "hunter2", repr(r)[:80])
+
+            st, v6, _ = request(base, "GET", "/api/vault")
+            check("the vault counts both kinds",
+                  (v6 or {}).get("secrets") == 1 and (v6 or {}).get("link_secrets") == 1,
+                  repr(v6)[:120])
+
+            st, _, _ = request(base, "PUT", f"/api/links/{lid}/secret",
+                               {"secret": ""}, extra_headers=auth3)
+            check("clear link credentials", st == 200, f"status {st}")
+
+            token2 = token3
+            current_pass = "smoke test passphrase three"
+
         st, _, _ = request(base, "POST", "/api/vault/unlock", {"passphrase": "wrong"})
         check("a wrong passphrase is refused", st == 403, f"status {st}")
+        st, _, _ = request(base, "POST", "/api/vault/unlock", {"passphrase": current_pass})
+        check("unlock with the current passphrase", st == 200, f"status {st}")
 
         st, _, _ = request(base, "POST", "/api/vault/lock")
         check("lock the vault", st == 200, f"status {st}")

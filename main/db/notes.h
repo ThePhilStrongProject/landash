@@ -97,6 +97,22 @@ bool link_note_exists(uint16_t link_id);
 /* Erases the note for a link that is being deleted. */
 esp_err_t link_note_forget(uint16_t link_id);
 
+/*
+ * Credentials against a link. A device may run half a dozen services, each
+ * with its own login, so the service is the useful unit - the device-level
+ * secret below is for the box itself, such as a console or BMC password.
+ *
+ * Same vault, same key, same rules: the vault must be unlocked, and rotating
+ * the passphrase re-encrypts these along with everything else.
+ */
+esp_err_t link_secret_set(uint16_t link_id, const char *text);
+esp_err_t link_secret_get(uint16_t link_id, char *out, size_t cap);
+bool      link_secret_exists(uint16_t link_id);
+size_t    link_secret_count(void);
+
+/* Erases the secret for a link that is being deleted. */
+esp_err_t link_secret_forget(uint16_t link_id);
+
 /* ------------------------------------------------------------------------- */
 /* Vault                                                                     */
 /* ------------------------------------------------------------------------- */
