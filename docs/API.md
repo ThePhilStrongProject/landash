@@ -733,6 +733,9 @@ At most 191 characters; an empty string erases it. Returns
 | 409 | the ciphertext failed its authentication tag |
 
 Every link object carries `has_secret`, and **never** the secret itself.
+The dashboard deliberately does not act on `has_secret` when drawing a tile:
+a key icon on the ones that have credentials would tell anyone glancing at
+the screen which services have a login saved, which is not theirs to know.
 `GET /api/vault` reports `secrets` and `link_secrets` separately.
 
 Deleting a link destroys its credentials, including through the bulk delete in

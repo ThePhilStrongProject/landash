@@ -260,7 +260,7 @@ a.linkcard:hover{transform:translateY(-1px);border-color:var(--accent-2)}
 a.linkcard:focus-visible{outline:2px solid var(--accent-2);outline-offset:3px}
 .linkcard.offline{opacity:.75}
 .linkcard.unknown{opacity:.55}
-.lc-top{display:flex;align-items:center;gap:8px;min-width:0}
+.lc-top{display:flex;align-items:center;gap:8px;min-width:0;padding-right:22px}
 .lc-icon{flex:none;color:var(--muted);font-size:1.125rem}
 .lc-label{font-weight:600;font-size:var(--fs-md);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 min-width:0;flex:1}
@@ -269,7 +269,15 @@ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lc-status{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--muted);margin-top:auto}
 .lc-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}
 .lc-dot.on{background:var(--online)}
-.linkcard-wrap{display:flex;flex-direction:column;gap:6px}
+.linkcard-wrap{position:relative;display:flex;flex-direction:column;gap:6px}
+.lc-info{position:absolute;top:7px;right:7px;display:grid;place-items:center;
+width:24px;height:24px;padding:0;background:none;border:1px solid transparent;
+border-radius:var(--r-sm);color:var(--muted);opacity:.55;line-height:0;
+transition:opacity .12s ease,color .12s ease,border-color .12s ease}
+.lc-info .ic{width:15px;height:15px}
+.lc-info:hover,.lc-info:focus-visible{opacity:1;color:var(--text);border-color:var(--border);
+background:var(--bg)}
+
 .linkcard-wrap > .linkcard{flex:1}
 /* Under the card rather than over it: six controls will not fit in a corner,
    and anything that has to dodge them ends up hiding the label. */
@@ -1778,8 +1786,7 @@ var body = "<div class=\"lc-top\">" + iconRef(iconRefId, "lc-icon") +
 "<div class=\"lc-host mono\">" + host + "</div>" +
 (l.note ? ("<div class=\"lc-note\" title=\"" + esc(l.note) + "\">" +
 icon("i-note") + esc(l.note) + "</div>") : "") +
-(l.has_secret ? ("<div class=\"lc-note\">" + icon("i-key") +
-"<span class=\"muted\">Credentials stored</span></div>") : "") +
+
 ((known && l.online) ? "" : "<div class=\"lc-status\"><span class=\"lc-dot\"></span>" + statusText + "</div>");
 var cardTag;
 if (known && !editing){
@@ -1808,7 +1815,15 @@ ctl("down", "i-down", "Move down", i === total - 1) +
 ctl("remove", "i-trash", "Remove " + l.label) +
 "</div>";
 }
-return "<div class=\"linkcard-wrap\">" + cardTag + editControls + "</div>";
+/* Deliberately identical whether or not anything is stored: a key icon here
+   would tell a passer-by which services have credentials saved, which is a
+   thing they do not need to know. */
+var infoBtn = editing ? "" :
+("<button type=\"button\" class=\"lc-info\" data-linkinfo=\"" + l.id +
+"\" title=\"Notes and credentials for " + esc(l.label) +
+"\" aria-label=\"Notes and credentials for " + esc(l.label) + "\">" +
+icon("i-more") + "</button>");
+return "<div class=\"linkcard-wrap\">" + cardTag + infoBtn + editControls + "</div>";
 }
 function groupHeadHtml(g){
 if (!state.linksEditMode) {
@@ -1879,6 +1894,13 @@ else if (act === "rename") renameLink(id, btn);
 else if (act === "icon") openIconPicker(id);
 else if (act === "note") openLinkNote(id);
 else if (act === "group") openGroupPicker(id, btn);
+});
+});
+grid.querySelectorAll("[data-linkinfo]").forEach(function(btn){
+btn.addEventListener("click", function(ev){
+/* The button sits on top of the card, so stop the click reaching the link. */
+ev.preventDefault(); ev.stopPropagation();
+openLinkNote(Number(btn.dataset.linkinfo));
 });
 });
 grid.querySelectorAll("[data-groupact]").forEach(function(btn){
