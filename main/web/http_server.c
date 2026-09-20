@@ -1506,6 +1506,10 @@ static cJSON *link_to_json(const netdash_link_t *l)
     cJSON_AddNumberToObject(o, "group", l->group);
     cJSON_AddStringToObject(o, "icon", l->icon);
 
+    char note[NETDASH_LINK_NOTE_MAX];
+    link_note_get(l->id, note, sizeof(note));
+    cJSON_AddStringToObject(o, "note", note);
+
     /* The service on this port, so the UI can pick an icon when none is set. */
     const char *svc = netdash_port_service(l->port);
     cJSON_AddStringToObject(o, "service", svc != NULL ? svc : "");
@@ -1590,6 +1594,7 @@ static esp_err_t links_get_handler(httpd_req_t *req)
     cJSON_AddItemToObject(o, "links", links_array());
     cJSON_AddNumberToObject(o, "max_links", NETDASH_MAX_LINKS);
     cJSON_AddNumberToObject(o, "max_groups", NETDASH_MAX_GROUPS);
+    cJSON_AddNumberToObject(o, "max_note", NETDASH_LINK_NOTE_MAX - 1);
     return send_json(req, "200 OK", o);
 }
 
@@ -1843,6 +1848,25 @@ static esp_err_t links_patch_handler(httpd_req_t *req)
             return send_json_error(req, "400 Bad Request", "bad group");
         }
         group = j->valueint;
+    }
+
+    /* Applied separately from links_update(), because the note lives in its
+       own namespace rather than in the links blob. */
+    const cJSON *j_note = cJSON_GetObjectItemCaseSensitive(json, "note");
+    if (j_note != NULL) {
+        if (!cJSON_IsString(j_note) || strlen(j_note->valuestring) >= NETDASH_LINK_NOTE_MAX) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "note too long");
+        }
+        netdash_link_t probe;
+        if (!links_get_by_id(id, &probe)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "404 Not Found", "link not found");
+        }
+        if (link_note_set(id, j_note->valuestring) != ESP_OK) {
+            cJSON_Delete(json);
+            return send_json_error(req, "500 Internal Server Error", "could not save note");
+        }
     }
 
     const esp_err_t err = links_update(id, label, port, scheme, icon, group);

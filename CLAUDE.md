@@ -129,7 +129,8 @@ main/
                             reused, which is what makes the served bytes
                             immutably cacheable.
 
-  db/notes.c/.h             per-device plain-text notes (NVS "note") and the
+  db/notes.c/.h             per-device plain-text notes (NVS "note"), per-link
+                            notes (NVS "lnote", keyed by link id) and the
                             AES-256-GCM secret vault (NVS "sec", metadata in
                             "vault"). The vault key is derived from a passphrase
                             with PBKDF2 on every unlock and never stored. Read
@@ -308,9 +309,9 @@ Verified on a live /24 home network (23 devices):
   nodes. 253 addresses probed, 23 alive.
 - Naming works from mDNS, the router's reverse DNS and SSDP; vendors resolve
   for every device that is not using a randomised MAC.
-- `tools/smoke_test.py` passes all 96 checks against the real device, which
-  now covers groups, notes, the vault lifecycle, history, WAN, the feed and
-  uploaded icons.
+- `tools/smoke_test.py` passes all 103 checks against the real device, which
+  now covers groups, device and link notes, the vault lifecycle, history, WAN,
+  the feed and uploaded icons.
 - The browser half of the icon upload - decode, resize, re-encode, POST, and
   the tile repainting with the result - was driven end to end in headless Edge
   against the live dongle. A 300x120 JPEG became a 1,930-byte 64x64 PNG.

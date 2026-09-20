@@ -636,6 +636,7 @@ headings.
 | `group` | number | group id, `0` when ungrouped |
 | `icon` | string | icon override: a sprite name, `u:<id>` for an uploaded image, or empty to derive it from `service` |
 | `service` | string | what the firmware makes of the port, e.g. `portainer` |
+| `note` | string | the note shown on the tile, `""` when unset |
 | `mac`, `port`, `scheme` | | what is actually stored |
 | `label` | string | the user's name for it, defaulting to the device name |
 | `ip`, `url`, `display_name`, `type`, `online` | | resolved live on every request |
@@ -673,6 +674,27 @@ heading. Returns the updated link.
 
 400 for an over-long label or icon, a bad port or scheme, or a group id that
 does not exist. 404 for an unknown link id.
+
+### Notes on links
+
+A link can carry a short note, shown on its tile. A link is a service rather
+than a box, so this is the place for "admin account, 8443 is the HTTPS one" -
+the device note in `GET /api/devices/{mac}` is for the machine as a whole.
+
+Set it through `PATCH /api/links/{id}` with a `note` member, at most 159
+characters; an empty string erases it. It comes back on every link object as
+`note`, and `GET /api/links` reports the limit as `max_note`.
+
+400 when the note is too long, 404 when the link does not exist.
+
+Notes live in their own NVS namespace keyed by the link id, not inline in the
+links blob: they are sparse, that blob is rewritten on every reordering, and
+widening the link record would mean migrating the stored layout again. Deleting
+a link - including implicitly, through the bulk delete in `PUT /api/links` -
+takes its note with it.
+
+Like a device note this is **plain text**, readable by anyone who can reach the
+web UI. Credentials belong in the vault.
 
 ### DELETE /api/links/{id}
 

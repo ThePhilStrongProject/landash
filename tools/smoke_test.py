@@ -284,6 +284,43 @@ def main():
     st, _, _ = request(base, "PATCH", "/api/links/groups/250", {"name": "nope"})
     check("renaming an unknown group is 404", st == 404, f"status {st}")
 
+    # --- notes on links -----------------------------------------------------
+    check("the link payload advertises a note limit",
+          isinstance((links or {}).get("max_note"), int), (links or {}).get("max_note"))
+
+    existing = (links or {}).get("links", [])
+    if not existing:
+        print("       no links to annotate - skipping the link-note checks")
+    else:
+        lid = existing[0]["id"]
+        before_note = existing[0].get("note", "")
+        check("links carry a note field", "note" in existing[0], sorted(existing[0])[:10])
+
+        st, l, _ = request(base, "PATCH", f"/api/links/{lid}",
+                           {"note": "smoke test link note"})
+        check("save a link note",
+              st == 200 and (l or {}).get("note") == "smoke test link note",
+              f"status {st} {(l or {}).get('note')!r}")
+
+        st, r, _ = request(base, "GET", "/api/links")
+        got = [x for x in r.get("links", []) if x["id"] == lid]
+        check("the note comes back on the list",
+              got and got[0].get("note") == "smoke test link note",
+              repr(got)[:120])
+
+        st, _, _ = request(base, "PATCH", f"/api/links/{lid}", {"note": "x" * 400})
+        check("an over-long link note is rejected", st == 400, f"status {st}")
+
+        st, _, _ = request(base, "PATCH", "/api/links/64000", {"note": "nobody"})
+        check("a note on an unknown link is 404", st == 404, f"status {st}")
+
+        st, l, _ = request(base, "PATCH", f"/api/links/{lid}", {"note": ""})
+        check("clear a link note", st == 200 and not (l or {}).get("note"),
+              f"status {st}")
+
+        if before_note:
+            request(base, "PATCH", f"/api/links/{lid}", {"note": before_note})
+
     if gid:
         st, renamed, _ = request(base, "PATCH", f"/api/links/groups/{gid}",
                                  {"name": "smoketest-b"})

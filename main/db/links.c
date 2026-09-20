@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "notes.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "nvs.h"
@@ -386,6 +387,9 @@ esp_err_t links_remove(uint16_t id)
 
     save_locked();
     unlock();
+
+    /* Whatever was written about this link goes with it. */
+    link_note_forget(id);
     return ESP_OK;
 }
 
@@ -414,12 +418,33 @@ esp_err_t links_reorder(const uint16_t *ids, size_t count)
         next[i] = s_links[idx];
     }
 
+    /* This doubles as a bulk delete, so collect what is about to disappear
+       before the list is replaced. */
+    uint16_t dropped[NETDASH_MAX_LINKS];
+    size_t   n_dropped = 0;
+    for (size_t i = 0; i < s_count; i++) {
+        bool kept = false;
+        for (size_t j = 0; j < count; j++) {
+            if (ids[j] == s_links[i].id) {
+                kept = true;
+                break;
+            }
+        }
+        if (!kept && n_dropped < NETDASH_MAX_LINKS) {
+            dropped[n_dropped++] = s_links[i].id;
+        }
+    }
+
     memset(s_links, 0, sizeof(s_links));
     memcpy(s_links, next, count * sizeof(next[0]));
     s_count = count;
 
     save_locked();
     unlock();
+
+    for (size_t i = 0; i < n_dropped; i++) {
+        link_note_forget(dropped[i]);
+    }
     return ESP_OK;
 }
 

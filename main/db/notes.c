@@ -28,11 +28,13 @@
 static const char *TAG = "notes";
 
 #define NOTE_NVS_NS  "note"
+#define LNOTE_NVS_NS "lnote"
 #define SEC_NVS_NS   "sec"
 #define VAULT_NVS_NS "vault"
 #define VAULT_KEY    "meta"
 
 #define NOTE_BLOB_VERSION  1
+#define LNOTE_BLOB_VERSION 1
 #define SEC_BLOB_VERSION   1
 #define VAULT_META_VERSION 1
 
@@ -55,6 +57,11 @@ typedef struct __attribute__((packed)) {
     char    text[NETDASH_NOTE_MAX];
 } note_blob_t;
 
+typedef struct __attribute__((packed)) {
+    uint8_t version;
+    char    text[NETDASH_LINK_NOTE_MAX];
+} lnote_blob_t;
+
 /*
  * Fixed size on purpose: a blob sized to its contents would leak the length of
  * every secret to anyone who could read the flash.
@@ -73,6 +80,18 @@ typedef struct __attribute__((packed)) {
     uint32_t iters;
     uint8_t  verifier[32];
 } vault_meta_t;
+
+/*
+ * Which link ids have a note. Mirrored in RAM like the MAC sets, so the
+ * dashboard poll can flag them without an NVS lookup per tile. 64 is
+ * comfortably above NETDASH_MAX_LINKS.
+ */
+#define LNOTE_MAX 64
+static uint16_t s_lnote_ids[LNOTE_MAX];
+static size_t   s_lnote_count;
+
+/* Defined with the rest of the link-note code further down. */
+static void index_link_notes_locked(void);
 
 /* In-RAM mirrors of which MACs have an entry. */
 static uint8_t s_note_macs[NETDASH_MAX_DEVICES][6];
@@ -275,11 +294,14 @@ esp_err_t notes_init(void)
     lock();
     index_namespace(NOTE_NVS_NS, s_note_macs, &s_note_count);
     index_namespace(SEC_NVS_NS, s_sec_macs, &s_sec_count);
-    const size_t notes = s_note_count;
-    const size_t secs  = s_sec_count;
+    index_link_notes_locked();
+    const size_t notes  = s_note_count;
+    const size_t secs   = s_sec_count;
+    const size_t lnotes = s_lnote_count;
     unlock();
 
-    ESP_LOGI(TAG, "%u note(s), %u secret(s), vault %s", (unsigned)notes, (unsigned)secs,
+    ESP_LOGI(TAG, "%u device note(s), %u link note(s), %u secret(s), vault %s",
+             (unsigned)notes, (unsigned)lnotes, (unsigned)secs,
              vault_configured() ? "configured" : "not set up");
     return ESP_OK;
 }
@@ -375,6 +397,146 @@ esp_err_t notes_forget_device(const uint8_t mac[6])
     unlock();
 
     return e1 != ESP_OK ? e1 : e2;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Notes on dashboard links                                                  */
+/* ------------------------------------------------------------------------- */
+
+static void lnote_key(uint16_t id, char out[8])
+{
+    snprintf(out, 8, "%u", (unsigned)id);
+}
+
+/* Caller holds the lock. */
+static bool lnote_has_locked(uint16_t id)
+{
+    for (size_t i = 0; i < s_lnote_count; i++) {
+        if (s_lnote_ids[i] == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Caller holds the lock. */
+static void lnote_add_locked(uint16_t id)
+{
+    if (lnote_has_locked(id) || s_lnote_count >= LNOTE_MAX) {
+        return;
+    }
+    s_lnote_ids[s_lnote_count++] = id;
+}
+
+/* Caller holds the lock. */
+static void lnote_remove_locked(uint16_t id)
+{
+    for (size_t i = 0; i < s_lnote_count; i++) {
+        if (s_lnote_ids[i] == id) {
+            memmove(&s_lnote_ids[i], &s_lnote_ids[i + 1],
+                    sizeof(s_lnote_ids[0]) * (s_lnote_count - i - 1));
+            s_lnote_count--;
+            return;
+        }
+    }
+}
+
+/* Caller holds the lock. */
+static void index_link_notes_locked(void)
+{
+    s_lnote_count = 0;
+
+    nvs_handle_t h;
+    if (nvs_open(LNOTE_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return;
+    }
+
+    nvs_iterator_t it   = NULL;
+    esp_err_t      fres = nvs_entry_find_in_handle(h, NVS_TYPE_BLOB, &it);
+    while (fres == ESP_OK && it != NULL) {
+        nvs_entry_info_t info;
+        nvs_entry_info(it, &info);
+
+        char      *end = NULL;
+        const long id  = strtol(info.key, &end, 10);
+        if (end != info.key && end != NULL && *end == 0 && id > 0 && id < 65535) {
+            lnote_add_locked((uint16_t)id);
+        }
+        fres = nvs_entry_next(&it);
+    }
+    nvs_release_iterator(it);
+    nvs_close(h);
+}
+
+esp_err_t link_note_set(uint16_t link_id, const char *text)
+{
+    if (link_id == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char key[8];
+    lnote_key(link_id, key);
+
+    if (text == NULL || text[0] == '\0') {
+        esp_err_t err = blob_erase(LNOTE_NVS_NS, key);
+        if (err == ESP_OK) {
+            lock();
+            lnote_remove_locked(link_id);
+            unlock();
+        }
+        return err;
+    }
+
+    lnote_blob_t blob = {0};
+    blob.version      = LNOTE_BLOB_VERSION;
+    strncpy(blob.text, text, sizeof(blob.text) - 1);
+
+    esp_err_t err = blob_write(LNOTE_NVS_NS, key, &blob, sizeof(blob));
+    if (err == ESP_OK) {
+        lock();
+        lnote_add_locked(link_id);
+        unlock();
+    } else {
+        ESP_LOGW(TAG, "link note not saved for %s: %s", key, esp_err_to_name(err));
+    }
+    return err;
+}
+
+bool link_note_get(uint16_t link_id, char *out, size_t cap)
+{
+    if (out == NULL || cap == 0) {
+        return false;
+    }
+    out[0] = '\0';
+    if (!link_note_exists(link_id)) {
+        return false;
+    }
+
+    char key[8];
+    lnote_key(link_id, key);
+
+    lnote_blob_t blob;
+    if (blob_read(LNOTE_NVS_NS, key, &blob, sizeof(blob)) != ESP_OK ||
+        blob.version != LNOTE_BLOB_VERSION) {
+        return false;
+    }
+    blob.text[sizeof(blob.text) - 1] = '\0';
+    strncpy(out, blob.text, cap - 1);
+    out[cap - 1] = '\0';
+    return true;
+}
+
+bool link_note_exists(uint16_t link_id)
+{
+    lock();
+    const bool has = lnote_has_locked(link_id);
+    unlock();
+    return has;
+}
+
+esp_err_t link_note_forget(uint16_t link_id)
+{
+    return link_note_set(link_id, NULL);
 }
 
 /* ------------------------------------------------------------------------- */

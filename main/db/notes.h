@@ -45,6 +45,7 @@ extern "C" {
 #endif
 
 #define NETDASH_NOTE_MAX        256  /* including the NUL */
+#define NETDASH_LINK_NOTE_MAX   160  /* including the NUL */
 #define NETDASH_SECRET_MAX      192  /* plaintext, including the NUL */
 #define NETDASH_VAULT_TOKEN_LEN 33   /* 32 hex characters plus the NUL */
 #define NETDASH_VAULT_IDLE_S    900  /* relock after 15 minutes unused */
@@ -67,6 +68,34 @@ bool notes_exists(const uint8_t mac[6]);
 
 /* Erases both the note and the secret for mac. Used by DELETE /api/devices. */
 esp_err_t notes_forget_device(const uint8_t mac[6]);
+
+/* ------------------------------------------------------------------------- */
+/* Notes on dashboard links                                                  */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * A note against a link rather than a device, because a link is a service and
+ * a device may run several: "admin / see Bitwarden" belongs to the Portainer
+ * tile, not to the whole NAS.
+ *
+ * Stored in their own NVS namespace keyed by the link id, not inline in the
+ * links blob - notes are sparse, that blob is rewritten on every reordering,
+ * and widening netdash_link_t would mean migrating the layout again.
+ *
+ * These are plain text and are served to anyone who can reach the web UI, the
+ * same as a device note. Secrets belong in the vault.
+ */
+
+/* NULL or "" erases the note. */
+esp_err_t link_note_set(uint16_t link_id, const char *text);
+
+/* Copies the note into out. False when there is none; out is still NUL-set. */
+bool link_note_get(uint16_t link_id, char *out, size_t cap);
+
+bool link_note_exists(uint16_t link_id);
+
+/* Erases the note for a link that is being deleted. */
+esp_err_t link_note_forget(uint16_t link_id);
 
 /* ------------------------------------------------------------------------- */
 /* Vault                                                                     */
