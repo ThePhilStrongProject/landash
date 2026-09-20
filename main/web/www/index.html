@@ -159,10 +159,23 @@ min-height:30px;border-bottom:1px solid var(--border)}
 .ev-time{color:var(--muted);font-size:var(--fs-xs);flex:none;width:72px;text-align:right;
 font-variant-numeric:tabular-nums}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:16px;max-width:560px}
-.settgroup{margin-bottom:20px}
-.settgroup h3{margin:0 0 12px;padding-top:16px;border-top:1px solid var(--border);
-font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700}
-.settgroup:first-child h3{padding-top:0;border-top:none}
+
+/* Columns sized so a field and its hint stay readable; the browser fits as
+   many as the window allows and the sections keep their own heights. */
+.settgrid{display:grid;gap:14px;align-items:start;
+grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+.settgroup{background:var(--surface);border:1px solid var(--border);
+border-radius:var(--r-md);padding:16px 18px 18px;margin:0}
+.settgroup h3{margin:0 0 14px;padding:0 0 10px;border-bottom:1px solid var(--border);
+font-size:var(--fs-sm);font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+color:var(--muted)}
+.settgroup .field:last-child{margin-bottom:0}
+.settgroup .switch{margin-bottom:8px}
+.savebar{position:sticky;bottom:0;z-index:20;display:flex;gap:10px;flex-wrap:wrap;
+justify-content:flex-end;margin-top:16px;padding:12px 0;
+background:linear-gradient(to top,var(--bg) 62%,transparent);
+border-top:1px solid var(--border)}
+@media (max-width:700px){.savebar{justify-content:stretch}.savebar .btn{flex:1 1 auto}}
 .field{margin-bottom:14px}
 .field label{display:block;font-size:.82rem;color:var(--muted);margin-bottom:4px}
 .field input[type=text],.field input[type=password],.field input[type=number]{
@@ -263,11 +276,17 @@ a.linkcard:focus-visible{outline:2px solid var(--accent-2);outline-offset:3px}
 .lc-icon{flex:none;color:var(--muted);font-size:1.125rem}
 .lc-label{font-weight:600;font-size:var(--fs-md);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 min-width:0;flex:1}
-.lc-host{font-family:ui-monospace,Consolas,"SF Mono",Menlo,monospace;font-size:.76rem;color:var(--muted);
-overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lc-host{display:flex;align-items:center;gap:7px;font-size:.76rem;color:var(--muted);
+overflow:hidden;white-space:nowrap}
+.lc-host .mono{overflow:hidden;text-overflow:ellipsis}
+.lc-offword{color:var(--danger);font-weight:600;letter-spacing:.02em}
 .lc-status{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--muted);margin-top:auto}
-.lc-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}
-.lc-dot.on{background:var(--online)}
+.lc-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--muted);flex:none}
+.lc-dot.on{width:6px;height:6px;background:var(--online);opacity:.75}
+.lc-dot.off{width:9px;height:9px;background:var(--danger);
+box-shadow:0 0 0 3px rgba(var(--danger-rgb),.18)}
+.lc-dot.unknown{width:9px;height:9px;background:var(--muted);
+box-shadow:0 0 0 3px rgba(148,163,184,.14)}
 .linkcard-wrap{position:relative;display:flex;flex-direction:column;gap:6px}
 .lc-info{position:absolute;top:7px;right:7px;display:grid;place-items:center;
 width:24px;height:24px;padding:0;background:none;border:1px solid transparent;
@@ -351,6 +370,8 @@ background:var(--bg);color:var(--text)}
 .notebox:focus{outline:2px solid var(--accent);outline-offset:-1px}
 .notetext{font-size:var(--fs-sm);line-height:1.55;white-space:pre-wrap;word-break:break-word;margin:0}
 .secretrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.modal.narrow{max-width:460px}
+.secretval.big{font-size:var(--fs-md);line-height:1.6;padding:14px 16px;margin:4px 0 0}
 .secretval{font-family:var(--mono);font-size:var(--fs-sm);white-space:pre-wrap;
 word-break:break-all;background:var(--bg);border:1px solid var(--border);
 border-radius:var(--r-sm);padding:9px 11px;margin:0;flex:1;min-width:0}
@@ -394,6 +415,15 @@ line-height:1;font-variant-numeric:tabular-nums;color:var(--text)}
 .home .statstrip{justify-content:center;margin:22px 0 0;flex-wrap:wrap}
 .home .stat:first-child{padding-left:16px}
 @media (max-width:520px){.home{padding:16px 0 20px}.home .statstrip{gap:8px 0}}
+
+.lc-cred{display:flex;align-items:center;gap:7px;width:100%;padding:7px 14px;
+background:var(--surface2);border:1px solid var(--border);border-top:none;
+border-radius:0 0 var(--r-md) var(--r-md);margin-top:-7px;color:var(--muted);
+font-size:var(--fs-xs);text-align:left}
+.lc-cred .ic{width:13px;height:13px;flex:none}
+.lc-cred:hover,.lc-cred:focus-visible{color:var(--text);border-color:var(--accent-2)}
+/* Tucked under the card so the two read as one object. */
+.linkcard-wrap > .lc-cred + .linkedit{margin-top:6px}
 
 /* --- notification bell -------------------------------------------------- */
 .bell{position:relative;flex:none;width:34px;height:34px;display:grid;place-items:center;
@@ -570,7 +600,7 @@ aria-label="What changed"><span class="belldot" id="bellDot" hidden></span></but
 <p class="empty" id="devEmpty" hidden>No devices match.</p>
 </section>
 <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
-<form class="card" id="settingsForm">
+<form class="settgrid" id="settingsForm">
 <div class="settgroup">
 <h3>Network</h3>
 <div class="field">
@@ -673,7 +703,7 @@ down" can be told apart. Answers may be served from the resolver cache for their
 <p class="hint" style="margin:0 0 10px" id="vaultBlurb">&nbsp;</p>
 <div class="field">
 <label for="vaultOldPass">Current passphrase</label>
-<input type="password" id="vaultOldPass" autocomplete="current-password" placeholder="Only needed when changing an existing passphrase">
+<input type="password" id="vaultOldPass" autocomplete="current-password" placeholder="Only when changing it">
 </div>
 <div class="field">
 <label for="vaultNewPass">New passphrase</label>
@@ -710,13 +740,13 @@ HTTP, so a revealed secret crosses the network in the clear.</p>
 </div>
 </div>
 </div>
-<div class="formrow-actions">
-<button type="submit" class="btn btn-accent">Save settings</button>
+</form>
+<div class="savebar">
+<button type="submit" form="settingsForm" class="btn btn-accent">Save settings</button>
 <button type="button" class="btn" id="exportBtn">Export devices</button>
 <button type="button" class="btn" id="importBtn">Import devices</button>
 <input type="file" id="importFile" accept="application/json,.json" hidden>
 </div>
-</form>
 </section>
 <section id="panel-system" role="tabpanel" aria-labelledby="tab-system" hidden>
 <dl class="sysinfo" id="sysInfo"></dl>
@@ -1864,15 +1894,24 @@ var known = l.url != null;
 var editing = state.linksEditMode;
 var cls = "linkcard" + (!known ? " unknown" : (!l.online ? " offline" : ""));
 var host = known ? (esc(l.ip) + ":" + esc(l.port)) : "device not on the network";
-var statusText = !known ? "Unknown device" : (l.online ? "Online" : "Offline");
 var iconRefId = linkIconId(l);
+
+/* Reachability sits with the address it qualifies. Green stays small and
+   unlabelled - working is the ordinary case - while offline gets a ring, a
+   word, and enough weight to catch the eye on a page of green. */
+var dotCls = !known ? "unknown" : (l.online ? "on" : "off");
+var dotTitle = !known ? "This device is not on the network"
+: (l.online ? "Online" : "Not answering");
+var statusBit = "<span class=\"lc-dot " + dotCls + "\" title=\"" + esc(dotTitle) +
+"\" aria-label=\"" + esc(dotTitle) + "\"></span>" +
+(dotCls === "on" ? "" : ("<span class=\"lc-offword\">" +
+(known ? "offline" : "not on the network") + "</span>"));
+
 var body = "<div class=\"lc-top\">" + iconRef(iconRefId, "lc-icon") +
 "<span class=\"lc-label\">" + esc(l.label) + "</span></div>" +
-"<div class=\"lc-host mono\">" + host + "</div>" +
+"<div class=\"lc-host\">" + statusBit + "<span class=\"mono\">" + host + "</span></div>" +
 (l.note ? ("<div class=\"lc-note\" title=\"" + esc(l.note) + "\">" +
-icon("i-note") + esc(l.note) + "</div>") : "") +
-
-((known && l.online) ? "" : "<div class=\"lc-status\"><span class=\"lc-dot\"></span>" + statusText + "</div>");
+icon("i-note") + esc(l.note) + "</div>") : "");
 var cardTag;
 if (known && !editing){
 cardTag = "<a class=\"" + cls + "\" data-id=\"" + l.id + "\" href=\"" + esc(l.url) +
@@ -1908,7 +1947,12 @@ var infoBtn = editing ? "" :
 "\" title=\"Notes and credentials for " + esc(l.label) +
 "\" aria-label=\"Notes and credentials for " + esc(l.label) + "\">" +
 icon("i-more") + "</button>");
-return "<div class=\"linkcard-wrap\">" + cardTag + infoBtn + editControls + "</div>";
+var credRow = (l.has_secret && !editing)
+? ("<button type=\"button\" class=\"lc-cred\" data-linkcred=\"" + l.id +
+"\" title=\"Show the credentials for " + esc(l.label) + "\">" +
+icon("i-key") + "<span>Credentials</span></button>")
+: "";
+return "<div class=\"linkcard-wrap\">" + cardTag + infoBtn + credRow + editControls + "</div>";
 }
 function groupHeadHtml(g){
 if (!state.linksEditMode) {
@@ -1978,6 +2022,12 @@ else if (act === "rename") renameLink(id, btn);
 else if (act === "icon") openIconPicker(id);
 else if (act === "note") openLinkNote(id);
 else if (act === "group") openGroupPicker(id, btn);
+});
+});
+grid.querySelectorAll("[data-linkcred]").forEach(function(btn){
+btn.addEventListener("click", function(ev){
+ev.preventDefault(); ev.stopPropagation();
+openLinkCredentials(Number(btn.dataset.linkcred));
 });
 });
 grid.querySelectorAll("[data-linkinfo]").forEach(function(btn){
@@ -2228,11 +2278,64 @@ if (linkId != null) openIconPicker(linkId);
  * that wants more than a line, and prompt() gives you neither wrapping nor a
  * character count.
  */
+/*
+ * One click from the tile to the login. Locked, it asks for the passphrase and
+ * then shows the credential without a second trip; unlocked, it is already
+ * there by the time the dialog paints.
+ */
+function openLinkCredentials(id){
+var l = (state.links||[]).find(function(x){ return x.id === id; });
+if (!l) return;
+
+if (!state.vault){ loadVault().then(function(){ openLinkCredentials(id); }); return; }
+if (!vaultUnlocked()){
+openUnlockModal(function(){ openLinkCredentials(id); });
+return;
+}
+
+apiAuth("GET","/api/links/"+id+"/secret").then(function(r){
+var text = r.secret || "";
+var html = "<div class=\"modal narrow\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Credentials\">" +
+"<button type=\"button\" class=\"modalclose\" aria-label=\"Close\">" + icon("i-close") + "</button>" +
+"<h3>" + icon("i-key") + " " + esc(l.label) + "</h3>" +
+"<pre class=\"secretval big\" id=\"credText\">" + esc(text) + "</pre>" +
+"<div class=\"uprow\"><span class=\"muted\" style=\"font-size:var(--fs-xs)\" id=\"credHint\">" +
+"Relocks after " + Math.round(((state.vault||{}).idle_timeout_s||900)/60) + " minutes idle." +
+"</span>" +
+"<button type=\"button\" class=\"btn\" id=\"credEdit\">Edit</button>" +
+"<button type=\"button\" class=\"btn btn-accent\" id=\"credCopy\">Copy</button></div></div>";
+
+openModal(html, function(root){
+root.querySelector(".modalclose").addEventListener("click", closeModal);
+$("credCopy").addEventListener("click", function(){
+if (!navigator.clipboard){ toast("Clipboard unavailable","err"); return; }
+navigator.clipboard.writeText(text).then(function(){
+$("credHint").textContent = "Copied to the clipboard.";
+toast("Copied","ok");
+}).catch(function(){ toast("Could not copy","err"); });
+});
+$("credEdit").addEventListener("click", function(){
+closeModal();
+linkSecState = {shown:true, text:text, editing:true};
+openLinkNote(id);
+});
+$("credCopy").focus();
+});
+}).catch(function(e){
+/* A token that expired between the tile rendering and the click. */
+if (e && /locked|401/i.test(e.message || "")){
+openUnlockModal(function(){ openLinkCredentials(id); });
+return;
+}
+toastErr(e);
+});
+}
+
 function openLinkNote(id){
 var l = (state.links||[]).find(function(x){ return x.id === id; });
 if (!l) return;
 if (!state.vault){ loadVault().then(function(){ openLinkNote(id); }); return; }
-linkSecState = {shown:false, text:null, editing:false};
+if (!linkSecState.editing) linkSecState = {shown:false, text:null, editing:false};
 var max = (state.linksMeta && state.linksMeta.max_note) || 159;
 var html = "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Note\">" +
 "<button type=\"button\" class=\"modalclose\" aria-label=\"Close\">" + icon("i-close") + "</button>" +
@@ -2766,13 +2869,16 @@ if (!blurb) return;
 if (!v.configured){
 blurb.textContent = "No vault has been set up. Choose a passphrase to start storing " +
 "credentials against devices.";
-} else if (v.unlocked){
-blurb.textContent = "Vault is unlocked, holding " + (v.secrets||0) + " secret" +
-((v.secrets === 1) ? "" : "s") + ". It relocks after " +
-Math.round((v.idle_timeout_s||900)/60) + " minutes idle.";
 } else {
-blurb.textContent = "Vault is locked, holding " + (v.secrets||0) + " secret" +
-((v.secrets === 1) ? "" : "s") + ".";
+var n = (v.secrets||0) + (v.link_secrets||0);
+var held = n === 0 ? "nothing yet"
+: (n + " entr" + (n === 1 ? "y" : "ies") +
+((v.link_secrets||0) && (v.secrets||0)
+? " (" + v.secrets + " on devices, " + v.link_secrets + " on links)" : ""));
+blurb.textContent = v.unlocked
+? ("Vault is unlocked, holding " + held + ". It relocks after " +
+Math.round((v.idle_timeout_s||900)/60) + " minutes idle.")
+: ("Vault is locked, holding " + held + ".");
 }
 $("vaultLockBtn").hidden = !v.unlocked;
 $("vaultResetBtn").hidden = !v.configured;
