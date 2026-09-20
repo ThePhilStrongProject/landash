@@ -229,6 +229,29 @@ in `http_server.h`; routes past the limit fail to register and look exactly
 like a routing bug at runtime. There is now a `_Static_assert` against the size
 of the route table, so raise the constant when the build tells you to.
 
+## The esp_ping session lifetime trap
+
+**Never create and delete an esp_ping session per check, and never put its
+callback context on the caller's stack.** The ping task can still be inside
+`recvfrom()` when `esp_ping_delete_session()` returns, and its `on_ping_end`
+then gives a semaphore that has already been deleted, through a stack frame
+that no longer exists:
+
+```
+assert failed: xQueueGenericSend queue.c:936 (pxQueue)
+```
+
+That rebooted the dongle within a few minutes of the WAN probes starting to
+fail - exactly when the feature is supposed to be working. `net/wan.c` now
+keeps one session and one context alive for the lifetime of the task, and
+drains any stale semaphore give before each probe. The session is only rebuilt
+when the configured target actually changes.
+
+If you touch this, reproduce the failure before believing the fix: point
+`wan_ping_host` at an unroutable address such as `192.0.2.1`, set
+`wan_interval_s` to 15, attach the serial console, and watch `uptime_s` across
+a full down-and-back cycle.
+
 ## Two traps in the scanner
 
 **The lwIP ARP cache is the scanner's bottleneck, and it must be sized for the
