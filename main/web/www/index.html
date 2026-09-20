@@ -21,9 +21,14 @@
 color-scheme:dark;
 }
 *{box-sizing:border-box}
+/* An element that sets its own display would otherwise ignore [hidden]. */
+[hidden]{display:none !important}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--text);overflow-x:hidden;
 font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-body{min-height:100vh}
+/* Column layout so the status bar sits at the foot of the viewport on a
+   short page and after the content on a long one. */
+body{min-height:100vh;display:flex;flex-direction:column}
+main{flex:1 0 auto}
 button,input,select{font:inherit;color:inherit}
 button{cursor:pointer}
 a{color:var(--accent-2)}
@@ -37,21 +42,14 @@ padding:8px 16px;font-size:.85rem;text-align:center}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;
 padding:12px 16px;border-bottom:1px solid var(--border);
 background:var(--surface);flex-wrap:wrap}
-.brand{display:flex;align-items:baseline;gap:10px;min-width:0;flex:1 1 auto}
+.logo{margin-right:auto}
 .logo{font-weight:800;letter-spacing:.12em;color:var(--accent-2);font-size:1.05rem;white-space:nowrap;flex:none}
-.hostip{color:var(--muted);font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.statuspill{display:flex;flex-direction:column;gap:4px;align-items:flex-end;min-width:0;flex:none;max-width:100%}
-.pilltext{display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--muted);white-space:nowrap;
-overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:100%}
-.pillbar{width:140px;height:4px;border-radius:2px;background:rgba(var(--accent-rgb),.18);overflow:hidden}
-.pillbarfill{height:100%;background:var(--accent);border-radius:2px;transition:width .3s}
-.tabs{display:flex;gap:2px;padding:0 12px;border-bottom:1px solid var(--border);overflow-x:auto}
-.tabbtn{background:none;border:none;padding:12px 14px;color:var(--muted);font-weight:600;
-border-bottom:2px solid transparent;white-space:nowrap}
+.tabs{display:flex;gap:2px;overflow-x:auto;flex:none}
+.tabbtn{background:none;border:none;padding:8px 12px;color:var(--muted);font-weight:600;
+font-size:var(--fs-sm);border-bottom:2px solid transparent;white-space:nowrap}
 .tabbtn[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
 .tabbtn:hover{color:var(--text)}
-main{padding:16px;max-width:1180px;margin:0 auto}
-section[role="tabpanel"][hidden]{display:none}
+main{padding:16px;max-width:1180px;margin:0 auto;width:100%}
 .statstrip{display:flex;flex-wrap:wrap;align-items:center;gap:0;margin-bottom:12px;min-height:44px;
 padding:0 2px}
 .stat{display:flex;align-items:baseline;gap:6px;padding:0 16px;border-left:1px solid var(--border)}
@@ -170,7 +168,8 @@ font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.08em;color:var(-
 .field input[type=text],.field input[type=password],.field input[type=number]{
 width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);
 padding:8px 10px;color:var(--text)}
-.field .hint{color:var(--muted);font-size:.74rem;margin-top:4px}
+.hint{color:var(--muted);font-size:.74rem;line-height:1.5}
+.field .hint{margin-top:4px}
 .checkfield{display:flex;align-items:center;gap:8px;margin-bottom:14px}
 .presets{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .inline-btn-row{display:flex;gap:8px;align-items:flex-end}
@@ -332,7 +331,6 @@ align-items:flex-start}
 border-radius:var(--r-sm);line-height:0;opacity:0;transition:opacity .12s ease}
 .feedlist li:hover .fd-x,.feedlist li:focus-within .fd-x{opacity:1}
 .fd-x:hover{color:var(--text);background:var(--surface2)}
-.badgecount[hidden]{display:none}
 .badgecount{display:inline-flex;align-items:center;justify-content:center;min-width:18px;
 height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;
 font-size:var(--fs-xs);font-weight:600;font-variant-numeric:tabular-nums}
@@ -387,6 +385,55 @@ border-radius:var(--r-sm);background:var(--surface);color:var(--text);cursor:poi
 .iconmrow .muted{margin-left:auto;font-size:var(--fs-xs)}
 .picksecthead{font-size:var(--fs-xs);color:var(--muted);text-transform:uppercase;
 letter-spacing:.06em;margin:12px 0 0}
+
+/* --- home page ---------------------------------------------------------- */
+.home{text-align:center;padding:26px 0 30px}
+.clock{font-size:clamp(2.6rem,8vw,4.2rem);font-weight:200;letter-spacing:.01em;
+line-height:1;font-variant-numeric:tabular-nums;color:var(--text)}
+.clockdate{color:var(--muted);font-size:var(--fs-md);margin-top:8px}
+.home .statstrip{justify-content:center;margin:22px 0 0;flex-wrap:wrap}
+.home .stat:first-child{padding-left:16px}
+@media (max-width:520px){.home{padding:16px 0 20px}.home .statstrip{gap:8px 0}}
+
+/* --- notification bell -------------------------------------------------- */
+.bell{position:relative;flex:none;width:34px;height:34px;display:grid;place-items:center;
+background:none;border:1px solid transparent;border-radius:var(--r-sm);color:var(--muted)}
+.bell:hover,.bell:focus-visible{color:var(--text);border-color:var(--border)}
+.bell[aria-expanded="true"]{color:var(--text);border-color:var(--border);background:var(--surface)}
+.bell .ic{width:19px;height:19px}
+.belldot{position:absolute;top:3px;right:3px;min-width:15px;height:15px;padding:0 4px;
+border-radius:8px;background:var(--danger);color:#fff;font-size:10px;font-weight:700;
+line-height:15px;text-align:center;font-variant-numeric:tabular-nums;
+box-shadow:0 0 0 2px var(--bg)}
+.feedpanel{position:absolute;right:12px;top:48px;z-index:60;width:min(380px,calc(100vw - 24px));
+background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+box-shadow:0 12px 32px rgba(0,0,0,.5);overflow:hidden}
+.feedempty{color:var(--muted);font-size:var(--fs-sm);padding:18px 14px;margin:0;text-align:center}
+
+/* --- status bar --------------------------------------------------------- */
+.statusbar{flex:none;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;
+gap:0 14px;padding:12px 16px 16px;margin-top:20px;border-top:1px solid var(--border);
+color:var(--muted);font-size:var(--fs-xs)}
+.sb{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.sb + .sb::before{content:"";width:3px;height:3px;border-radius:50%;background:var(--border);
+margin-right:8px}
+.sb .ic{width:13px;height:13px}
+.sb.up{color:var(--online)}
+.sb.degraded{color:var(--warn)}
+.sb.down{color:var(--danger)}
+.sb-bar{width:90px;height:3px;border-radius:2px;background:rgba(var(--accent-rgb),.2);overflow:hidden}
+.sb-bar i{display:block;height:100%;background:var(--accent);border-radius:2px;transition:width .3s}
+
+.dashtools{display:flex;justify-content:center;gap:8px;margin:28px 0 4px}
+.edittools{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.ghostbtn{background:none;border:1px solid transparent;color:var(--muted);
+font-size:var(--fs-xs);padding:5px 10px;border-radius:var(--r-sm);
+display:inline-flex;align-items:center;gap:6px}
+.ghostbtn:hover,.ghostbtn:focus-visible{color:var(--text);border-color:var(--border)}
+.ghostbtn .ic{width:13px;height:13px}
+
+/* --- system page -------------------------------------------------------- */
+.syssub{margin:28px 0 4px;font-size:var(--fs-md);font-weight:600}
 </style>
 </head>
 <body>
@@ -454,38 +501,31 @@ letter-spacing:.06em;margin:12px 0 0}
 </defs></svg>
 <div id="offlineBanner" class="banner" role="status" hidden>Connection to the dongle was lost — retrying&hellip;</div>
 <header class="topbar">
-<div class="brand">
 <span class="logo">NETDASH</span>
-<span class="hostip" id="hostIp">&mdash;</span>
-<span class="wanpill" id="wanPill" hidden></span>
-</div>
-<div class="statuspill">
-<span class="pilltext" id="pillText">&mdash;</span>
-<div class="pillbar" id="pillBar" hidden><div class="pillbarfill" id="pillBarFill"></div></div>
-</div>
-</header>
-<div id="portscanBar" class="scanpill" role="status" hidden><span id="portscanText"></span></div>
 <nav class="tabs" role="tablist" aria-label="Sections">
 <button role="tab" type="button" id="tab-dashboard" class="tabbtn" aria-selected="true" aria-controls="panel-dashboard">Dashboard</button>
 <button role="tab" type="button" id="tab-devices" class="tabbtn" aria-selected="false" aria-controls="panel-devices">Devices</button>
-<button role="tab" type="button" id="tab-events" class="tabbtn" aria-selected="false" aria-controls="panel-events">Events</button>
 <button role="tab" type="button" id="tab-settings" class="tabbtn" aria-selected="false" aria-controls="panel-settings">Settings</button>
 <button role="tab" type="button" id="tab-system" class="tabbtn" aria-selected="false" aria-controls="panel-system">System</button>
 </nav>
-<main id="app">
-<section id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard">
-<div class="feed" id="feed" hidden>
+<button type="button" class="bell" id="bellBtn" aria-haspopup="true" aria-expanded="false"
+aria-label="What changed"><span class="belldot" id="bellDot" hidden></span></button>
+</header>
+<div class="feedpanel" id="feedPanel" hidden role="dialog" aria-label="What changed">
 <div class="feedhead">
-<h3>What changed <span class="badgecount" id="feedCount" hidden>0</span></h3>
+<h3>What changed</h3>
 <button type="button" class="btn small" id="feedReadBtn">Mark all read</button>
 <button type="button" class="btn small" id="feedClearBtn">Clear</button>
 </div>
 <ul class="feedlist" id="feedList"></ul>
+<p class="feedempty" id="feedEmpty" hidden>Nothing has changed since you last looked.</p>
 </div>
-<div class="toolbar">
-<button type="button" class="btn" id="linkAddBtn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"/></svg> Add link</button>
-<button type="button" class="btn" id="linkGroupAddBtn" hidden>Add group</button>
-<button type="button" class="btn" id="linkEditBtn" hidden aria-pressed="false">Edit</button>
+<main id="app">
+<section id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard">
+<div class="home">
+<div class="clock"><span id="clockTime">&mdash;&mdash;:&mdash;&mdash;</span></div>
+<div class="clockdate" id="clockDate"></div>
+<div class="statstrip" id="tiles"></div>
 </div>
 <div id="linkGrid"></div>
 <div class="emptybox" id="linkEmpty" hidden>
@@ -493,9 +533,16 @@ letter-spacing:.06em;margin:12px 0 0}
 <div class="sub">Pin the services you use most &mdash; Home Assistant, your NAS, a router UI &mdash; so they're one click away. Links follow the device by MAC, so they keep working even if its IP changes.</div>
 <button type="button" class="btn" id="linkEmptyAddBtn" style="margin-top:16px"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"/></svg> Add link</button>
 </div>
+<div class="dashtools">
+<button type="button" class="ghostbtn" id="linkCustomiseBtn">Customise</button>
+<span class="edittools" id="editTools" hidden>
+<button type="button" class="btn" id="linkAddBtn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"/></svg> Add link</button>
+<button type="button" class="btn" id="linkGroupAddBtn">Add group</button>
+<button type="button" class="btn btn-accent" id="linkEditBtn" aria-pressed="true">Done</button>
+</span>
+</div>
 </section>
 <section id="panel-devices" role="tabpanel" aria-labelledby="tab-devices" hidden>
-<div class="statstrip" id="tiles"></div>
 <div class="toolbar">
 <input type="search" id="filterInput" placeholder="Filter by name, IP, MAC, vendor, hostname" aria-label="Filter devices">
 <label class="switch"><input type="checkbox" id="hiddenToggle"> Show hidden</label>
@@ -521,10 +568,6 @@ letter-spacing:.06em;margin:12px 0 0}
 </table>
 </div>
 <p class="empty" id="devEmpty" hidden>No devices match.</p>
-</section>
-<section id="panel-events" role="tabpanel" aria-labelledby="tab-events" hidden>
-<ul class="events" id="eventsList"></ul>
-<p class="empty" id="evEmpty" hidden>No events yet.</p>
 </section>
 <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
 <form class="card" id="settingsForm">
@@ -681,8 +724,14 @@ HTTP, so a revealed secret crosses the network in the clear.</p>
 <button type="button" class="btn btn-danger-outline" id="rebootBtn">Reboot</button>
 <button type="button" class="btn btn-danger-outline" id="factoryBtn">Factory reset&hellip;</button>
 </div>
+<h3 class="syssub">Event log</h3>
+<p class="hint" style="margin:0 0 10px">Everything the dongle has seen, newest first. The
+short list of things worth acting on is behind the bell.</p>
+<ul class="events" id="eventsList"></ul>
+<p class="empty" id="evEmpty" hidden>No events yet.</p>
 </section>
 </main>
+<footer class="statusbar" id="statusBar" role="status"></footer>
 <div id="popover" class="popover" role="menu" hidden></div>
 <div id="modalRoot"></div>
 <div id="detailRoot"></div>
@@ -891,7 +940,7 @@ var h = "";
 for (var i=1;i<=4;i++) h += "<i class=\"" + (i<=n?"on":"") + "\"></i>";
 return "<span class=\"rssi\" aria-hidden=\"true\">" + h + "</span>";
 }
-var TABS = ["dashboard","devices","events","settings","system"];
+var TABS = ["dashboard","devices","settings","system"];
 function selectTab(tab, skipSave){
 state.tab = tab;
 TABS.forEach(function(t){
@@ -901,9 +950,9 @@ btn.setAttribute("aria-selected", on ? "true" : "false");
 panel.hidden = !on;
 });
 if (!skipSave){ try { localStorage.setItem("netdash-tab", tab); } catch(e){} }
-if (tab === "dashboard"){ loadLinks(); loadNotifs(); }
+if (tab === "dashboard") loadLinks();
 if (tab === "devices") loadDevices();
-if (tab === "events") loadEvents();
+if (tab === "system") loadEvents();
 if (tab === "settings"){ loadSettings(); loadVault().then(renderVaultSettings).catch(function(){}); }
 }
 TABS.forEach(function(t){ $("tab-"+t).addEventListener("click", function(){ selectTab(t); }); });
@@ -913,48 +962,90 @@ state.status = s; markPollOk(); renderStatus(); renderTiles(); renderSystem();
 }).catch(function(e){ markPollFail(); });
 }
 function renderStatus(){
-renderWan();
 if (state.status && typeof state.status.unread === "number" &&
 state.status.unread !== state.notifUnread){
 state.notifUnread = state.status.unread;
 updateFeedBadge();
 }
-var s = state.status;
-$("hostIp").textContent = (s.hostname || "netdash") + (s.ip ? " (" + s.ip + ")" : "");
-var pillText = $("pillText"), pillBar = $("pillBar"), pillFill = $("pillBarFill");
-if (s.scanning){
-var pct = s.scan_total ? Math.round(100*s.scan_done/s.scan_total) : 0;
-pillText.textContent = "Scanning… " + (s.scan_total ? (s.scan_done+"/"+s.scan_total) : "");
-pillBar.hidden = false; pillFill.style.width = pct + "%";
-} else {
-var mode = (s.mode||"off").toUpperCase();
-var bits = [mode];
-if (s.mode === "sta" || s.mode === "apsta"){ if (s.ssid) bits.push(s.ssid); }
-pillBar.hidden = true;
-pillText.innerHTML = esc(bits.join(" · ")) +
-((s.mode==="sta"||s.mode==="apsta") && s.rssi ? " " + rssiBars(s.rssi) + " " + s.rssi + " dBm" : "");
+renderStatusBar();
 }
+
+/*
+ * The foot of the page: who we are, the Wi-Fi we are on, what the scanner is
+ * doing and whether the internet is up. Rendered as one string rather than
+ * separate elements so the separators between them can be dropped along with
+ * whichever part has nothing to say.
+ */
+function renderStatusBar(){
+var bar = $("statusBar");
+if (!bar) return;
+var s = state.status || {};
+var parts = [];
+
+if (s.hostname || s.ip){
+parts.push("<span class=\"sb\">" + icon("i-router") + esc((s.hostname || "netdash") +
+(s.ip ? " · " + s.ip : "")) + "</span>");
+}
+
+if (s.mode === "sta" || s.mode === "apsta"){
+parts.push("<span class=\"sb\">" + icon("i-wifi") + esc(s.ssid || "Wi-Fi") +
+(s.rssi ? (" " + rssiBars(s.rssi) + " " + esc(s.rssi) + " dBm") : "") + "</span>");
+} else if (s.mode){
+parts.push("<span class=\"sb\">" + icon("i-wifi") + esc(String(s.mode).toUpperCase()) + "</span>");
+}
+
+/* One scan line: the sweep while it runs, the port scan while that runs,
+   otherwise how long ago the last sweep was. */
+var p = state.portscan;
+if (s.scanning){
+var pct = s.scan_total ? Math.round(100 * s.scan_done / s.scan_total) : 0;
+parts.push("<span class=\"sb\">" + icon("i-radar") + "Sweeping " +
+(s.scan_total ? (esc(s.scan_done) + "/" + esc(s.scan_total)) : "") +
+"<span class=\"sb-bar\"><i style=\"width:" + pct + "%\"></i></span></span>");
+} else if (p && p.running){
+var word = PORTSCAN_TIER_WORD[p.tier] || ("tier " + p.tier);
+var idx = Math.min((p.device_index || 0) + 1, p.device_count || 1);
+parts.push("<span class=\"sb\">" + icon("i-search") + "Port scan: " + esc(word) +
+", device " + idx + "/" + esc(p.device_count || 0) + "</span>");
+} else if (s.last_sweep){
+parts.push("<span class=\"sb\">" + icon("i-radar") + "Swept " + esc(relTime(s.last_sweep)) +
+"</span>");
+}
+
+var w = s.wan;
+if (w && w.state !== "unknown"){
+var label = WAN_TEXT[w.state] || w.state;
+if (w.state === "up" && w.rtt_ms >= 0) label = "Internet " + w.rtt_ms + " ms";
+/* Which half failed: "no DNS" and "no route out" want different responses. */
+if (w.state === "degraded") label = w.icmp_ok ? "DNS not resolving" : "No route out";
+parts.push("<span class=\"sb " + esc(w.state) + "\" title=\"ICMP " +
+(w.icmp_ok ? "ok" : "failing") + " · DNS " + (w.dns_ok ? "ok" : "failing") + "\">" +
+icon(w.state === "up" ? "i-globe" : "i-globe-off") + esc(label) + "</span>");
+}
+
+bar.innerHTML = parts.join("");
 }
 var WAN_TEXT = {up:"Internet up", degraded:"Internet degraded", down:"Internet down",
 unknown:"Internet unchecked"};
 
-function renderWan(){
-var pill = $("wanPill");
-if (!pill) return;
-var w = (state.status && state.status.wan) || null;
-if (!w || w.state === "unknown"){ pill.hidden = true; return; }
-
-var label = WAN_TEXT[w.state] || w.state;
-if (w.state === "up" && w.rtt_ms >= 0) label = "Internet " + w.rtt_ms + " ms";
-/* Say which half failed. "No DNS" and "no route" need different responses,
-   and separating them is the only reason the check is two probes. */
-if (w.state === "degraded") label = w.icmp_ok ? "DNS not resolving" : "No route out";
-
-pill.hidden = false;
-pill.className = "wanpill " + w.state;
-pill.innerHTML = icon(w.state === "up" ? "i-globe" : "i-globe-off") + "<span>" + esc(label) + "</span>";
-pill.title = "ICMP " + (w.icmp_ok ? "ok" : "failing") + " · DNS " + (w.dns_ok ? "ok" : "failing") +
-(w.last_check ? (" · checked " + relTime(w.last_check)) : "");
+/*
+ * The browser's clock, not the dongle's. This is a wall clock for whoever is
+ * looking at the page, so it should agree with the rest of their machine; the
+ * dongle's own idea of the time, and whether NTP has synced, is on System
+ * where a discrepancy is diagnostic rather than confusing.
+ */
+function renderClock(){
+var t = $("clockTime"), d = $("clockDate");
+if (!t) return;
+var now = new Date();
+var h = now.getHours(), m = now.getMinutes();
+t.textContent = (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m;
+if (d){
+try {
+d.textContent = now.toLocaleDateString(undefined,
+{weekday:"long", day:"numeric", month:"long"});
+} catch(e){ d.textContent = now.toDateString(); }
+}
 }
 
 function renderTiles(){
@@ -995,15 +1086,9 @@ return api("GET","/api/portscan").then(function(p){
 state.portscan = p; renderPortscanBar();
 }).catch(function(){ /* non-critical; leave last known state */ });
 }
-function renderPortscanBar(){
-var p = state.portscan, bar = $("portscanBar");
-if (!p || !p.running){ bar.hidden = true; return; }
-bar.hidden = false;
-var tierWord = PORTSCAN_TIER_WORD[p.tier] || ("tier " + p.tier);
-var idx = (p.device_index||0) + 1;
-$("portscanText").textContent = "Port scan: " + tierWord + ", device " +
-Math.min(idx, p.device_count||idx) + "/" + (p.device_count||0);
-}
+/* The port scan shares the status bar with the sweep rather than owning a
+   strip of its own. */
+function renderPortscanBar(){ renderStatusBar(); }
 function loadDevices(){
 if (state.editingMac) return Promise.resolve();
 return api("GET","/api/devices?hidden=1").then(function(list){
@@ -1847,8 +1932,7 @@ function renderDashboard(){
 var links = state.links || [], groups = state.groups || [];
 state.linksRendered = true;
 $("linkEmpty").hidden = links.length !== 0;
-$("linkEditBtn").hidden = links.length === 0;
-$("linkGroupAddBtn").hidden = !state.linksEditMode || groups.length >= (state.maxGroups || 8);
+$("linkGroupAddBtn").disabled = groups.length >= (state.maxGroups || 8);
 
 var html = "";
 var sections = groups.map(function(g){
@@ -2484,8 +2568,23 @@ root.querySelector(".modalclose").addEventListener("click", closeModal);
 });
 }).catch(toastErr);
 }
+function setEditMode(on){
+state.linksEditMode = on;
+$("editTools").hidden = !on;
+$("linkCustomiseBtn").hidden = on;
+state.linksRendered = false;
+renderDashboard();
+}
+$("linkCustomiseBtn").innerHTML = icon("i-pencil") + " Customise";
+$("linkCustomiseBtn").addEventListener("click", function(){ setEditMode(true); });
 $("linkAddBtn").addEventListener("click", openAddLinkModal);
 $("linkGroupAddBtn").addEventListener("click", addGroup);
+$("bellBtn").addEventListener("click", function(){
+if (feedOpen()) closeFeed(); else openFeed();
+});
+document.addEventListener("keydown", function(ev){
+if (ev.key === "Escape" && feedOpen()) closeFeed();
+});
 $("feedReadBtn").addEventListener("click", function(){
 api("POST","/api/notifications/read").then(function(){
 state.notifRendered = false; loadNotifs();
@@ -2498,12 +2597,7 @@ state.notifRendered = false; loadNotifs();
 }).catch(toastErr);
 });
 $("linkEmptyAddBtn").addEventListener("click", openAddLinkModal);
-$("linkEditBtn").addEventListener("click", function(){
-state.linksEditMode = !state.linksEditMode;
-$("linkEditBtn").textContent = state.linksEditMode ? "Done" : "Edit";
-$("linkEditBtn").setAttribute("aria-pressed", state.linksEditMode ? "true" : "false");
-renderDashboard();
-});
+$("linkEditBtn").addEventListener("click", function(){ setEditMode(false); });
 var NOTIF_ICON = {
 new_device:"i-plus", ip_changed:"i-swap", new_port:"i-key",
 device_gone:"i-offline", device_back:"i-online",
@@ -2533,16 +2627,48 @@ updateFeedBadge();
 }
 
 function updateFeedBadge(){
-var b = $("feedCount");
+var d = $("bellDot");
+if (!d) return;
+d.hidden = state.notifUnread === 0;
+/* Past a point the exact number stops being useful and starts being a wall
+   of digits in a 15px circle. */
+d.textContent = state.notifUnread > 9 ? "9+" : String(state.notifUnread);
+}
+
+function setBellIcon(){
+var b = $("bellBtn"), dot = $("bellDot");
 if (!b) return;
-b.hidden = state.notifUnread === 0;
-b.textContent = state.notifUnread;
+b.insertAdjacentHTML("afterbegin", icon("i-bell"));
+if (dot) b.appendChild(dot);
+}
+
+var feedCloser = null;
+
+function feedOpen(){ return !$("feedPanel").hidden; }
+
+function openFeed(){
+var p = $("feedPanel"), b = $("bellBtn");
+p.hidden = false;
+b.setAttribute("aria-expanded", "true");
+loadNotifs();
+/* Close on a click anywhere else, the way a notification tray should. */
+feedCloser = function(ev){
+if (p.contains(ev.target) || b.contains(ev.target)) return;
+closeFeed();
+};
+document.addEventListener("click", feedCloser, true);
+}
+
+function closeFeed(){
+$("feedPanel").hidden = true;
+$("bellBtn").setAttribute("aria-expanded", "false");
+if (feedCloser){ document.removeEventListener("click", feedCloser, true); feedCloser = null; }
 }
 
 function renderFeed(){
 var items = state.notifs || [];
 state.notifRendered = true;
-$("feed").hidden = items.length === 0;
+$("feedEmpty").hidden = items.length !== 0;
 if (!items.length){ $("feedList").innerHTML = ""; return; }
 
 $("feedList").innerHTML = items.map(function(n){
@@ -2576,7 +2702,11 @@ $("feedList").querySelectorAll("li[data-nid]").forEach(function(li){
 var n = state.notifs.find(function(x){ return String(x.id) === li.dataset.nid; });
 if (!n || !n.mac) return;
 li.style.cursor = "pointer";
-li.addEventListener("click", function(){ openDetail(n.mac, null); });
+li.addEventListener("click", function(){
+closeFeed();
+selectTab("devices");
+openDetail(n.mac, null);
+});
 });
 }
 
@@ -2816,9 +2946,11 @@ function tick(){
 if (document.hidden) return;
 loadStatus();
 loadPortscanStatus();
-if (state.tab === "dashboard"){ loadLinks(); loadNotifs(); }
+renderClock();
+if (state.tab === "dashboard") loadLinks();
 if (state.tab === "devices") loadDevices();
-if (state.tab === "events") loadEvents();
+if (state.tab === "system") loadEvents();
+if (feedOpen()) loadNotifs();
 if (state.detail.mac && !state.detail.editingName && !state.detail.editingNote &&
 !state.detail.editingSecret) fetchDetail();
 }
@@ -2827,6 +2959,11 @@ var savedTab = "dashboard";
 try { savedTab = localStorage.getItem("netdash-tab") || "dashboard"; } catch(e){}
 if (TABS.indexOf(savedTab) === -1) savedTab = "dashboard";
 selectTab(savedTab, true);
+renderClock();
+/* The display has minute resolution, but ticking every second keeps it from
+   lagging the real minute by up to a whole interval. It is two DOM writes. */
+setInterval(renderClock, 1000);
+setBellIcon();
 loadStatus();
 loadDevices();
 loadPortscanStatus();

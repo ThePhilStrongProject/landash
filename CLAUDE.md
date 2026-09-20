@@ -318,7 +318,10 @@ Verified on a live /24 home network (23 devices):
 - `tools/smoke_test.py` passes all 115 checks against the real device, which
   now covers groups, device and link notes, both kinds of vault secret and a
   passphrase rotation carrying both, history, WAN, the feed and uploaded
-  icons.
+  icons. It reports 89 when a vault already exists, because exercising the
+  vault means destroying it at the end and the suite will not do that to
+  someone's real credentials. Do not work around that guard by hand - a vault
+  created between two runs belongs to the user, not to the test.
 - The browser half of the icon upload - decode, resize, re-encode, POST, and
   the tile repainting with the result - was driven end to end in headless Edge
   against the live dongle. A 300x120 JPEG became a 1,930-byte 64x64 PNG.

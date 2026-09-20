@@ -546,6 +546,8 @@ def main():
         print(f"       {ic.get('used', 0)} of {ic.get('total', 0)} bytes used, "
               f"{len(ic.get('icons', []))} stored")
 
+        pre_ids = {i["id"] for i in ic.get("icons", [])}
+
         blob = png(64, 64)
         st, r, _ = post_raw(base, "/api/icons", blob)
         icon_id = (r or {}).get("id") if isinstance(r, dict) else None
@@ -580,9 +582,9 @@ def main():
         check("an unknown icon is 404", st == 404, f"status {st}")
 
         st, r, _ = request(base, "GET", "/api/icons")
-        check("failed uploads leave nothing behind",
-              len([i for i in r.get("icons", []) if i["id"] != icon_id]) == 0,
-              repr(r.get("icons"))[:120])
+        stray = [i["id"] for i in r.get("icons", [])
+                 if i["id"] != icon_id and i["id"] not in pre_ids]
+        check("failed uploads leave nothing behind", not stray, stray)
 
         if icon_id:
             st, r2, _ = post_raw(base, "/api/icons", png(48, 48))
