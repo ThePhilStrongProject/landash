@@ -281,6 +281,17 @@ static esp_err_t err_404_handler(httpd_req_t *req, httpd_err_code_t err)
     return send_index_html(req);
 }
 
+/*
+ * The page itself, registered as a real route. Serving it only from the 404
+ * handler worked - that fallback is still what makes deep links load - but
+ * httpd logs "URI '/' not found" before it hands over, so every successful page
+ * load left a warning in the console saying the opposite of what happened.
+ */
+static esp_err_t index_get_handler(httpd_req_t *req)
+{
+    return send_index_html(req);
+}
+
 static esp_err_t err_405_handler(httpd_req_t *req, httpd_err_code_t err)
 {
     (void)err;
@@ -2984,6 +2995,7 @@ static esp_err_t links_put_router(httpd_req_t *req)
 }
 
 static const httpd_uri_t s_uri_handlers[] = {
+    {.uri = "/",                         .method = HTTP_GET,    .handler = index_get_handler},
     {.uri = "/api/status",               .method = HTTP_GET,    .handler = status_handler},
     {.uri = "/api/devices",              .method = HTTP_GET,    .handler = devices_list_handler},
     {.uri = "/api/devices/export",       .method = HTTP_GET,    .handler = devices_export_handler},
