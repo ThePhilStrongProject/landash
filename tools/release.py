@@ -3,8 +3,12 @@
 
 Dongles read latest.json from the releases repository (CONFIG_NETDASH_OTA_REPO,
 a separate, public repo) and install the image it names when its version is
-newer than theirs. This script writes both into a local clone of that repo and
-commits them; pushing is left to you, because that is the moment it goes live.
+newer than theirs. This script writes both into a local clone of that repo,
+adds the tag's message to its CHANGELOG.md, and commits; pushing is left to
+you, because that is the moment it goes live.
+
+The releases repository is public, so the tag message is public text: write
+it for someone who owns a dongle, not for whoever reads the source.
 
 It refuses to go on unless:
 
@@ -39,18 +43,70 @@ PROJECT = "netdash"
 APP_DESC_OFFSET = 32
 APP_DESC_MAGIC = 0xABCD5432
 
-RELEASES_README = """# LANDA.SH firmware releases
+RELEASES_README = """# LANDA.SH firmware
 
-Built firmware for the LANDA.SH network dashboard (a Waveshare ESP32-C6-GEEK
-dongle). Dongles read `latest.json` from this branch and install the image it
-names when it is newer than what they run.
+Firmware updates for **LANDA.SH**, a small home-network dashboard that runs on
+a [Waveshare ESP32-C6-GEEK](https://www.waveshare.com/wiki/ESP32-C6-GEEK) USB
+dongle. Plug it in and it joins your Wi-Fi, finds the devices on your network,
+works out what each one is, and serves a dashboard of them from the dongle
+itself. It needs no cloud service, app or account.
 
-Nothing here is edited by hand: `tools/release.py` in the source repository
-writes each release and commits it. Pushing that commit is what publishes it.
+This repository holds the built firmware that dongles update themselves from.
+There is no source code here.
 
-To hold a release back, do not push. To withdraw one that is out, point
-`latest.json` back at an older file *and* publish a newer version number than
-the bad one - dongles never install a version lower than their own.
+## What's here
+
+| | |
+|---|---|
+| [`latest.json`](latest.json) | The current release: its version, the image file and its size. |
+| [`firmware/`](firmware) | One firmware image per release, `netdash-vX.Y.Z.bin`. |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release. |
+
+## How a dongle updates
+
+Two minutes after it starts, and every 12 hours after that, a dongle reads
+`latest.json` over HTTPS. If that version is newer than the one it is running,
+it:
+
+1. downloads the image, resuming where it stopped if the connection drops,
+2. checks the image is LANDA.SH firmware and is the version `latest.json`
+   promised, before writing any of it,
+3. verifies the image's built-in SHA-256 checksum, then restarts into it,
+4. keeps the new version only once it has run for a minute and got back onto
+   Wi-Fi. Otherwise it automatically goes back to the version it had, and will
+   not install that release again by itself.
+
+A dongle never installs a version older than its own. It fetches two files and
+sends nothing about your network. As with any download, GitHub sees the
+request come from your IP address.
+
+You can switch automatic updates off, or have them wait for your go-ahead,
+under **Settings › Maintenance** on the dashboard. The same page shows the
+installed version and when it last checked.
+
+## These are updates, not an installer
+
+Each image here is only the application, meant for a dongle that is already
+running LANDA.SH v0.14.0 or later. A new board also needs a bootloader and a
+partition table written over USB first, so these files alone will not set one
+up.
+
+## Checking a file
+
+Every image records its own project name and version. With Python and
+[esptool](https://github.com/espressif/esptool) installed:
+
+```
+esptool image-info firmware/netdash-vX.Y.Z.bin                  # esptool 5
+python -m esptool image_info --version 2 firmware/netdash-vX.Y.Z.bin   # esptool 4
+```
+
+Look for `Project name: netdash` and the version you expect.
+"""
+
+CHANGELOG_HEAD = """# Changelog
+
+Newest first. Each version's image is in [`firmware/`](firmware).
 """
 
 
@@ -85,6 +141,20 @@ def read_app_desc(path):
     version = head[APP_DESC_OFFSET + 16:APP_DESC_OFFSET + 48].split(b"\0")[0].decode()
     project = head[APP_DESC_OFFSET + 48:APP_DESC_OFFSET + 80].split(b"\0")[0].decode()
     return version, project
+
+
+def add_changelog_entry(path, tag, notes):
+    """Puts the newest release at the top, under the heading."""
+    import datetime
+    entry = "## %s (%s)\n\n%s\n" % (tag, datetime.date.today().isoformat(), notes.strip())
+    text = open(path, encoding="utf-8").read() if os.path.exists(path) else CHANGELOG_HEAD
+    first = text.find("\n## ")
+    if first < 0:
+        text = text.rstrip("\n") + "\n\n" + entry
+    else:
+        text = text[:first + 1] + entry + "\n" + text[first + 1:]
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
 
 
 def main():
@@ -147,7 +217,9 @@ def main():
             f.write(("" if existing.endswith("\n") or not existing else "\n") + "*.bin binary\n")
 
     notes = git(ROOT, "tag", "-l", "--format=%(contents)", tag).stdout.strip() or tag
-    git(rel, "add", "latest.json", rel_file, "README.md", ".gitattributes", check=True)
+    add_changelog_entry(os.path.join(rel, "CHANGELOG.md"), tag, notes)
+    git(rel, "add", "latest.json", rel_file, "README.md", ".gitattributes", "CHANGELOG.md",
+        check=True)
     git(rel, "commit", "-q", "-m", "%s\n\n%s" % (tag, notes), check=True)
     print("committed %s and latest.json in %s" % (rel_file, rel))
     print("\nNothing is live yet. To publish:  cd %s && git push" % rel)

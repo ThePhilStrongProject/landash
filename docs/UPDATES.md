@@ -61,6 +61,10 @@ download a built image, but nobody can see the source.
 
 ## Publishing a release
 
+The releases repository is public, and the tag message becomes that release's
+entry in its `CHANGELOG.md`. Write it for someone who owns a dongle ("Updates
+now resume after a dropped connection"), not for whoever reads the source.
+
 ```powershell
 # 1. Commit everything, then tag. The tag IS the version, so it must be a
 #    higher vMAJOR.MINOR.PATCH than the one out there now.
@@ -71,7 +75,7 @@ git tag -a v0.14.2 -m "What changed, in a sentence or two"
 idf.py build
 
 # 3. Check the image, copy it into ../landash-releases, rewrite latest.json,
-#    and commit there. Nothing is live yet.
+#    add the tag message to CHANGELOG.md, and commit there. Nothing is live yet.
 python tools/release.py
 
 # 4. Go live.
