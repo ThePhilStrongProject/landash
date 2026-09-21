@@ -25,7 +25,7 @@ static const char *TAG = "settings";
 #define SETTINGS_NS      "cfg"
 #define SETTINGS_KEY     "blob"
 #define SETTINGS_VER_KEY "ver"
-#define SETTINGS_VERSION 6
+#define SETTINGS_VERSION 7
 
 #define AP_PASS_LEN 8
 
@@ -267,7 +267,8 @@ static esp_err_t load_locked(bool *out_dirty)
                 apply_defaults(&s_cfg);
                 dirty = true;
             }
-        } else if (rerr == ESP_OK && stored > 0 && stored < sizeof(s_cfg)) {
+        } else if (rerr == ESP_OK && stored > 0 &&
+                   (stored < sizeof(s_cfg) || (stored == sizeof(s_cfg) && ver < SETTINGS_VERSION))) {
             /*
              * An older, shorter layout. Fields are only ever appended, so the
              * stored bytes line up with the head of the current struct: copy
@@ -285,11 +286,11 @@ static esp_err_t load_locked(bool *out_dirty)
                  * copy above would have dropped onto the first appended field.
                  * Re-apply the default of every field added after the v6
                  * baseline here, one MIGRATE_FIELD() each, so none of them
-                 * inherits a stale pad byte. There are none yet.
+                 * inherits a stale pad byte.
                  */
                 netdash_settings_t fresh;
                 apply_defaults(&fresh);
-                (void)fresh;
+                MIGRATE_FIELD(tour_seen);   /* v7 */
 
                 ESP_LOGW(TAG, "migrated settings from v%u (%u bytes) to v%u (%u bytes)",
                          (unsigned)ver, (unsigned)stored,

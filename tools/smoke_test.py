@@ -399,8 +399,9 @@ def main():
     st, cfg, _ = request(base, "GET", "/api/settings")
     cfg = cfg if isinstance(cfg, dict) else {}
     check("settings carry the update switches",
-          all(k in cfg for k in ("ota_enabled", "ota_auto", "ota_interval_h")),
-          ", ".join(k for k in ("ota_enabled", "ota_auto", "ota_interval_h") if k not in cfg))
+          all(k in cfg for k in ("ota_enabled", "ota_auto", "ota_interval_h", "tour_seen")),
+          ", ".join(k for k in ("ota_enabled", "ota_auto", "ota_interval_h", "tour_seen")
+                    if k not in cfg))
     old_interval = cfg.get("ota_interval_h", 12)
     st, _, _ = request(base, "PUT", "/api/settings", {"ota_interval_h": 169}, expect=None)
     check("an out-of-range check interval is refused", st == 400, f"status {st}")

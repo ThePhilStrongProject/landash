@@ -275,6 +275,34 @@ border-radius:var(--r-sm);padding:4px 9px;font-size:.82rem;color:var(--text)}
 .portchip.link .ic{width:.85em;height:.85em}
 .meter{height:6px;border-radius:3px;background:rgba(var(--accent-rgb),.18);overflow:hidden;margin:8px 0 4px}
 .meterfill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s}
+
+/* --- welcome tour -------------------------------------------------------
+   The spotlight is an empty box whose enormous shadow is the dimmed page, so
+   the element being described shows through untouched. The overlay itself
+   takes every click: nothing behind it can be pressed by accident. */
+.tour{position:fixed;inset:0;z-index:95}
+.tourspot{position:fixed;border-radius:var(--r-md);pointer-events:none;
+box-shadow:0 0 0 200vmax rgba(2,4,10,.66);outline:2px solid var(--accent);outline-offset:3px;
+transition:left .28s ease,top .28s ease,width .28s ease,height .28s ease,outline-color .28s}
+.tourspot.none{outline-color:transparent}
+.tourcard{position:fixed;width:min(380px,calc(100vw - 32px));max-height:calc(100dvh - 32px);
+overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+padding:20px 20px 16px;box-shadow:0 18px 48px rgba(0,0,0,.45);color:var(--text);
+transition:left .28s ease,top .28s ease}
+.tourcard h2{margin:12px 0 8px;font-size:1.15rem;line-height:1.3}
+.tourbody p{margin:0 0 10px;color:var(--muted);line-height:1.55;font-size:var(--fs-sm)}
+.tourbody .field{margin-bottom:10px}
+.tourbody .tourok{color:var(--online);font-weight:600}
+.tourdots{display:flex;gap:6px;min-height:6px}
+.tourdots i{display:block;width:6px;height:6px;border-radius:3px;background:var(--border);
+transition:width .2s ease,background .2s ease}
+.tourdots i.on{width:18px;background:var(--accent)}
+.tourfoot{display:flex;align-items:center;gap:8px;margin-top:16px;flex-wrap:wrap}
+.tourgap{flex:1}
+.tourskip{background:none;border:0;padding:6px 0;color:var(--muted);font:inherit;
+font-size:var(--fs-sm);cursor:pointer}
+.tourskip:hover,.tourskip:focus-visible{color:var(--text);text-decoration:underline}
+@media (prefers-reduced-motion: reduce){ .tourspot,.tourcard,.tourdots i{transition:none} }
 .otastatus{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:var(--fs-sm);align-items:baseline}
 .otastatus dt{color:var(--muted)}
 .otastatus dd{margin:0}
@@ -956,6 +984,14 @@ HTTP, so a revealed secret crosses the network in the clear.</p>
 </div>
 <div class="setpage" id="setpage-maintenance" role="tabpanel" aria-labelledby="settab-maintenance" hidden>
 <div class="settgroup">
+<h3>Welcome tour</h3>
+<p class="hint" style="margin:0 0 12px">A quick look round the dashboard, with the chance to set
+up your credential vault.</p>
+<div class="formrow-actions" style="margin-top:0">
+<button type="button" class="btn" id="tourAgainBtn">Take the tour</button>
+</div>
+</div>
+<div class="settgroup">
 <h3>Firmware updates</h3>
 <p class="hint" id="otaSource" style="margin:0 0 12px"></p>
 <div class="otastatus" id="otaStatus" aria-live="polite"></div>
@@ -1007,6 +1043,20 @@ short list of things worth acting on is behind the bell.</p>
 </main>
 <footer class="statusbar" id="statusBar" role="status"></footer>
 <div id="popover" class="popover" role="menu" hidden></div>
+<div class="tour" id="tour" hidden>
+<div class="tourspot" id="tourSpot"></div>
+<div class="tourcard" id="tourCard" role="dialog" aria-modal="true" aria-labelledby="tourTitle">
+<div class="tourdots" id="tourDots" aria-hidden="true"></div>
+<h2 id="tourTitle"></h2>
+<div class="tourbody" id="tourBody"></div>
+<div class="tourfoot">
+<button type="button" class="tourskip" id="tourSkip">Skip tour</button>
+<span class="tourgap"></span>
+<button type="button" class="btn" id="tourBack">Back</button>
+<button type="button" class="btn btn-accent" id="tourNext">Next</button>
+</div>
+</div>
+</div>
 <div id="modalRoot"></div>
 <div id="detailRoot"></div>
 <div id="toasts" aria-live="polite" aria-atomic="false"></div>
@@ -3256,6 +3306,7 @@ $("setScanInterval").value = s.scan_interval_min;
 $("setHostsPerSec").value = s.hosts_per_sec;
 state.settings = s;
 renderSweepEstimate();
+maybeShowTour(s);
 $("setPassive").checked = !!s.passive_only;
 $("setPortscanEnabled").checked = !!s.portscan_enabled;
 $("setPortscanRate").value = s.portscan_rate;
@@ -3382,6 +3433,260 @@ toast("Vault destroyed","ok");
 loadDevices();
 }).catch(toastErr);
 });
+
+/* ======================================================================
+   Welcome tour
+   ====================================================================== */
+
+/*
+ * Seen once per dongle, not per browser: finishing or skipping it sets
+ * tour_seen in the dongle's settings, so it does not greet you again on your
+ * phone after you dismissed it on your laptop. A factory reset, or an update
+ * from a version without the flag, brings it back once.
+ */
+var TOUR_STEPS = [
+{ title: "Welcome to LANDA.SH",
+  body: function(){ return "<p>Your home network at a glance. Everything runs on this little " +
+    "dongle: no cloud, no account.</p>"; } },
+{ title: "Your dashboard",
+  target: function(){
+    var g = $("linkGrid"), e = $("linkEmpty");
+    return (e && !e.hidden) ? e : g;
+  },
+  body: function(){ return "<p>Pin the things you use every day, like your router, NAS or Home " +
+    "Assistant. A green dot means the service is answering.</p>"; } },
+{ title: "Every device, found for you",
+  target: function(){ return $("tab-devices"); },
+  body: function(){ return "<p>Everything on your network appears here by itself. Give devices " +
+    "names you'll recognise.</p>"; } },
+{ title: "Only what matters",
+  target: function(){ return $("bellBtn"); },
+  body: function(){ return "<p>New devices, address changes and internet drops land here. " +
+    "Nothing else.</p>"; } },
+{ title: "Keep your logins safe",
+  target: function(){ return $("tab-settings"); },
+  body: tourVaultBody,
+  enter: function(){ return loadVault().catch(function(){}); },
+  bind: bindTourVault },
+{ title: "You're all set",
+  body: function(){ return "<p>Themes, detail level and more are in Settings. Updates install " +
+    "themselves.</p>"; },
+  last: true }
+];
+
+var tour = { steps: null, i: 0, onClose: null, opener: null };
+
+function tourVaultBody(){
+var v = state.vault || {};
+var intro = "<p>Save the passwords for your services, locked with a passphrase only you " +
+"know.</p>";
+if (v.configured){
+return intro + "<p class=\"tourok\">Your vault is set up.</p>";
+}
+var min = v.min_passphrase || 8;
+return intro +
+"<div class=\"field\"><label for=\"tourPass\">Choose a passphrase</label>" +
+"<input type=\"password\" id=\"tourPass\" autocomplete=\"new-password\"></div>" +
+"<div class=\"field\"><label for=\"tourPass2\">Type it again</label>" +
+"<input type=\"password\" id=\"tourPass2\" autocomplete=\"new-password\"></div>" +
+"<p class=\"hint\">At least " + min + " characters. A few random words are easy to " +
+"remember and hard to guess. It can't be recovered if you forget it.</p>" +
+"<button type=\"button\" class=\"btn\" id=\"tourPassSet\">Set passphrase</button>" +
+"<p class=\"hint\" style=\"margin-top:10px\">Or skip this and set one later in Settings.</p>";
+}
+
+function bindTourVault(){
+var btn = $("tourPassSet");
+if (!btn) return;
+function submit(){
+var a = $("tourPass").value, b = $("tourPass2").value;
+var min = (state.vault && state.vault.min_passphrase) || 8;
+if (a.length < min){ toast("The passphrase needs at least " + min + " characters", "err"); return; }
+if (a !== b){ toast("The two passphrases don't match", "err"); return; }
+btn.disabled = true; btn.textContent = "Setting…";
+api("PUT", "/api/vault", {passphrase: a}).then(function(v){
+vaultToken = v.token; state.vault = v;
+toast("Vault ready", "ok");
+renderTourStep();
+}).catch(function(e){
+btn.disabled = false; btn.textContent = "Set passphrase";
+toastErr(e);
+});
+}
+btn.addEventListener("click", submit);
+["tourPass", "tourPass2"].forEach(function(id){
+$(id).addEventListener("keydown", function(e){
+if (e.key === "Enter"){ e.preventDefault(); submit(); }
+});
+});
+}
+
+function tourTarget(step){
+var el = step.target ? step.target() : null;
+if (!el) return null;
+var r = el.getBoundingClientRect();
+return (r.width > 0 && r.height > 0) ? el : null;   /* hidden at this size: centre instead */
+}
+
+/* Spotlight the step's element and park the card beside it, or centre both. */
+function placeTour(){
+if ($("tour").hidden || !tour.steps) return;
+var step = tour.steps[tour.i];
+var spot = $("tourSpot"), card = $("tourCard");
+var vw = window.innerWidth, vh = window.innerHeight, margin = 16, pad = 6, gap = 14;
+var cw = card.offsetWidth, ch = card.offsetHeight;
+var el = tourTarget(step);
+
+if (!el){
+spot.className = "tourspot none";
+spot.style.left = (vw / 2) + "px"; spot.style.top = (vh / 2) + "px";
+spot.style.width = "0px"; spot.style.height = "0px";
+card.style.left = Math.max(margin, (vw - cw) / 2) + "px";
+card.style.top = Math.max(margin, (vh - ch) / 2) + "px";
+return;
+}
+
+var r = el.getBoundingClientRect();
+/* A tall target, like a dashboard full of links, is lit only where it is on screen. */
+var top = Math.max(r.top - pad, 8), bottom = Math.min(r.bottom + pad, vh - 8);
+spot.className = "tourspot";
+spot.style.left = (r.left - pad) + "px"; spot.style.top = top + "px";
+spot.style.width = (r.width + pad * 2) + "px"; spot.style.height = Math.max(0, bottom - top) + "px";
+
+var ctop;
+if (vh - bottom >= ch + gap + margin) ctop = bottom + gap;          /* below */
+else if (top >= ch + gap + margin) ctop = top - gap - ch;           /* above */
+else ctop = Math.max(margin, vh - ch - margin);                     /* over the bottom */
+var cleft = r.left + r.width / 2 - cw / 2;
+card.style.left = Math.min(Math.max(margin, cleft), vw - cw - margin) + "px";
+card.style.top = ctop + "px";
+}
+
+function renderTourStep(){
+var steps = tour.steps, step = steps[tour.i];
+$("tourDots").innerHTML = steps.length > 1
+? steps.map(function(_, k){ return "<i class=\"" + (k === tour.i ? "on" : "") + "\"></i>"; }).join("")
+: "";
+$("tourTitle").textContent = step.title;
+$("tourBody").innerHTML = step.body();
+if (step.bind) step.bind();
+
+$("tourBack").hidden = tour.i === 0 || !!step.actions;
+$("tourSkip").hidden = !!step.last || !!step.actions;
+var next = $("tourNext");
+if (step.actions){
+next.textContent = step.actions.primary;
+} else {
+next.textContent = step.last ? "Done" : "Next";
+}
+/* "Add my first link" sits beside Done on the last card. */
+var extra = $("tourExtra");
+if (extra) extra.remove();
+if (step.last){
+var b = document.createElement("button");
+b.type = "button"; b.className = "btn"; b.id = "tourExtra"; b.textContent = "Add my first link";
+b.addEventListener("click", function(){ closeTour(true); openAddLinkModal(); });
+next.parentNode.insertBefore(b, next);
+} else if (step.actions && step.actions.secondary){
+var s2 = document.createElement("button");
+s2.type = "button"; s2.className = "btn"; s2.id = "tourExtra"; s2.textContent = step.actions.secondary;
+s2.addEventListener("click", function(){ closeTour(false); });
+next.parentNode.insertBefore(s2, next);
+}
+
+var el = tourTarget(step);
+if (el && el.scrollIntoView){
+var r = el.getBoundingClientRect();
+if (r.top < 0 || r.bottom > window.innerHeight) el.scrollIntoView({block: "center"});
+}
+requestAnimationFrame(placeTour);
+var focusable = $("tourBody").querySelector("input");
+(focusable || next).focus();
+}
+
+function goTourStep(i){
+tour.i = i;
+var step = tour.steps[i];
+var p = step.enter ? step.enter() : null;
+if (p && p.then) p.then(renderTourStep); else renderTourStep();
+}
+
+function openTour(steps, onClose){
+tour.steps = steps; tour.onClose = onClose || null;
+tour.opener = document.activeElement;
+$("tour").hidden = false;
+goTourStep(0);
+}
+
+/* finished: the tour was completed or skipped, so the dongle stops offering it. */
+function closeTour(finished){
+$("tour").hidden = true;
+var cb = tour.onClose;
+tour.steps = null; tour.onClose = null;
+if (cb) cb(finished);
+if (tour.opener && tour.opener.focus) tour.opener.focus();
+}
+
+function startTour(){
+selectTab("dashboard");
+openTour(TOUR_STEPS, function(){
+if (state.settings) state.settings.tour_seen = true;
+api("PUT", "/api/settings", {tour_seen: true}).catch(function(){});
+});
+}
+
+/* Before the dongle is on your Wi-Fi, the only useful thing to say is how to get it there. */
+function showSetupCard(){
+openTour([{
+title: "Let's get you connected",
+body: function(){ return "<p>LANDA.SH needs to join your home Wi-Fi. Choose your network and " +
+"enter its password.</p><p>Once it's connected, the dongle's screen shows its new address. " +
+"Reconnect this device to your home Wi-Fi and open that address to carry on.</p>"; },
+actions: { primary: "Choose my Wi-Fi", secondary: "Not now" }
+}], function(){});
+tour.setup = true;
+}
+
+function maybeShowTour(s){
+if (state.tourChecked) return;
+state.tourChecked = true;
+if (!s.wifi_configured) showSetupCard();
+else if (!s.tour_seen) startTour();
+}
+
+$("tourNext").addEventListener("click", function(){
+var step = tour.steps && tour.steps[tour.i];
+if (!step) return;
+if (step.actions){
+closeTour(false);
+selectTab("settings");
+var b = document.querySelector('[data-setpage="network"]');
+if (b) b.click();
+var f = $("setSsid");
+if (f) f.focus();
+return;
+}
+if (step.last) closeTour(true); else goTourStep(tour.i + 1);
+});
+$("tourBack").addEventListener("click", function(){ if (tour.i > 0) goTourStep(tour.i - 1); });
+$("tourSkip").addEventListener("click", function(){ closeTour(true); });
+$("tour").addEventListener("keydown", function(e){
+var typing = e.target && e.target.tagName === "INPUT";
+if (e.key === "Escape"){ e.preventDefault(); closeTour(!(tour.steps && tour.steps[tour.i].actions)); }
+else if (e.key === "ArrowRight" && !typing){ e.preventDefault(); $("tourNext").click(); }
+else if (e.key === "ArrowLeft" && !typing && !$("tourBack").hidden){ e.preventDefault(); $("tourBack").click(); }
+else if (e.key === "Tab"){
+/* Keep focus inside the card while it is open. */
+var f = $("tourCard").querySelectorAll("button:not([hidden]),input");
+if (!f.length) return;
+var first = f[0], last = f[f.length - 1];
+if (e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+else if (!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+}
+});
+window.addEventListener("resize", placeTour);
+window.addEventListener("scroll", placeTour, true);
+$("tourAgainBtn").addEventListener("click", startTour);
 
 var OTA_STATE_TEXT = {
 idle:"Not checked yet since the last restart", checking:"Checking for updates…",

@@ -56,6 +56,12 @@ typedef struct {
     bool     ota_enabled;       /* check for new releases periodically      */
     bool     ota_auto;          /* ...and install them without asking       */
     uint16_t ota_interval_h;    /* hours between checks                     */
+    /*
+     * Added in version 7. False on a new or factory-reset dongle, and on one
+     * updating from an earlier version, so everyone sees the welcome tour
+     * once. The page sets it when the tour is finished or skipped.
+     */
+    bool     tour_seen;
 } netdash_settings_t;
 
 /* Loads (or creates) the blob and generates ap_pass on first boot. */

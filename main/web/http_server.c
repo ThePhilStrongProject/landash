@@ -1151,6 +1151,7 @@ static cJSON *settings_to_json(const netdash_settings_t *cfg)
     cJSON_AddBoolToObject(o, "ota_enabled", cfg->ota_enabled);
     cJSON_AddBoolToObject(o, "ota_auto", cfg->ota_auto);
     cJSON_AddNumberToObject(o, "ota_interval_h", cfg->ota_interval_h);
+    cJSON_AddBoolToObject(o, "tour_seen", cfg->tour_seen);
 
     /*
      * Notification toggles go out as an object keyed by type name rather than
@@ -1334,6 +1335,15 @@ static esp_err_t settings_put_handler(httpd_req_t *req)
             return send_json_error(req, "400 Bad Request", "ota_auto must be a boolean");
         }
         next.ota_auto = cJSON_IsTrue(j);
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "tour_seen");
+    if (j != NULL) {
+        if (!cJSON_IsBool(j)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "tour_seen must be a boolean");
+        }
+        next.tour_seen = cJSON_IsTrue(j);
     }
 
     j = cJSON_GetObjectItemCaseSensitive(json, "ota_interval_h");

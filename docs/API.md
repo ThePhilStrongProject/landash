@@ -498,6 +498,7 @@ is stored.
   "ota_enabled": true,
   "ota_auto": true,
   "ota_interval_h": 12,
+  "tour_seen": true,
   "notifications": {
     "new_device": true,
     "ip_changed": true,
@@ -1075,6 +1076,12 @@ Settings, in `GET/PUT /api/settings`:
 | `ota_enabled` | bool | check for new releases every `ota_interval_h` hours (and two minutes after boot) |
 | `ota_auto` | bool | install a newer release without asking |
 | `ota_interval_h` | number, 1-168 | hours between checks, default 12 |
+
+`tour_seen` (bool) records that the welcome tour has been finished or skipped
+on this dongle. It is `false` on a new or factory-reset dongle and on one that
+has just updated from a version without it, so every user sees the tour once;
+the page sets it with `PUT /api/settings`. It lives on the dongle rather than
+in the browser so that finishing the tour on one device finishes it for all.
 
 The releases repository is public, so no credentials are involved.
 
