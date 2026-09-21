@@ -20,6 +20,14 @@
  */
 #pragma once
 
+/*
+ * Where the "storage" SPIFFS partition is mounted. This module mounts it and
+ * owns the icon files ("<id>.png"); db/dev_store.c keeps the device register
+ * there too, as "devices.db", which the icon index ignores. A factory reset
+ * formats the whole partition, register included.
+ */
+#define NETDASH_STORAGE_BASE "/ic"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

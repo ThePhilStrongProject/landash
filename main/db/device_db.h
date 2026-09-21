@@ -1,9 +1,14 @@
 /*
- * NetDash device database.
+ * LANDA.SH device database.
  *
- * A fixed-size RAM table of every host seen on the LAN, plus the user-owned
- * fields (nickname / type override / hidden flag) persisted to NVS namespace
- * "dev" under the 12-hex-lowercase MAC.
+ * Two tiers. A fixed-size table in RAM holds the active devices - online, or
+ * seen recently - which is everything the scanner, discovery and the polled
+ * device list work on. Every device ever seen also has a record in the
+ * register in flash (db/dev_store.h), which keeps its nickname, type, flags,
+ * first and last seen, name and open ports. When the RAM table fills, the
+ * device offline longest is dropped from RAM, its record kept; when it is seen
+ * again it is loaded back. Up to CONFIG_NETDASH_MAX_DEVICES active and
+ * CONFIG_NETDASH_REGISTER_DEVICES remembered.
  *
  * Threading: the table is shared between the scanner, the discovery tasks, the
  * HTTP server and the UI. Every accessor except the iteration helper takes the
@@ -104,7 +109,9 @@ typedef struct {
     uint8_t  hw_mac[6];             /* the MAC it answers ARP with           */
     uint32_t ip;                    /* last known IPv4, host byte order      */
     char     hostname[32];          /* best auto name, see name_src          */
-    char     vendor[24];            /* OUI lookup, empty when unknown        */
+    const char *vendor;             /* OUI name, "" when unknown; never NULL.
+                                       Points into the OUI table in flash, so
+                                       it costs 4 bytes, not a copy.         */
     uint8_t  type;                  /* netdash_type_t, auto-classified       */
     uint16_t services;              /* NETDASH_SVC_ bitmask                  */
     int64_t  first_seen;            /* unix seconds, 0 before NTP sync       */
@@ -114,7 +121,7 @@ typedef struct {
     /* Name provenance; needed to implement the documented source priority.  */
     uint8_t  name_src;              /* netdash_name_src_t of hostname        */
     uint8_t  sources;               /* NETDASH_SRC_BIT mask of all sources   */
-    /* User fields, persisted to NVS.                                        */
+    /* User fields, kept in the register.                                    */
     char     nickname[32];
     uint8_t  type_override;         /* 0 = auto, else netdash_type_t         */
     uint8_t  flags;                 /* NETDASH_FLAG_                         */
@@ -129,17 +136,37 @@ static inline bool netdash_device_online(const netdash_device_t *d)
 /* Lifecycle                                                                 */
 /* ------------------------------------------------------------------------- */
 
-/* Creates the lock and reloads persisted user fields from NVS. */
+/*
+ * Opens the register (after icons_init(), which mounts its partition), moves
+ * any devices still in the older NVS storage into it on the first boot that
+ * has one, and loads the most recently seen devices into RAM.
+ */
 esp_err_t device_db_init(void);
 
 /* ------------------------------------------------------------------------- */
 /* Read access                                                               */
 /* ------------------------------------------------------------------------- */
 
+/* Devices in the RAM table - the bound for device_db_get_at(). */
 size_t device_db_count(void);
 
-/* Copies the record for mac into out. Returns false when not present. */
+/* Every device known: those in the register, or in RAM when it is unavailable. */
+size_t device_db_known_count(void);
+
+/*
+ * Copies the device into out: from RAM when it is active, otherwise from its
+ * record in the register, as an offline device (miss_count 255). False when
+ * the device is unknown. May read flash, so never call it holding the lock.
+ */
 bool device_db_get_by_mac(const uint8_t mac[6], netdash_device_t *out);
+
+/*
+ * Iterating the devices that are only in the register, for the "older
+ * devices" list and the export. slot runs 0 .. device_db_register_slots() - 1;
+ * false for a free slot or a device that is active in RAM. Reads flash.
+ */
+size_t device_db_register_slots(void);
+bool   device_db_get_archived(size_t slot, netdash_device_t *out);
 
 /*
  * Copies the record at index (0 .. device_db_count() - 1) into out.
@@ -189,19 +216,20 @@ esp_err_t device_db_set_services(const uint8_t mac[6], uint16_t bits);
 /* ------------------------------------------------------------------------- */
 
 /*
- * Updates the user fields and writes them to NVS.
+ * Updates the user fields and writes them to the register, whether the
+ * device is active or only remembered.
  * nickname NULL leaves the nickname unchanged, an empty string clears it.
  * type_override and flags accept -1 to leave the field unchanged.
  */
 esp_err_t device_db_set_user(const uint8_t mac[6], const char *nickname,
                              int type_override, int flags);
 
-/* Forgets a device, in RAM and in NVS. */
+/* Forgets a device: from RAM, from the register, and its notes. */
 esp_err_t device_db_remove(const uint8_t mac[6]);
 
 /*
- * Creates an offline, unnamed record for mac if one does not already exist.
- * Does not post DEVICE_NEW or touch the events log - this is for
+ * Creates an offline, unnamed record for mac in the register if the device is
+ * not already known. Does not post DEVICE_NEW or touch the events log - this is for
  * POST /api/devices/import, which must be able to create an entry for a
  * device that is not currently on the network so its nickname can be
  * restored via device_db_set_user() right after. A no-op (ESP_OK) when the
@@ -230,9 +258,10 @@ void device_db_display_name(const netdash_device_t *dev, char *buf, size_t len);
 #define NETDASH_MAX_OPEN_PORTS CONFIG_NETDASH_PORTSCAN_MAX_OPEN
 
 /*
- * Port data lives in its own array rather than in netdash_device_t, because
- * that struct is copied by value into every event and out of every read, and
- * carrying a port list in it would make those copies several times larger.
+ * Port data lives outside netdash_device_t, because that struct is copied by
+ * value into every event and out of every read. The list itself is kept only
+ * in the device's record in flash; RAM holds the count, the tier and the scan
+ * in progress.
  */
 typedef struct {
     uint16_t ports[NETDASH_MAX_OPEN_PORTS]; /* open TCP ports, ascending    */
@@ -244,8 +273,19 @@ typedef struct {
     int64_t  last_scan;     /* unix seconds a tier last finished, 0 = never */
 } netdash_ports_t;
 
-/* Copies the port record for mac into out. False when mac is unknown. */
+/*
+ * The whole port record for mac, including the list, which is read from
+ * flash: for a single device's view. False when mac is unknown. Never call it
+ * holding the lock.
+ */
 bool device_db_get_ports(const uint8_t mac[6], netdash_ports_t *out);
+
+/*
+ * The same without the list (ports[] zeroed, count still right), and without
+ * touching flash for an active device: for anything that runs often, like the
+ * polled device list and the port scanner.
+ */
+bool device_db_get_port_summary(const uint8_t mac[6], netdash_ports_t *out);
 
 /*
  * Records an open TCP port. Ignores duplicates, keeps the list ascending and
@@ -266,7 +306,7 @@ void device_db_set_scan_progress(const uint8_t mac[6], uint8_t scanning_tier,
  */
 void device_db_finish_tier(const uint8_t mac[6], uint8_t tier, int64_t now);
 
-/* Forgets every port result for mac, in RAM and in NVS (used before a rescan). */
+/* Forgets every port result for mac, in RAM and in the register (before a rescan). */
 void device_db_clear_ports(const uint8_t mac[6]);
 
 /* Well-known name for a port, e.g. "https" for 443. NULL when unknown. */

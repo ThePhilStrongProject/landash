@@ -375,7 +375,7 @@ static bool next_device_for_tier(uint8_t ceiling, uint16_t *index,
         }
 
         netdash_ports_t ports;
-        if (device_db_get_ports(dev.mac, &ports) && ports.tier == 0) {
+        if (device_db_get_port_summary(dev.mac, &ports) && ports.tier == 0) {
             memcpy(mac, dev.mac, 6);
             *ip       = dev.ip;
             *index    = (uint16_t)i;
@@ -397,7 +397,7 @@ static bool next_device_for_tier(uint8_t ceiling, uint16_t *index,
             }
 
             netdash_ports_t ports;
-            if (!device_db_get_ports(dev.mac, &ports) || ports.tier >= ceiling) {
+            if (!device_db_get_port_summary(dev.mac, &ports) || ports.tier >= ceiling) {
                 continue;   /* already at the ceiling */
             }
 
@@ -432,7 +432,7 @@ static bool next_device_for_tier(uint8_t ceiling, uint16_t *index,
             }
 
             netdash_ports_t ports;
-            if (!device_db_get_ports(dev.mac, &ports) || ports.tier < ceiling ||
+            if (!device_db_get_port_summary(dev.mac, &ports) || ports.tier < ceiling ||
                 ports.last_scan == 0 || now - ports.last_scan < age) {
                 continue;
             }

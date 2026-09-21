@@ -117,8 +117,11 @@ If the screen stays blank or shows garbage, your board is a different revision:
 choose *Custom pins* under **LANDA.SH** in `idf.py menuconfig` and set the pins
 there. The screen's orientation and colour options are in the same menu.
 
-The dongle can remember 128 devices. Every device's details are held in its
-512 KB of RAM, and 128 is what fits alongside everything else.
+The dongle keeps up to 144 devices active in its 512 KB of RAM, and remembers
+up to 1,024 in flash. When the active list is full, the device that has been
+offline longest is put away, with its name, notes and everything else, and
+comes straight back if it reappears. Devices put away are under *Show them*
+on the Devices page.
 
 ## For developers
 

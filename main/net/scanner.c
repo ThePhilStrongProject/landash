@@ -120,11 +120,16 @@ static portMUX_TYPE      s_mux = portMUX_INITIALIZER_UNLOCKED;
  * is part of the key because a Wi-Fi extender answers for several devices with
  * one MAC, and each of them has to reach device_db.
  */
-typedef struct {
-    uint8_t  mac[6];
-    uint32_t ip;
-} seen_t;
-static seen_t   s_seen_macs[NETDASH_MAX_DEVICES];
+/*
+ * Sized for the hosts alive on the network, not for device_db's active table:
+ * with more hosts than that table holds, a set that fills up treats every
+ * later sighting as new, so the sweep reported 183 alive out of 26 and asked
+ * device_db - and the flash behind it - about the same hosts every few
+ * seconds. A 4-byte fingerprint per pair keeps 512 of them in 2 KB; a rare
+ * collision just skips one duplicate sighting.
+ */
+#define SEEN_MAX 512
+static uint32_t s_seen_hash[SEEN_MAX];
 static uint16_t s_seen_count;
 
 /* Per-sweep state, kept out of the stack and off the ring helpers' arguments. */
@@ -193,19 +198,30 @@ static void mac_seen_reset(void)
     s_seen_count = 0;
 }
 
+static uint32_t seen_key(const uint8_t mac[6], uint32_t ip)
+{
+    uint32_t h = 0x811c9dc5u;
+    for (int i = 0; i < 6; i++) {
+        h = (h ^ mac[i]) * 0x01000193u;
+    }
+    for (int i = 0; i < 4; i++) {
+        h = (h ^ ((ip >> (i * 8)) & 0xff)) * 0x01000193u;
+    }
+    return h;
+}
+
 static void mac_seen_add(const uint8_t mac[6], uint32_t ip)
 {
-    if (s_seen_count < NETDASH_MAX_DEVICES) {
-        memcpy(s_seen_macs[s_seen_count].mac, mac, 6);
-        s_seen_macs[s_seen_count].ip = ip;
-        s_seen_count++;
+    if (s_seen_count < SEEN_MAX) {
+        s_seen_hash[s_seen_count++] = seen_key(mac, ip);
     }
 }
 
 static bool mac_seen(const uint8_t mac[6], uint32_t ip)
 {
+    const uint32_t k = seen_key(mac, ip);
     for (uint16_t i = 0; i < s_seen_count; i++) {
-        if (s_seen_macs[i].ip == ip && memcmp(s_seen_macs[i].mac, mac, 6) == 0) {
+        if (s_seen_hash[i] == k) {
             return true;
         }
     }

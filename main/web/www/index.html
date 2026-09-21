@@ -122,6 +122,11 @@ tr.expanded .expandbtn .ic{transform:rotate(180deg)}
 .renamebtn{opacity:0;transition:opacity .12s ease}
 tr:hover .renamebtn,tr:focus-within .renamebtn,.renamebtn:focus-visible{opacity:1}
 .empty{color:var(--muted);padding:20px;text-align:center}
+.archivedline{color:var(--muted);font-size:var(--fs-sm);text-align:center;margin:14px 0 6px}
+.linkbtn{background:none;border:0;padding:0 2px;color:var(--accent);font:inherit;cursor:pointer;
+text-decoration:underline;text-underline-offset:2px}
+.linkbtn:hover,.linkbtn:focus-visible{color:var(--accent-2)}
+#devBody tr.archived{opacity:.62}
 #devTable.colhide-type [data-col="type"],
 #devTable.colhide-ip [data-col="ip"],
 #devTable.colhide-mac [data-col="mac"],
@@ -807,6 +812,8 @@ aria-label="What changed"><span class="belldot" id="bellDot" hidden></span></but
 </table>
 </div>
 <p class="empty" id="devEmpty" hidden>No devices match.</p>
+<p class="archivedline" id="archivedLine" hidden><span id="archivedText"></span>
+<button type="button" class="linkbtn" id="archivedBtn"></button></p>
 </section>
 <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
 <div class="setwrap">
@@ -1542,11 +1549,38 @@ state.portscan = p; renderPortscanBar();
 /* The port scan shares the status bar with the sweep rather than owning a
    strip of its own. */
 function renderPortscanBar(){ renderStatusBar(); }
+/*
+ * Devices not seen for a while live only in the dongle's register, not in the
+ * list it sends every few seconds. Say how many there are, and fetch them only
+ * when asked: there can be a thousand.
+ */
+function renderArchivedLine(){
+var n = (state.status && state.status.devices_archived) || 0;
+var line = $("archivedLine");
+if (!line) return;
+line.hidden = n === 0 && !state.showArchived;
+if (line.hidden) return;
+/* Mostly devices not seen for a while; on a very busy network, also the ones
+   there was no room to list. So say what is true of both. */
+$("archivedText").textContent = n + " more device" + (n === 1 ? " is" : "s are") + " stored away.";
+$("archivedBtn").textContent = state.showArchived ? "Hide them" : "Show them";
+}
+
+function loadArchived(){
+return api("GET", "/api/devices?archived=1&hidden=1").then(function(list){
+state.archived = list;
+list.forEach(function(d){ state.devicesByMac[d.mac] = d; });
+renderDevices();
+}).catch(toastErr);
+}
+
 function loadDevices(){
 if (state.editingMac) return Promise.resolve();
 return api("GET","/api/devices?hidden=1").then(function(list){
 state.devices = list; markPollOk();
 var map = {}; list.forEach(function(d){ map[d.mac]=d; });
+/* Keep the remembered ones addressable while they are on show. */
+if (state.showArchived) (state.archived || []).forEach(function(d){ if (!map[d.mac]) map[d.mac] = d; });
 state.devicesByMac = map;
 renderDevices();
 }).catch(function(e){ markPollFail(); });
@@ -1586,7 +1620,9 @@ return esc(d.hw_mac || d.mac) + (d.shared_mac
 function renderDevices(){
 if (state.editingMac) return;
 var q = state.filter.trim().toLowerCase();
-var list = state.devices.filter(function(d){
+var all = state.showArchived ? state.devices.concat(state.archived || []) : state.devices;
+renderArchivedLine();
+var list = all.filter(function(d){
 if (d.hidden && !state.showHidden) return false;
 if (!q) return true;
 return [d.display_name,d.ip,d.hw_mac||d.mac,d.vendor,d.hostname].join(" ").toLowerCase().indexOf(q) !== -1;
@@ -1612,7 +1648,8 @@ var isNew = d.is_new ? "<span class=\"badge\">NEW</span>" : "";
 var links = "";
 if ((d.services||[]).indexOf("https") !== -1) links += "https";
 else if ((d.services||[]).indexOf("http") !== -1) links += "http";
-return "<tr data-mac=\"" + esc(d.mac) + "\" class=\"devrow\" tabindex=\"0\">" +
+return "<tr data-mac=\"" + esc(d.mac) + "\" class=\"devrow" + (d.archived ? " archived" : "") +
+"\" tabindex=\"0\">" +
 "<td data-col=\"status\"><span class=\"statuscell\"><span class=\"dot" + (d.online?" on":"") + "\"></span>" +
 "<span class=\"sr-only\">" + (d.online?"Online":"Offline") + "</span></span></td>" +
 "<td data-col=\"name\" data-label=\"Name\"><span class=\"namecell\">" +
@@ -3990,6 +4027,10 @@ selectSetPage(want);
 })();
 
 $("setHostsPerSec").addEventListener("input", renderSweepEstimate);
+$("archivedBtn").addEventListener("click", function(){
+state.showArchived = !state.showArchived;
+if (state.showArchived) loadArchived(); else renderDevices();
+});
 renderTzDetect();
 $("setPortscanMaxTier").addEventListener("change", function(){
 $("tier3Warn").hidden = this.value !== "3";

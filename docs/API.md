@@ -88,6 +88,7 @@ Everything the header and the System tab need, in one poll.
   "sweep_hosts": 253,
   "scan_skipped": null,
   "devices_total": 27,
+  "devices_archived": 0,
   "devices_online": 21,
   "devices_new_24h": 1,
   "ap_ssid": "LANDA-A4F3",
@@ -111,6 +112,8 @@ Everything the header and the System tab need, in one poll.
 | `last_sweep` | number | unix seconds of the last completed sweep, `0` if none |
 | `subnet` | string | the connected network in CIDR form, `""` when not on a LAN |
 | `sweep_hosts` | number | addresses one active sweep probes; `0` when the network cannot be swept. Divide by `hosts_per_sec` for the sweep time |
+| `devices_total` | number | every device known: active and remembered |
+| `devices_archived` | number | remembered devices that are not active, listed by `GET /api/devices?archived=1` |
 | `scan_skipped` | string or null | why the last active sweep did not run, in words for the page; `null` when it ran. Networks larger than a /16 are not swept |
 | `ap_ssid`, `ap_pass` | string | only present when `mode` is `"ap"` or `"apsta"` |
 
@@ -213,7 +216,18 @@ offline; nickname the new one, or give the device a DHCP reservation.
 
 ## GET /api/devices
 
-Returns the whole table as an array of device objects.
+Returns the active devices as an array of device objects.
+
+The dongle keeps two tiers. The **active** devices - online, or seen recently,
+up to `CONFIG_NETDASH_MAX_DEVICES` (144) - are in RAM, and this endpoint, which
+the page polls, lists them. Every device ever seen also has a record in the
+**register** in flash, up to `CONFIG_NETDASH_REGISTER_DEVICES` (1,024). When
+the active table is full, the device offline longest leaves it; its record
+keeps its nickname, type, notes, ports and the rest, and it becomes active
+again the moment it is seen. Those remembered-only devices are listed with
+`archived=1`, on request rather than on every poll, because there can be a
+thousand of them. `devices_archived` in `GET /api/status` says how many there
+are.
 
 Query parameters:
 
@@ -221,6 +235,11 @@ Query parameters:
 |---|---|---|---|
 | `hidden` | `0` or `1` | `0` | include devices with `hidden: true` |
 | `online` | `0` or `1` | — | when `1`, only online devices |
+| `archived` | `0` or `1` | `0` | when `1`, list **only** the remembered devices that are not active, each with `"archived": true`. One flash read per device |
+
+Everything else that takes a `{mac}` - `GET`, `PATCH`, `DELETE`, notes,
+secrets, history - works for a remembered device too. It is offline, and it
+has no history (that is kept for active devices only).
 
 ```http
 GET /api/devices?hidden=1
@@ -996,7 +1015,7 @@ elapsed, so a short history renders as short rather than as a day of downtime.
 
 Slots are cut on wall-clock time, so nothing is recorded until NTP has synced —
 a slot number from a wrong clock would file the samples in the wrong place.
-This lives in RAM only: it costs 4.6 KB for 128 devices, and a day of history
+This lives in RAM only, for active devices: 36 bytes each, and a day of history
 is not worth the flash writes. It refills within a day of a reboot.
 
 ## WAN health
@@ -1046,7 +1065,7 @@ branch `CONFIG_NETDASH_OTA_BRANCH`, default `main`). It reads `latest.json`
 from `raw.githubusercontent.com`:
 
 ```json
-{"version": "v0.14.1", "file": "firmware/netdash-v0.14.1.bin", "size": 1982176}
+{"version": "v0.14.1", "file": "firmware/landash-v0.14.1.bin", "size": 1982176}
 ```
 
 and installs the named file when `version` is newer than the running firmware.

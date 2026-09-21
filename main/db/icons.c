@@ -19,7 +19,7 @@
 
 static const char *TAG = "icons";
 
-#define ICON_BASE      "/ic"
+#define ICON_BASE      NETDASH_STORAGE_BASE
 #define ICON_PART      "storage"
 #define ICON_NVS_NS    "icons"
 #define ICON_NEXT_KEY  "next"
@@ -133,7 +133,7 @@ esp_err_t icons_init(void)
     esp_vfs_spiffs_conf_t conf = {
         .base_path              = ICON_BASE,
         .partition_label        = ICON_PART,
-        .max_files              = 4,
+        .max_files              = 6,   /* icons, plus the device register */
         .format_if_mount_failed = true,
     };
 

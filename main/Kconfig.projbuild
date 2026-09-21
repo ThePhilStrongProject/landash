@@ -132,9 +132,24 @@ menu "LANDA.SH"
             scan. Lower it to 4 for the gentlest possible profile.
 
     config NETDASH_MAX_DEVICES
-        int "Maximum tracked devices"
+        int "Active devices held in RAM"
         range 16 512
-        default 128
+        default 144
+        help
+            Devices that are online or were seen recently. When this fills,
+            the device offline longest moves to the register in flash (see
+            NETDASH_REGISTER_DEVICES) and comes back if it reappears. Each
+            costs about 220 bytes of RAM across the modules that
+            track it, which is the real limit.
+
+    config NETDASH_REGISTER_DEVICES
+        int "Devices remembered in flash"
+        range 128 2048
+        default 1024
+        help
+            Every device ever seen, in the storage partition: 192 bytes of
+            flash and 4 bytes of RAM each. When this fills, the device not
+            seen for longest that has no nickname is forgotten.
 
     comment "Identity"
 
@@ -171,10 +186,10 @@ menu "LANDA.SH"
 
     config NETDASH_PORTSCAN_MAX_OPEN
         int "Open ports remembered per device"
-        range 4 64
+        range 4 24
         default 24
         help
-            Costs two bytes per port per device in RAM.
+            Kept in each device's record in flash, which has room for 24.
 
     comment "Firmware updates"
 

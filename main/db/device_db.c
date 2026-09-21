@@ -41,6 +41,7 @@
 
 #include "app_events.h"
 #include "classify.h"
+#include "dev_store.h"
 #include "notes.h"
 #include "notify.h"
 #include "oui.h"
@@ -52,11 +53,25 @@ static const char *TAG = "device_db";
 /* RAM table                                                                  */
 /* ------------------------------------------------------------------------- */
 
+/*
+ * Port-scan state of an active device. The list of open ports itself lives
+ * only in the device's record in the register; RAM keeps what the scanner and
+ * the polled device list need.
+ */
+typedef struct {
+    uint8_t  count;
+    uint8_t  tier;
+    uint8_t  scanning_tier;
+    uint32_t cursor;
+    uint32_t tier_total;
+    int64_t  last_scan;
+} port_state_t;
+
 static netdash_device_t  s_devices[NETDASH_MAX_DEVICES];
-static bool              s_seen[NETDASH_MAX_DEVICES];      /* seen this sweep */
-static bool              s_persisted[NETDASH_MAX_DEVICES]; /* has an NVS blob */
-/* Parallel to s_devices[]; see the comment on netdash_ports_t in the header. */
-static netdash_ports_t   s_ports[NETDASH_MAX_DEVICES];
+static bool              s_seen[NETDASH_MAX_DEVICES];   /* seen this sweep        */
+static bool              s_dirty[NETDASH_MAX_DEVICES];  /* changed since written  */
+/* Parallel to s_devices[]. */
+static port_state_t      s_ports[NETDASH_MAX_DEVICES];
 /*
  * Also parallel to s_devices[]. A ring of presence bits indexed by absolute
  * slot number modulo NETDASH_HISTORY_SLOTS, so advancing time only has to
@@ -71,6 +86,22 @@ static SemaphoreHandle_t s_lock;
 /* Scratch buffer for device_db_mark_sweep_end(); only that function touches
  * it, and only the scanner task calls it, so no extra lock is needed. */
 static uint8_t s_offline_macs[NETDASH_MAX_DEVICES][6];
+
+/*
+ * A device moved out of RAM to make room, waiting to be written to the
+ * register once the lock is released. Only device_db_upsert_seen() makes room,
+ * and only the scanner task calls it, so one of each is enough.
+ */
+static netdash_device_t s_demoted;
+static port_state_t     s_demoted_ports;
+static bool             s_have_demoted;
+
+/* Records read ahead of time by device_db_upsert_seen() (scanner task only). */
+static dev_rec_t        s_pre;
+
+/* When the active devices' last-seen times were last written to the register. */
+static int64_t          s_last_flush_us;
+#define FLUSH_EVERY_US  (60LL * 60 * 1000000)   /* hourly */
 
 /* ------------------------------------------------------------------------- */
 /* MACs seen at more than one address                                        */
@@ -263,9 +294,11 @@ void device_db_unlock(void)
 /* Small helpers                                                             */
 /* ------------------------------------------------------------------------- */
 
-/* Both defined with the rest of the port-scan code further down. */
-static void ports_restore_locked(int idx);
-static void ports_erase_nvs(const uint8_t mac[6]);
+static const char *vendor_for(const uint8_t hw[6])
+{
+    const char *v = oui_lookup(hw);
+    return v != NULL ? v : "";
+}
 
 /* Caller must hold device_db_lock(). Returns -1 when mac is not present. */
 static int find_index_locked(const uint8_t mac[6])
@@ -289,7 +322,7 @@ static bool has_sibling_locked(const uint8_t hw[6], int skip)
     return false;
 }
 
-static bool evict_one_locked(void);
+static bool demote_one_locked(void);
 
 /*
  * Appends a blank entry keyed by id for a device answering with hardware MAC
@@ -298,7 +331,7 @@ static bool evict_one_locked(void);
  */
 static int new_slot_locked(const uint8_t id[6], const uint8_t hw[6])
 {
-    if (s_count >= NETDASH_MAX_DEVICES && !evict_one_locked()) {
+    if (s_count >= NETDASH_MAX_DEVICES && !demote_one_locked()) {
         return -1;
     }
     const int         idx = (int)s_count++;
@@ -307,59 +340,73 @@ static int new_slot_locked(const uint8_t id[6], const uint8_t hw[6])
     memcpy(d->mac, id, 6);
     memcpy(d->hw_mac, hw, 6);
     d->rtt_ms = -1;
+    d->vendor = vendor_for(hw);
     memset(&s_ports[idx], 0, sizeof(s_ports[idx]));
     memset(s_hist[idx], 0, NETDASH_HISTORY_BYTES);
-    ports_restore_locked(idx);
-
-    const char *vendor = oui_lookup(hw);
-    if (vendor != NULL) {
-        strncpy(d->vendor, vendor, sizeof(d->vendor) - 1);
-    }
-    s_seen[idx]      = false;
-    s_persisted[idx] = false;
+    s_seen[idx]  = false;
+    s_dirty[idx] = false;
     return idx;
 }
 
+/* Removes the device at idx from RAM, keeping every parallel array in step. */
+static void drop_slot_locked(int idx)
+{
+    const size_t last = s_count - 1;
+    if ((size_t)idx != last) {
+        s_devices[idx] = s_devices[last];
+        s_seen[idx]    = s_seen[last];
+        s_dirty[idx]   = s_dirty[last];
+        s_ports[idx]   = s_ports[last];
+        memcpy(s_hist[idx], s_hist[last], NETDASH_HISTORY_BYTES);
+    }
+    memset(&s_ports[last], 0, sizeof(s_ports[last]));
+    memset(s_hist[last], 0, NETDASH_HISTORY_BYTES);
+    s_count--;
+}
+
 /*
- * Evicts one device to make room for a new one: the oldest-last_seen device
- * that has no nickname and has never been persisted to NVS. Caller holds the
- * lock. Compacts the table by moving the last element into the freed slot.
- * Returns true when a victim was evicted.
+ * Makes room in RAM by moving one device out to the register: the one that has
+ * missed the most sweeps, the least recently seen among equals. It is copied
+ * to s_demoted for the caller to write once the lock is released; its
+ * nickname, ports and the rest are in the register already, so nothing is
+ * lost but its 24-hour history. Caller holds the lock.
+ *
+ * Only a device that missed at least the last sweep may go. With more devices
+ * online than the table holds, swapping out one that was just seen for one
+ * seen a moment later turned every sighting into two flash writes - the test
+ * with a 20-device table and 26 online churned the same handful of devices
+ * dozens of times a second. The newcomer stays in the register instead
+ * (see device_db_upsert_seen()).
  */
-static bool evict_one_locked(void)
+static bool demote_one_locked(void)
 {
     int     victim = -1;
+    uint8_t most   = 0;
     int64_t oldest = 0;
 
     for (size_t i = 0; i < s_count; i++) {
-        if (s_devices[i].nickname[0] != '\0' || s_persisted[i]) {
-            continue;
+        const netdash_device_t *d = &s_devices[i];
+        if (d->miss_count == 0 || s_seen[i]) {
+            continue;   /* still here: not a candidate */
         }
-        if (victim < 0 || s_devices[i].last_seen < oldest) {
+        if (victim < 0 || d->miss_count > most ||
+            (d->miss_count == most && d->last_seen < oldest)) {
             victim = (int)i;
-            oldest = s_devices[i].last_seen;
+            most   = d->miss_count;
+            oldest = d->last_seen;
         }
     }
     if (victim < 0) {
         return false;
     }
 
-    ESP_LOGW(TAG, "device table full, evicting %02x:%02x:%02x:%02x:%02x:%02x (last_seen=%lld)",
-             s_devices[victim].mac[0], s_devices[victim].mac[1], s_devices[victim].mac[2],
-             s_devices[victim].mac[3], s_devices[victim].mac[4], s_devices[victim].mac[5],
-             (long long)s_devices[victim].last_seen);
-
-    const size_t last = s_count - 1;
-    if ((size_t)victim != last) {
-        s_devices[victim]   = s_devices[last];
-        s_seen[victim]      = s_seen[last];
-        s_persisted[victim] = s_persisted[last];
-        s_ports[victim]     = s_ports[last];   /* parallel array, move together */
-        memcpy(s_hist[victim], s_hist[last], NETDASH_HISTORY_BYTES);
-    }
-    memset(&s_ports[last], 0, sizeof(s_ports[last]));
-    memset(s_hist[last], 0, NETDASH_HISTORY_BYTES);
-    s_count--;
+    s_demoted       = s_devices[victim];
+    s_demoted_ports = s_ports[victim];
+    s_have_demoted  = true;
+    ESP_LOGI(TAG, "active table full; moving %02x:%02x:%02x:%02x:%02x:%02x to the register",
+             s_demoted.mac[0], s_demoted.mac[1], s_demoted.mac[2], s_demoted.mac[3],
+             s_demoted.mac[4], s_demoted.mac[5]);
+    drop_slot_locked(victim);
     return true;
 }
 
@@ -508,11 +555,115 @@ bool device_db_get_history(const uint8_t mac[6], uint8_t *out, size_t cap, uint1
 }
 
 /* ------------------------------------------------------------------------- */
-/* NVS persistence                                                           */
+/* The register                                                              */
 /* ------------------------------------------------------------------------- */
 
-#define DEV_NVS_NS       "dev"
-#define DEV_BLOB_VERSION 2
+/* The device's own fields into rec, leaving its port list alone. */
+static void rec_set_device(dev_rec_t *rec, const netdash_device_t *d)
+{
+    memcpy(rec->hw_mac, d->hw_mac, 6);
+    rec->flags         = d->flags;
+    rec->type_override = d->type_override;
+    rec->type          = d->type;
+    rec->name_src      = d->name_src;
+    rec->sources       = d->sources;
+    rec->last_ip       = d->ip;
+    rec->services      = d->services;
+    rec->first_seen    = d->first_seen;
+    if (d->last_seen > rec->last_seen) {
+        rec->last_seen = d->last_seen;
+    }
+    memcpy(rec->nickname, d->nickname, sizeof(rec->nickname));
+    rec->nickname[sizeof(rec->nickname) - 1] = '\0';
+    /* A device with no name in RAM this run keeps the one it was stored with. */
+    if (d->hostname[0] != '\0') {
+        memcpy(rec->hostname, d->hostname, sizeof(rec->hostname));
+        rec->hostname[sizeof(rec->hostname) - 1] = '\0';
+    }
+}
+
+/* An offline device from its record, and its port state if ps is not NULL. */
+static void device_from_rec(const dev_rec_t *rec, netdash_device_t *d, port_state_t *ps)
+{
+    memset(d, 0, sizeof(*d));
+    memcpy(d->mac, rec->mac, 6);
+    memcpy(d->hw_mac, rec->hw_mac, 6);
+    d->ip            = rec->last_ip;
+    d->vendor        = vendor_for(rec->hw_mac);
+    d->flags         = rec->flags;
+    d->type_override = rec->type_override;
+    d->name_src      = rec->name_src;
+    d->sources       = rec->sources;
+    d->services      = rec->services;
+    d->first_seen    = rec->first_seen;
+    d->last_seen     = rec->last_seen;
+    d->rtt_ms        = -1;
+    d->miss_count    = 255;   /* offline until seen again */
+    memcpy(d->nickname, rec->nickname, sizeof(d->nickname));
+    d->nickname[sizeof(d->nickname) - 1] = '\0';
+    memcpy(d->hostname, rec->hostname, sizeof(d->hostname));
+    d->hostname[sizeof(d->hostname) - 1] = '\0';
+    d->type = classify_device(d, wifi_mgr_get_gateway());
+    if (ps != NULL) {
+        memset(ps, 0, sizeof(*ps));
+        ps->count     = rec->port_count > DEV_STORE_PORTS ? DEV_STORE_PORTS : rec->port_count;
+        ps->tier      = rec->port_tier > 3 ? 0 : rec->port_tier;
+        ps->last_scan = rec->port_last_scan;
+    }
+}
+
+typedef struct {
+    const netdash_device_t *dev;
+    const port_state_t     *ports;   /* NULL: leave the stored port fields */
+} store_ctx_t;
+
+static bool edit_device(dev_rec_t *rec, bool created, void *ctx)
+{
+    const store_ctx_t *c = ctx;
+    (void)created;
+    rec_set_device(rec, c->dev);
+    if (c->ports != NULL) {
+        rec->port_count     = c->ports->count;
+        rec->port_tier      = c->ports->tier;
+        rec->port_last_scan = c->ports->last_scan;
+    }
+    return true;
+}
+
+/*
+ * Writes the device to the register, creating its record if need be. Flash
+ * I/O: never with the lock held. When the register was full and a long-gone
+ * device was forgotten to make room, its notes go with it.
+ */
+static esp_err_t store_device(const netdash_device_t *d, const port_state_t *ps)
+{
+    if (!dev_store_available()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    store_ctx_t ctx = { .dev = d, .ports = ps };
+    uint8_t     evicted[6];
+    bool        did_evict = false;
+    esp_err_t   err = dev_store_update(d->mac, true, edit_device, &ctx, evicted, &did_evict);
+    if (did_evict) {
+        notes_forget_device(evicted);
+    }
+    return err;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Moving older NVS storage into the register                                */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Up to v0.15, each device was a blob in NVS "dev" and its ports another in
+ * "ports". The first boot with a register copies them in. The NVS copies are
+ * left where they are, so a rollback to v0.15 still finds its devices; a later
+ * release can erase them.
+ */
+#define DEV_NVS_NS         "dev"
+#define PORTS_NVS_NS       "ports"
+#define DEV_BLOB_V1_SIZE   47
+#define PORTS_BLOB_VERSION 1
 
 typedef struct __attribute__((packed)) {
     uint8_t  version;
@@ -520,31 +671,19 @@ typedef struct __attribute__((packed)) {
     uint8_t  type_override;
     uint8_t  flags;
     int64_t  first_seen;
-    uint32_t last_ip;       /* for a shared-MAC entry, the address it is pinned to */
-    uint8_t  hw_mac[6];
+    uint32_t last_ip;
+    uint8_t  hw_mac[6];        /* version 2 only; version 1 keyed by the MAC */
 } dev_blob_t;
 
-/*
- * The version 1 record: the same without hw_mac, since the key was always the
- * hardware MAC. Every dongle runs firmware that writes version 2, but a record
- * is only rewritten when something about its device changes, so version 1
- * records are still sitting in flash - a dongle that went from v0.10.0
- * straight to v0.14.4 kept most of them. device_db_init() converts any it
- * finds, so a later release can drop this once every dongle has booted it.
- */
-#define DEV_BLOB_V1_SIZE 47
+typedef struct __attribute__((packed)) {
+    uint8_t  version;
+    uint8_t  count;
+    uint8_t  tier;
+    int64_t  last_scan;
+    uint16_t ports[24];
+} ports_blob_t;
 
-_Static_assert(sizeof(dev_blob_t) == 53, "device blob layout is persisted");
-
-static void mac_to_key(const uint8_t mac[6], char key[13])
-{
-    static const char hex[] = "0123456789abcdef";
-    for (int i = 0; i < 6; i++) {
-        key[i * 2]     = hex[(mac[i] >> 4) & 0x0f];
-        key[i * 2 + 1] = hex[mac[i] & 0x0f];
-    }
-    key[12] = '\0';
-}
+_Static_assert(sizeof(dev_blob_t) == 53, "v2 device blob layout");
 
 static int hex_val(char c)
 {
@@ -570,69 +709,74 @@ static bool key_to_mac(const char *key, uint8_t mac[6])
     return true;
 }
 
-/* No lock held here on purpose - this does flash I/O. */
-static esp_err_t nvs_write_user_fields(const netdash_device_t *d)
+static uint16_t service_bit_for_port(uint16_t port);
+
+static void migrate_from_nvs(void)
 {
-    dev_blob_t blob = {0};
-    blob.version        = DEV_BLOB_VERSION;
-    strncpy(blob.nickname, d->nickname, sizeof(blob.nickname) - 1);
-    blob.type_override  = d->type_override;
-    blob.flags          = d->flags;
-    blob.first_seen     = d->first_seen;
-    blob.last_ip        = d->ip;
-    memcpy(blob.hw_mac, d->hw_mac, 6);
-
-    char key[13];
-    mac_to_key(d->mac, key);
-
     nvs_handle_t h;
-    esp_err_t    err = nvs_open(DEV_NVS_NS, NVS_READWRITE, &h);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "nvs_open(%s) failed: %s", DEV_NVS_NS, esp_err_to_name(err));
-        return err;
+    if (nvs_open(DEV_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return;   /* nothing stored before: a new dongle */
     }
-    err = nvs_set_blob(h, key, &blob, sizeof(blob));
-    if (err == ESP_OK) {
-        err = nvs_commit(h);
+    nvs_handle_t hp;
+    const bool   have_ports = nvs_open(PORTS_NVS_NS, NVS_READONLY, &hp) == ESP_OK;
+
+    size_t         moved = 0, failed = 0;
+    static dev_rec_t rec;   /* boot only; off the stack */
+    nvs_iterator_t it   = NULL;
+    esp_err_t      fres = nvs_entry_find_in_handle(h, NVS_TYPE_BLOB, &it);
+    while (fres == ESP_OK && it != NULL) {
+        nvs_entry_info_t info;
+        nvs_entry_info(it, &info);
+
+        uint8_t    mac[6];
+        dev_blob_t blob;
+        size_t     sz = sizeof(blob);
+        if (key_to_mac(info.key, mac) && nvs_get_blob(h, info.key, &blob, &sz) == ESP_OK &&
+            ((sz == DEV_BLOB_V1_SIZE && blob.version == 1) ||
+             (sz == sizeof(blob) && blob.version == 2))) {
+            memset(&rec, 0, sizeof(rec));
+            memcpy(rec.mac, mac, 6);
+            memcpy(rec.hw_mac, blob.version == 1 ? mac : blob.hw_mac, 6);
+            memcpy(rec.nickname, blob.nickname, sizeof(rec.nickname));
+            rec.nickname[sizeof(rec.nickname) - 1] = '\0';
+            rec.type_override = blob.type_override;
+            rec.flags         = blob.flags;
+            rec.first_seen    = blob.first_seen;
+            rec.last_seen     = blob.first_seen;   /* the best there is */
+            rec.last_ip       = blob.last_ip;
+
+            ports_blob_t pb;
+            size_t       psz = sizeof(pb);
+            if (have_ports && nvs_get_blob(hp, info.key, &pb, &psz) == ESP_OK &&
+                psz == sizeof(pb) && pb.version == PORTS_BLOB_VERSION) {
+                rec.port_count     = pb.count > DEV_STORE_PORTS ? DEV_STORE_PORTS : pb.count;
+                rec.port_tier      = pb.tier > 3 ? 0 : pb.tier;
+                rec.port_last_scan = pb.last_scan;
+                memcpy(rec.ports, pb.ports, sizeof(rec.ports));
+                /* NVS never kept services; the ports imply some of them, and
+                   classification leans on those (445 means a file server). */
+                for (uint8_t k = 0; k < rec.port_count; k++) {
+                    rec.services |= service_bit_for_port(rec.ports[k]);
+                }
+            }
+            if (dev_store_put(&rec, NULL, NULL) == ESP_OK) {
+                moved++;
+            } else {
+                failed++;
+            }
+        }
+        fres = nvs_entry_next(&it);
+    }
+    nvs_release_iterator(it);
+    if (have_ports) {
+        nvs_close(hp);
     }
     nvs_close(h);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "failed to persist device %s: %s", key, esp_err_to_name(err));
-    }
-    return err;
-}
 
-static esp_err_t nvs_erase_device(const uint8_t mac[6])
-{
-    char key[13];
-    mac_to_key(mac, key);
-
-    nvs_handle_t h;
-    esp_err_t    err = nvs_open(DEV_NVS_NS, NVS_READWRITE, &h);
-    if (err != ESP_OK) {
-        return err;
+    if (moved > 0 || failed > 0) {
+        ESP_LOGW(TAG, "moved %u device(s) from NVS into the register%s", (unsigned)moved,
+                 failed > 0 ? " - some could not be moved" : "");
     }
-    err = nvs_erase_key(h, key);
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        err = ESP_OK;
-    }
-    if (err == ESP_OK) {
-        err = nvs_commit(h);
-    }
-    nvs_close(h);
-    return err;
-}
-
-/* Marks idx as persisted after a successful write, re-finding it by MAC in
- * case the table changed shape while the lock was released for the NVS I/O. */
-static void mark_persisted(const uint8_t mac[6])
-{
-    device_db_lock();
-    int idx = find_index_locked(mac);
-    if (idx >= 0) {
-        s_persisted[idx] = true;
-    }
-    device_db_unlock();
 }
 
 /* ------------------------------------------------------------------------- */
@@ -640,10 +784,6 @@ static void mark_persisted(const uint8_t mac[6])
 /* ------------------------------------------------------------------------- */
 
 static SemaphoreHandle_t s_events_lock;
-
-/* Table positions of the version 1 records device_db_init() found. */
-static uint8_t s_convert[NETDASH_MAX_DEVICES];
-static size_t  s_convert_count;
 
 esp_err_t device_db_init(void)
 {
@@ -670,95 +810,63 @@ esp_err_t device_db_init(void)
     s_count = 0;
     memset(s_devices, 0, sizeof(s_devices));
     memset(s_seen, 0, sizeof(s_seen));
-    memset(s_persisted, 0, sizeof(s_persisted));
+    memset(s_dirty, 0, sizeof(s_dirty));
     memset(s_addrs, 0, sizeof(s_addrs));
-
-    nvs_handle_t h;
-    esp_err_t    err = nvs_open(DEV_NVS_NS, NVS_READWRITE, &h);
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGI(TAG, "no persisted devices yet");
-    } else if (err != ESP_OK) {
-        ESP_LOGE(TAG, "nvs_open(%s) failed: %s", DEV_NVS_NS, esp_err_to_name(err));
-    } else {
-        nvs_iterator_t it   = NULL;
-        esp_err_t      fres = nvs_entry_find_in_handle(h, NVS_TYPE_BLOB, &it);
-        while (fres == ESP_OK && it != NULL) {
-            nvs_entry_info_t info;
-            nvs_entry_info(it, &info);
-
-            uint8_t mac[6];
-            if (s_count < NETDASH_MAX_DEVICES && key_to_mac(info.key, mac)) {
-                dev_blob_t blob;
-                size_t     sz = sizeof(blob);
-                bool       ok = nvs_get_blob(h, info.key, &blob, &sz) == ESP_OK;
-                bool       v1 = ok && sz == DEV_BLOB_V1_SIZE && blob.version == 1;
-                if (v1) {
-                    memcpy(blob.hw_mac, mac, 6);
-                } else if (ok && (sz != sizeof(blob) || blob.version != DEV_BLOB_VERSION)) {
-                    ok = false;
-                }
-                if (ok) {
-                    if (v1 && s_convert_count < NETDASH_MAX_DEVICES) {
-                        s_convert[s_convert_count++] = (uint8_t)s_count;
-                    }
-                    netdash_device_t *d = &s_devices[s_count];
-                    memset(d, 0, sizeof(*d));
-                    memcpy(d->mac, mac, 6);
-                    memcpy(d->hw_mac, blob.hw_mac, 6);
-                    d->ip = blob.last_ip;
-                    strncpy(d->nickname, blob.nickname, sizeof(d->nickname) - 1);
-                    d->type_override = blob.type_override;
-                    d->flags         = blob.flags;
-                    d->first_seen    = blob.first_seen;
-                    d->last_seen     = 0;
-                    d->rtt_ms        = -1;
-                    d->miss_count    = 255; /* offline until seen this run */
-
-                    const char *vendor = oui_lookup(d->hw_mac);
-                    if (vendor != NULL) {
-                        strncpy(d->vendor, vendor, sizeof(d->vendor) - 1);
-                    }
-                    d->type = classify_device(d, 0);
-
-                    s_persisted[s_count] = true;
-                    s_seen[s_count]      = false;
-                    memset(&s_ports[s_count], 0, sizeof(s_ports[s_count]));
-                    memset(s_hist[s_count], 0, NETDASH_HISTORY_BYTES);
-                    ports_restore_locked((int)s_count);
-                    s_count++;
-                } else {
-                    ESP_LOGW(TAG, "skipping unreadable blob for key %s", info.key);
-                }
-            }
-            fres = nvs_entry_next(&it);
-        }
-        nvs_release_iterator(it);
-        nvs_close(h);
-    }
-    size_t loaded = s_count;
-
-    /* Rewrite version 1 records as version 2, off the lock: it is flash I/O,
-       and nothing else can be touching the table this early anyway. */
-    const size_t convert = s_convert_count;
     device_db_unlock();
 
-    size_t converted = 0;
-    for (size_t i = 0; i < convert; i++) {
-        netdash_device_t snap;
-        device_db_lock();
-        snap = s_devices[s_convert[i]];
-        device_db_unlock();
-        if (nvs_write_user_fields(&snap) == ESP_OK) {
-            converted++;
-        }
-    }
-    if (convert > 0) {
-        ESP_LOGW(TAG, "converted %u of %u old-format device record(s)", (unsigned)converted,
-                 (unsigned)convert);
+    bool created = false;
+    if (dev_store_init(&created) == ESP_OK && created) {
+        migrate_from_nvs();
     }
 
-    ESP_LOGI(TAG, "loaded %u persisted device(s), capacity %u",
-             (unsigned)loaded, (unsigned)NETDASH_MAX_DEVICES);
+    /*
+     * Start with the devices seen most recently in RAM, as offline until the
+     * first sweep finds them, leaving a little room so the first new arrivals
+     * do not immediately push anything out.
+     */
+    const size_t slots = dev_store_slots();
+    const size_t want  = NETDASH_MAX_DEVICES - NETDASH_MAX_DEVICES / 8;
+    typedef struct { uint16_t slot; int64_t seen; } pick_t;
+    pick_t *picks = slots > 0 ? calloc(slots, sizeof(pick_t)) : NULL;
+    size_t  n     = 0;
+    static dev_rec_t rec;   /* boot only */
+    if (picks != NULL) {
+        for (size_t i = 0; i < slots; i++) {
+            if (dev_store_read_slot(i, &rec)) {
+                picks[n].slot = (uint16_t)i;
+                picks[n].seen = rec.last_seen != 0 ? rec.last_seen : rec.first_seen;
+                n++;
+            }
+        }
+        /* Most recent first; a simple insertion sort is fine for ~1,000 once. */
+        for (size_t i = 1; i < n; i++) {
+            pick_t k = picks[i];
+            size_t j = i;
+            while (j > 0 && picks[j - 1].seen < k.seen) {
+                picks[j] = picks[j - 1];
+                j--;
+            }
+            picks[j] = k;
+        }
+        for (size_t i = 0; i < n && i < want; i++) {
+            if (!dev_store_read_slot(picks[i].slot, &rec)) {
+                continue;
+            }
+            device_db_lock();
+            device_from_rec(&rec, &s_devices[s_count], &s_ports[s_count]);
+            memset(s_hist[s_count], 0, NETDASH_HISTORY_BYTES);
+            s_seen[s_count]  = false;
+            s_dirty[s_count] = false;
+            s_count++;
+            device_db_unlock();
+        }
+        free(picks);
+    }
+    s_last_flush_us = esp_timer_get_time();
+
+    ESP_LOGI(TAG, "%u device(s) known, %u active in RAM (room for %u)",
+             (unsigned)device_db_known_count(), (unsigned)device_db_count(),
+             (unsigned)NETDASH_MAX_DEVICES);
     return ESP_OK;
 }
 
@@ -766,16 +874,8 @@ esp_err_t device_db_init(void)
 /* Port scan results                                                         */
 /* ------------------------------------------------------------------------- */
 
-#define PORTS_NVS_NS       "ports"
-#define PORTS_BLOB_VERSION 1
-
-typedef struct __attribute__((packed)) {
-    uint8_t  version;
-    uint8_t  count;
-    uint8_t  tier;
-    int64_t  last_scan;
-    uint16_t ports[NETDASH_MAX_OPEN_PORTS];
-} ports_blob_t;
+_Static_assert(NETDASH_MAX_OPEN_PORTS <= DEV_STORE_PORTS,
+               "the register keeps at most DEV_STORE_PORTS open ports per device");
 
 /*
  * Ports whose presence tells us something classify.c can use. Everything else
@@ -948,64 +1048,19 @@ void netdash_service_label(const char *service, char *out, size_t cap)
     out[o] = '\0';
 }
 
-/* Caller holds the lock. */
-static void ports_persist_locked(int idx)
+/* ports.count and the rest from s_ports; the list stays empty. */
+static void summary_from_state(const port_state_t *ps, netdash_ports_t *out)
 {
-    ports_blob_t blob = {
-        .version   = PORTS_BLOB_VERSION,
-        .count     = s_ports[idx].count,
-        .tier      = s_ports[idx].tier,
-        .last_scan = s_ports[idx].last_scan,
-    };
-    memcpy(blob.ports, s_ports[idx].ports, sizeof(blob.ports));
-
-    uint8_t mac[6];
-    memcpy(mac, s_devices[idx].mac, 6);
-
-    char key[13];
-    mac_to_key(mac, key);
-
-    nvs_handle_t h;
-    if (nvs_open(PORTS_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
-        return;
-    }
-    if (nvs_set_blob(h, key, &blob, sizeof(blob)) == ESP_OK) {
-        nvs_commit(h);
-    }
-    nvs_close(h);
+    memset(out, 0, sizeof(*out));
+    out->count         = ps->count;
+    out->tier          = ps->tier;
+    out->scanning_tier = ps->scanning_tier;
+    out->cursor        = ps->cursor;
+    out->tier_total    = ps->tier_total;
+    out->last_scan     = ps->last_scan;
 }
 
-/* Caller holds the lock. Restores a device's ports from NVS, if any. */
-static void ports_restore_locked(int idx)
-{
-    char key[13];
-    mac_to_key(s_devices[idx].mac, key);
-
-    nvs_handle_t h;
-    if (nvs_open(PORTS_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
-        return;
-    }
-
-    ports_blob_t blob;
-    size_t       size = sizeof(blob);
-    if (nvs_get_blob(h, key, &blob, &size) == ESP_OK && size == sizeof(blob) &&
-        blob.version == PORTS_BLOB_VERSION) {
-        s_ports[idx].count = blob.count > NETDASH_MAX_OPEN_PORTS
-                                 ? NETDASH_MAX_OPEN_PORTS
-                                 : blob.count;
-        s_ports[idx].tier      = blob.tier > 3 ? 0 : blob.tier;
-        s_ports[idx].last_scan = blob.last_scan;
-        memcpy(s_ports[idx].ports, blob.ports, sizeof(s_ports[idx].ports));
-
-        /* Re-apply the service bits the stored ports imply. */
-        for (uint8_t i = 0; i < s_ports[idx].count; i++) {
-            s_devices[idx].services |= service_bit_for_port(s_ports[idx].ports[i]);
-        }
-    }
-    nvs_close(h);
-}
-
-bool device_db_get_ports(const uint8_t mac[6], netdash_ports_t *out)
+bool device_db_get_port_summary(const uint8_t mac[6], netdash_ports_t *out)
 {
     if (mac == NULL || out == NULL) {
         return false;
@@ -1013,10 +1068,84 @@ bool device_db_get_ports(const uint8_t mac[6], netdash_ports_t *out)
     device_db_lock();
     const int idx = find_index_locked(mac);
     if (idx >= 0) {
-        *out = s_ports[idx];
+        summary_from_state(&s_ports[idx], out);
     }
     device_db_unlock();
-    return idx >= 0;
+    if (idx >= 0) {
+        return true;
+    }
+    /* Not active: what the register remembers, if anything. */
+    static dev_rec_t rec;
+    static SemaphoreHandle_t guard;   /* rec is shared between callers */
+    if (guard == NULL) {
+        guard = xSemaphoreCreateMutex();
+    }
+    if (guard == NULL) {
+        return false;
+    }
+    xSemaphoreTake(guard, portMAX_DELAY);
+    const bool found = dev_store_get(mac, &rec);
+    if (found) {
+        port_state_t ps;
+        netdash_device_t unused;
+        device_from_rec(&rec, &unused, &ps);
+        summary_from_state(&ps, out);
+    }
+    xSemaphoreGive(guard);
+    return found;
+}
+
+bool device_db_get_ports(const uint8_t mac[6], netdash_ports_t *out)
+{
+    if (!device_db_get_port_summary(mac, out)) {
+        return false;
+    }
+    static dev_rec_t rec;
+    static SemaphoreHandle_t guard;
+    if (guard == NULL) {
+        guard = xSemaphoreCreateMutex();
+    }
+    if (guard == NULL) {
+        return true;
+    }
+    xSemaphoreTake(guard, portMAX_DELAY);
+    if (dev_store_get(mac, &rec)) {
+        const uint8_t n = rec.port_count > NETDASH_MAX_OPEN_PORTS ? NETDASH_MAX_OPEN_PORTS
+                                                                  : rec.port_count;
+        memcpy(out->ports, rec.ports, n * sizeof(out->ports[0]));
+        out->count = n;
+    }
+    xSemaphoreGive(guard);
+    return true;
+}
+
+typedef struct {
+    uint16_t port;
+    bool     added;
+    uint8_t  count;
+} add_port_ctx_t;
+
+static bool edit_add_port(dev_rec_t *rec, bool created, void *ctx)
+{
+    add_port_ctx_t *c = ctx;
+    (void)created;
+    uint8_t n = rec->port_count > NETDASH_MAX_OPEN_PORTS ? NETDASH_MAX_OPEN_PORTS
+                                                         : rec->port_count;
+    /* Insertion sort keeps the list ascending for the UI. */
+    uint8_t at = 0;
+    while (at < n && rec->ports[at] < c->port) {
+        at++;
+    }
+    c->count = n;
+    if ((at < n && rec->ports[at] == c->port) || n >= NETDASH_MAX_OPEN_PORTS) {
+        return false;   /* already known, or the list is full */
+    }
+    memmove(&rec->ports[at + 1], &rec->ports[at], (size_t)(n - at) * sizeof(rec->ports[0]));
+    rec->ports[at]  = c->port;
+    rec->port_count = (uint8_t)(n + 1);
+    c->added        = true;
+    c->count        = rec->port_count;
+    return true;
 }
 
 bool device_db_add_open_port(const uint8_t mac[6], uint16_t port)
@@ -1024,38 +1153,31 @@ bool device_db_add_open_port(const uint8_t mac[6], uint16_t port)
     if (mac == NULL || port == 0) {
         return false;
     }
+    device_db_lock();
+    const bool active = find_index_locked(mac) >= 0;
+    device_db_unlock();
+    if (!active) {
+        return false;
+    }
 
-    bool added = false;
+    add_port_ctx_t ctx = { .port = port };
+    if (dev_store_update(mac, false, edit_add_port, &ctx, NULL, NULL) != ESP_OK || !ctx.added) {
+        return false;
+    }
+
     device_db_lock();
     const int idx = find_index_locked(mac);
     if (idx >= 0) {
-        netdash_ports_t *p = &s_ports[idx];
-
-        /* Insertion sort keeps the list ascending for the UI. */
-        uint8_t at = 0;
-        while (at < p->count && p->ports[at] < port) {
-            at++;
-        }
-        if (at < p->count && p->ports[at] == port) {
-            added = false;                      /* already known */
-        } else if (p->count >= NETDASH_MAX_OPEN_PORTS) {
-            added = false;                      /* list full, drop it */
-        } else {
-            memmove(&p->ports[at + 1], &p->ports[at],
-                    (size_t)(p->count - at) * sizeof(p->ports[0]));
-            p->ports[at] = port;
-            p->count++;
-            added = true;
-
-            const uint16_t bit = service_bit_for_port(port);
-            if (bit != 0 && (s_devices[idx].services & bit) == 0) {
-                s_devices[idx].services |= bit;
-                s_devices[idx].type = classify_device(&s_devices[idx], wifi_mgr_get_gateway());
-            }
+        s_ports[idx].count = ctx.count;
+        const uint16_t bit = service_bit_for_port(port);
+        if (bit != 0 && (s_devices[idx].services & bit) == 0) {
+            s_devices[idx].services |= bit;
+            s_devices[idx].type = classify_device(&s_devices[idx], wifi_mgr_get_gateway());
+            s_dirty[idx] = true;
         }
     }
     device_db_unlock();
-    return added;
+    return true;
 }
 
 void device_db_set_scan_progress(const uint8_t mac[6], uint8_t scanning_tier,
@@ -1074,6 +1196,30 @@ void device_db_set_scan_progress(const uint8_t mac[6], uint8_t scanning_tier,
     device_db_unlock();
 }
 
+typedef struct {
+    uint8_t tier;
+    int64_t last_scan;
+    bool    clear;
+} tier_ctx_t;
+
+static bool edit_tier(dev_rec_t *rec, bool created, void *ctx)
+{
+    const tier_ctx_t *c = ctx;
+    (void)created;
+    if (c->clear) {
+        rec->port_count     = 0;
+        rec->port_tier      = 0;
+        rec->port_last_scan = 0;
+        memset(rec->ports, 0, sizeof(rec->ports));
+    } else {
+        if (c->tier > rec->port_tier) {
+            rec->port_tier = c->tier;
+        }
+        rec->port_last_scan = c->last_scan;
+    }
+    return true;
+}
+
 void device_db_finish_tier(const uint8_t mac[6], uint8_t tier, int64_t now)
 {
     if (mac == NULL) {
@@ -1089,23 +1235,11 @@ void device_db_finish_tier(const uint8_t mac[6], uint8_t tier, int64_t now)
         s_ports[idx].cursor        = 0;
         s_ports[idx].tier_total    = 0;
         s_ports[idx].last_scan     = now;
-        ports_persist_locked(idx);
     }
     device_db_unlock();
-}
-
-/* Drops the stored port record for mac. No lock needed: this is flash only. */
-static void ports_erase_nvs(const uint8_t mac[6])
-{
-    char key[13];
-    mac_to_key(mac, key);
-
-    nvs_handle_t h;
-    if (nvs_open(PORTS_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-        if (nvs_erase_key(h, key) == ESP_OK) {
-            nvs_commit(h);
-        }
-        nvs_close(h);
+    if (idx >= 0) {
+        tier_ctx_t ctx = { .tier = tier, .last_scan = now };
+        (void)dev_store_update(mac, false, edit_tier, &ctx, NULL, NULL);
     }
 }
 
@@ -1118,9 +1252,10 @@ void device_db_clear_ports(const uint8_t mac[6])
     const int idx = find_index_locked(mac);
     if (idx >= 0) {
         memset(&s_ports[idx], 0, sizeof(s_ports[idx]));
-        ports_erase_nvs(mac);
     }
     device_db_unlock();
+    tier_ctx_t ctx = { .clear = true };
+    (void)dev_store_update(mac, false, edit_tier, &ctx, NULL, NULL);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1135,10 +1270,38 @@ size_t device_db_count(void)
     return n;
 }
 
+size_t device_db_known_count(void)
+{
+    const size_t active = device_db_count();
+    const size_t stored = dev_store_count();
+    return stored > active ? stored : active;
+}
+
+/* Reads id's record into out as an offline device. Serialised: one buffer. */
+static bool get_from_register(const uint8_t id[6], netdash_device_t *out)
+{
+    static dev_rec_t          rec;
+    static SemaphoreHandle_t  guard;
+    if (guard == NULL) {
+        guard = xSemaphoreCreateMutex();
+        if (guard == NULL) {
+            return false;
+        }
+    }
+    xSemaphoreTake(guard, portMAX_DELAY);
+    const bool found = dev_store_get(id, &rec);
+    if (found && out != NULL) {
+        device_from_rec(&rec, out, NULL);
+    }
+    xSemaphoreGive(guard);
+    return found;
+}
+
 bool device_db_get_by_mac(const uint8_t mac[6], netdash_device_t *out)
 {
     if (out != NULL) {
         memset(out, 0, sizeof(*out));
+        out->vendor = "";
     }
     if (mac == NULL) {
         return false;
@@ -1150,7 +1313,43 @@ bool device_db_get_by_mac(const uint8_t mac[6], netdash_device_t *out)
         *out = s_devices[idx];
     }
     device_db_unlock();
-    return found;
+    if (found) {
+        return true;
+    }
+    netdash_device_t scratch;
+    return get_from_register(mac, out != NULL ? out : &scratch);
+}
+
+size_t device_db_register_slots(void)
+{
+    return dev_store_slots();
+}
+
+bool device_db_get_archived(size_t slot, netdash_device_t *out)
+{
+    static dev_rec_t          rec;
+    static SemaphoreHandle_t  guard;
+    if (out == NULL) {
+        return false;
+    }
+    if (guard == NULL) {
+        guard = xSemaphoreCreateMutex();
+        if (guard == NULL) {
+            return false;
+        }
+    }
+    xSemaphoreTake(guard, portMAX_DELAY);
+    bool ok = dev_store_read_slot(slot, &rec);
+    if (ok) {
+        device_db_lock();
+        ok = find_index_locked(rec.mac) < 0;   /* active ones are listed already */
+        device_db_unlock();
+    }
+    if (ok) {
+        device_from_rec(&rec, out, NULL);
+    }
+    xSemaphoreGive(guard);
+    return ok;
 }
 
 bool device_db_get_at(size_t index, netdash_device_t *out)
@@ -1173,14 +1372,49 @@ bool device_db_get_at(size_t index, netdash_device_t *out)
 /* Scanner-facing mutation                                                   */
 /* ------------------------------------------------------------------------- */
 
+/* A sighting of a device that could not be made active (see the caller). */
+typedef struct {
+    const uint8_t *hw;
+    uint32_t       ip;
+    int64_t        now;
+    bool           shared;
+    bool           created;
+} seen_ctx_t;
+
+#define REGISTER_ONLY_WRITE_EVERY_S 600
+
+static bool edit_seen(dev_rec_t *rec, bool created, void *ctx)
+{
+    seen_ctx_t *c = ctx;
+    c->created = created;
+    if (created) {
+        memcpy(rec->hw_mac, c->hw, 6);
+        rec->first_seen = c->now;
+        if (c->shared) {
+            rec->flags = NETDASH_FLAG_SHARED_MAC;
+        }
+    } else if (rec->last_ip == c->ip && c->now != 0 &&
+               c->now - rec->last_seen < REGISTER_ONLY_WRITE_EVERY_S) {
+        return false;   /* seen recently enough already: spare the flash */
+    }
+    rec->last_ip = c->ip;
+    if (c->now != 0) {
+        rec->last_seen = c->now;
+    }
+    return true;
+}
+
+static bool get_from_register(const uint8_t id[6], netdash_device_t *out);
+
 bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, int64_t now)
 {
     if (mac == NULL) {
         return false;
     }
 
-    netdash_device_t snapshot = {0};
-    netdash_device_t primary  = {0};   /* the MAC's own entry, once declared shared */
+    netdash_device_t snapshot   = {0};
+    port_state_t     snap_ports = {0};
+    netdash_device_t primary    = {0};   /* the MAC's own entry, once declared shared */
     bool     inserted           = false;
     bool     became_online      = false;
     bool     ip_changed         = false;
@@ -1193,6 +1427,27 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
     uint32_t prev_ip            = 0;
     uint8_t  pid[6]             = {0};
     const uint32_t now_s        = uptime_s();
+    bool     promoted           = false;
+
+    if (ip != 0) {
+        shared_id(mac, ip, pid);
+    }
+
+    /*
+     * A device that is not active may still be remembered. Look in the
+     * register before taking the lock - it is flash I/O - so a returning
+     * device comes back with its name rather than as a stranger.
+     */
+    bool have_pre = false;
+    device_db_lock();
+    const bool active = (ip != 0 && find_index_locked(pid) >= 0) || find_index_locked(mac) >= 0;
+    device_db_unlock();
+    if (!active) {
+        have_pre = ip != 0 && dev_store_get(pid, &s_pre);
+        if (!have_pre) {
+            have_pre = dev_store_get(mac, &s_pre);
+        }
+    }
 
     device_db_lock();
 
@@ -1200,11 +1455,20 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
 
     int idx = -1;
     if (ip != 0) {
-        shared_id(mac, ip, pid);
         idx = find_index_locked(pid);   /* an address already split off */
     }
     if (idx < 0) {
         idx = find_index_locked(mac);
+    }
+    if (idx < 0 && have_pre) {
+        idx = find_index_locked(s_pre.mac);
+        if (idx < 0) {
+            idx = new_slot_locked(s_pre.mac, s_pre.hw_mac);
+            if (idx >= 0) {
+                device_from_rec(&s_pre, &s_devices[idx], &s_ports[idx]);
+                promoted = true;
+            }
+        }
     }
 
     if (idx >= 0 && ip != 0 && memcmp(s_devices[idx].mac, mac, 6) == 0 && s_devices[idx].ip != 0) {
@@ -1235,7 +1499,6 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
                 d->sources       = 0;
                 d->services      = 0;
                 d->type          = classify_device(d, wifi_mgr_get_gateway());
-                s_persisted[idx] = true;   /* written below; also not evictable now */
                 addr_forget_locked(mac);   /* and any move it owed is withdrawn */
                 primary          = *d;
                 declared_shared  = true;
@@ -1276,6 +1539,7 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
             table_full = true;
         } else {
             inserted = true;
+            persist  = true;   /* every device gets a record, named or not */
             /* The MAC's own entry was deleted while addresses split off from it
                were not: it is still shared, and still pinned. */
             if (has_sibling_locked(mac, idx)) {
@@ -1305,27 +1569,63 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
         d->rtt_ms     = rtt_ms;
         d->miss_count = 0;
         s_seen[idx]   = true;
+        s_dirty[idx]  = true;
         history_mark_locked((size_t)idx, now);
 
         d->type = classify_device(d, wifi_mgr_get_gateway());
 
         snapshot = *d;
+        snap_ports = s_ports[idx];
     }
+
+    const bool          demoted       = s_have_demoted;
+    netdash_device_t    demoted_dev   = s_demoted;
+    const port_state_t  demoted_ports = s_demoted_ports;
+    s_have_demoted = false;
 
     device_db_unlock();
 
+    if (demoted) {
+        (void)store_device(&demoted_dev, &demoted_ports);
+    }
+    (void)promoted;
+
     if (table_full) {
-        ESP_LOGW(TAG, "device table full (%u), refusing to add %02x:%02x:%02x:%02x:%02x:%02x",
-                 (unsigned)NETDASH_MAX_DEVICES, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        /*
+         * Every active device is still around, so there is nobody to move
+         * out. Note the sighting in the register instead - rate-limited, since
+         * the scanner sees it again every few seconds - and create a record
+         * for a device never seen before, which counts as new.
+         */
+        const bool   shared_split = split;
+        seen_ctx_t   ctx = {
+            .hw     = have_pre ? s_pre.hw_mac : mac,
+            .ip     = ip,
+            .now    = now,
+            .shared = shared_split,
+        };
+        const uint8_t *id = have_pre ? s_pre.mac : (shared_split ? pid : mac);
+        if (dev_store_update(id, true, edit_seen, &ctx, NULL, NULL) == ESP_OK && ctx.created) {
+            netdash_device_t fresh;
+            if (get_from_register(id, &fresh)) {
+                char name[32];
+                device_db_display_name(&fresh, name, sizeof(name));
+                events_log_push(NETDASH_LOG_DEVICE_NEW, fresh.mac, ip, name);
+                notify_push(NETDASH_NOTIF_NEW_DEVICE, fresh.mac, ip,
+                            fresh.vendor[0] != '\0' ? fresh.vendor : "Not seen here before");
+            }
+            ESP_LOGW(TAG, "active table full of online devices (%u); "
+                     "%02x:%02x:%02x:%02x:%02x:%02x is kept in the register only",
+                     (unsigned)NETDASH_MAX_DEVICES, id[0], id[1], id[2], id[3], id[4], id[5]);
+            return true;
+        }
         return false;
     }
 
     if (declared_shared) {
         ESP_LOGI(TAG, "%02x:%02x:%02x:%02x:%02x:%02x answers at more than one address; "
                  "splitting it per address", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-        if (nvs_write_user_fields(&primary) == ESP_OK) {
-            mark_persisted(primary.mac);
-        }
+        (void)store_device(&primary, NULL);
         /* Collected from two devices at once, so worth nothing to either. */
         device_db_clear_ports(primary.mac);
         events_log_push(NETDASH_LOG_INFO, primary.mac, primary.ip,
@@ -1333,9 +1633,13 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
     }
 
     if (persist) {
-        if (nvs_write_user_fields(&snapshot) == ESP_OK) {
-            mark_persisted(snapshot.mac);
+        (void)store_device(&snapshot, &snap_ports);
+        device_db_lock();
+        const int w = find_index_locked(snapshot.mac);
+        if (w >= 0) {
+            s_dirty[w] = false;
         }
+        device_db_unlock();
     }
 
     char name[32];
@@ -1353,7 +1657,8 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
             snprintf(text, sizeof(text), "Shares a MAC with %s", owner_name);
         } else {
             snprintf(text, sizeof(text), "%s",
-                     snapshot.vendor[0] != '\0' ? snapshot.vendor : "Not seen here before");
+                     (snapshot.vendor != NULL && snapshot.vendor[0] != '\0')
+                         ? snapshot.vendor : "Not seen here before");
         }
         notify_push(NETDASH_NOTIF_NEW_DEVICE, snapshot.mac, snapshot.ip, text);
     } else if (became_online) {
@@ -1443,6 +1748,37 @@ void device_db_mark_sweep_end(int64_t now)
         notify_push(NETDASH_NOTIF_IP_CHANGED, m->mac, m->ip, moved);
     }
 
+    /*
+     * Hourly, write what has changed about the active devices - last seen,
+     * name, services - so the register is not far behind after a restart.
+     * One device at a time, each copied under the lock and written without it.
+     */
+    if (esp_timer_get_time() - s_last_flush_us >= FLUSH_EVERY_US) {
+        s_last_flush_us = esp_timer_get_time();
+        size_t written = 0;
+        for (size_t i = 0;; i++) {
+            netdash_device_t d;
+            port_state_t     ps;
+            bool             have = false;
+            device_db_lock();
+            if (i >= s_count) {
+                device_db_unlock();
+                break;
+            }
+            if (s_dirty[i]) {
+                d          = s_devices[i];
+                ps         = s_ports[i];
+                s_dirty[i] = false;
+                have       = true;
+            }
+            device_db_unlock();
+            if (have && store_device(&d, &ps) == ESP_OK) {
+                written++;
+            }
+        }
+        ESP_LOGI(TAG, "wrote %u changed device(s) to the register", (unsigned)written);
+    }
+
     for (size_t i = 0; i < offline_count; i++) {
         netdash_device_t snap;
         if (!device_db_get_by_mac(s_offline_macs[i], &snap)) {
@@ -1497,6 +1833,7 @@ esp_err_t device_db_set_hostname(const uint8_t mac[6], const char *name, netdash
         d->name_src                          = (uint8_t)src;
         d->type = classify_device(d, wifi_mgr_get_gateway());
     }
+    s_dirty[idx] = true;
     device_db_unlock();
     return ESP_OK;
 }
@@ -1518,7 +1855,8 @@ esp_err_t device_db_set_services(const uint8_t mac[6], uint16_t bits)
     const uint16_t     before = d->services;
     d->services |= bits;
     if (d->services != before) {
-        d->type = classify_device(d, wifi_mgr_get_gateway());
+        d->type      = classify_device(d, wifi_mgr_get_gateway());
+        s_dirty[idx] = true;
     }
     device_db_unlock();
     return ESP_OK;
@@ -1528,41 +1866,69 @@ esp_err_t device_db_set_services(const uint8_t mac[6], uint16_t bits)
 /* User-facing mutation (persisted)                                         */
 /* ------------------------------------------------------------------------- */
 
+typedef struct {
+    const char *nickname;
+    int         type_override;
+    int         flags;
+} user_ctx_t;
+
+static void apply_user(netdash_device_t *d, const user_ctx_t *u)
+{
+    if (u->nickname != NULL) {
+        strncpy(d->nickname, u->nickname, sizeof(d->nickname) - 1);
+        d->nickname[sizeof(d->nickname) - 1] = '\0';
+    }
+    if (u->type_override >= 0 && u->type_override < NETDASH_TYPE_MAX) {
+        d->type_override = (uint8_t)u->type_override;
+    }
+    if (u->flags >= 0 && u->flags <= 0xff) {
+        /* Only the user's bits: SHARED_MAC is device_db's own finding. */
+        d->flags = (uint8_t)((d->flags & ~NETDASH_FLAGS_USER) | (u->flags & NETDASH_FLAGS_USER));
+    }
+}
+
+static bool edit_user(dev_rec_t *rec, bool created, void *ctx)
+{
+    const user_ctx_t *u = ctx;
+    (void)created;
+    if (u->nickname != NULL) {
+        strncpy(rec->nickname, u->nickname, sizeof(rec->nickname) - 1);
+        rec->nickname[sizeof(rec->nickname) - 1] = '\0';
+    }
+    if (u->type_override >= 0 && u->type_override < NETDASH_TYPE_MAX) {
+        rec->type_override = (uint8_t)u->type_override;
+    }
+    if (u->flags >= 0 && u->flags <= 0xff) {
+        rec->flags = (uint8_t)((rec->flags & ~NETDASH_FLAGS_USER) | (u->flags & NETDASH_FLAGS_USER));
+    }
+    return true;
+}
+
 esp_err_t device_db_set_user(const uint8_t mac[6], const char *nickname,
                              int type_override, int flags)
 {
     if (mac == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
+    const user_ctx_t u = { .nickname = nickname, .type_override = type_override, .flags = flags };
 
     netdash_device_t snapshot;
+    port_state_t     ps;
     device_db_lock();
     int idx = find_index_locked(mac);
-    if (idx < 0) {
-        device_db_unlock();
-        return ESP_ERR_NOT_FOUND;
+    if (idx >= 0) {
+        apply_user(&s_devices[idx], &u);
+        snapshot     = s_devices[idx];
+        ps           = s_ports[idx];
+        s_dirty[idx] = false;
     }
-
-    netdash_device_t *d = &s_devices[idx];
-    if (nickname != NULL) {
-        strncpy(d->nickname, nickname, sizeof(d->nickname) - 1);
-        d->nickname[sizeof(d->nickname) - 1] = '\0';
-    }
-    if (type_override >= 0 && type_override < NETDASH_TYPE_MAX) {
-        d->type_override = (uint8_t)type_override;
-    }
-    if (flags >= 0 && flags <= 0xff) {
-        /* Only the user's bits: SHARED_MAC is device_db's own finding. */
-        d->flags = (uint8_t)((d->flags & ~NETDASH_FLAGS_USER) | (flags & NETDASH_FLAGS_USER));
-    }
-    snapshot = *d;
     device_db_unlock();
 
-    esp_err_t err = nvs_write_user_fields(&snapshot);
-    if (err == ESP_OK) {
-        mark_persisted(snapshot.mac);
+    if (idx >= 0) {
+        return store_device(&snapshot, &ps);
     }
-    return err;
+    /* Only remembered: edit its record directly. */
+    return dev_store_update(mac, false, edit_user, (void *)&u, NULL, NULL);
 }
 
 esp_err_t device_db_remove(const uint8_t mac[6])
@@ -1575,31 +1941,22 @@ esp_err_t device_db_remove(const uint8_t mac[6])
     int  idx   = find_index_locked(mac);
     bool found = idx >= 0;
     if (found) {
-        const size_t last = s_count - 1;
-        if ((size_t)idx != last) {
-            /* Every array indexed by device position has to move together, or
-               the tail device inherits the deleted one's ports and history. */
-            s_devices[idx]   = s_devices[last];
-            s_seen[idx]      = s_seen[last];
-            s_persisted[idx] = s_persisted[last];
-            s_ports[idx]     = s_ports[last];
-            memcpy(s_hist[idx], s_hist[last], NETDASH_HISTORY_BYTES);
-        }
-        memset(&s_ports[last], 0, sizeof(s_ports[last]));
-        memset(s_hist[last], 0, NETDASH_HISTORY_BYTES);
-        s_count--;
+        drop_slot_locked(idx);
         /* Whatever was being worked out about its addresses starts over. */
         addr_forget_locked(mac);
     }
     device_db_unlock();
 
+    netdash_device_t unused;
+    if (!found) {
+        found = get_from_register(mac, &unused);
+    }
     if (!found) {
         return ESP_ERR_NOT_FOUND;
     }
     /* Forgetting a device means forgetting what was written about it too. */
     notes_forget_device(mac);
-    ports_erase_nvs(mac);
-    return nvs_erase_device(mac);
+    return dev_store_remove(mac);
 }
 
 esp_err_t device_db_ensure(const uint8_t mac[6])
@@ -1611,38 +1968,54 @@ esp_err_t device_db_ensure(const uint8_t mac[6])
     return device_db_ensure_shared(mac, mac, 0);
 }
 
+typedef struct {
+    const uint8_t *hw;
+    uint32_t       ip;
+    bool           shared;
+} ensure_ctx_t;
+
+static bool edit_ensure(dev_rec_t *rec, bool created, void *ctx)
+{
+    const ensure_ctx_t *c = ctx;
+    if (!created) {
+        return false;   /* already remembered: nothing to do */
+    }
+    memcpy(rec->hw_mac, c->hw, 6);
+    if (c->shared) {
+        rec->last_ip = c->ip;   /* the address that tells it apart */
+        rec->flags   = NETDASH_FLAG_SHARED_MAC;
+    }
+    return true;
+}
+
 esp_err_t device_db_ensure_shared(const uint8_t id[6], const uint8_t hw_mac[6], uint32_t ip)
 {
     if (id == NULL || hw_mac == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    const bool shared = memcmp(id, hw_mac, 6) != 0;
-
     device_db_lock();
-    bool no_room = false;
-    int  idx     = find_index_locked(id);
-    if (idx < 0) {
-        idx = new_slot_locked(id, hw_mac);
-        if (idx < 0) {
-            no_room = true;
-        } else {
-            netdash_device_t *d = &s_devices[idx];
-            d->miss_count = 255; /* offline: it has not actually been seen */
-            if (shared) {
-                d->ip    = ip;   /* the address that tells it apart */
-                d->flags = NETDASH_FLAG_SHARED_MAC;
-            }
-            d->type = classify_device(d, 0);
-        }
-    }
+    const bool active = find_index_locked(id) >= 0;
     device_db_unlock();
-
-    if (no_room) {
-        ESP_LOGW(TAG, "device table full, cannot import %02x:%02x:%02x:%02x:%02x:%02x",
-                 id[0], id[1], id[2], id[3], id[4], id[5]);
-        return ESP_ERR_NO_MEM;
+    if (active) {
+        return ESP_OK;
     }
-    return ESP_OK;
+    if (!dev_store_available()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* Remembered, not active: an imported device is offline until it is seen. */
+    ensure_ctx_t ctx = { .hw = hw_mac, .ip = ip, .shared = memcmp(id, hw_mac, 6) != 0 };
+    uint8_t      evicted[6];
+    bool         did_evict = false;
+    esp_err_t    err = dev_store_update(id, true, edit_ensure, &ctx, evicted, &did_evict);
+    if (did_evict) {
+        notes_forget_device(evicted);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "cannot import %02x:%02x:%02x:%02x:%02x:%02x: %s", id[0], id[1], id[2],
+                 id[3], id[4], id[5], esp_err_to_name(err));
+    }
+    return err;
 }
 
 void device_db_display_name(const netdash_device_t *dev, char *buf, size_t len)
@@ -1665,7 +2038,7 @@ void device_db_display_name(const netdash_device_t *dev, char *buf, size_t len)
         return;
     }
     int n;
-    if (dev->vendor[0] != '\0') {
+    if (dev->vendor != NULL && dev->vendor[0] != '\0') {
         n = snprintf(buf, len, "%s %02x%02x", dev->vendor, hw[4], hw[5]);
     } else {
         n = snprintf(buf, len, "%02x:%02x:%02x:%02x:%02x:%02x",
@@ -1817,7 +2190,7 @@ static void selftest_display_name(void)
     device_db_display_name(&d, buf, sizeof(buf));
     ST_CHECK(strcmp(buf, "00:11:22:33:44:55") == 0, "display_name falls back to the MAC (%s)", buf);
 
-    strcpy(d.vendor, "Raspberry Pi");
+    d.vendor = "Raspberry Pi";
     device_db_display_name(&d, buf, sizeof(buf));
     ST_CHECK(strcmp(buf, "Raspberry Pi 4455") == 0, "display_name falls back to vendor+bytes (%s)", buf);
 
@@ -1839,19 +2212,19 @@ static void selftest_classify(void)
     ST_CHECK(classify_device(&d, 0xc0a80101) == NETDASH_TYPE_ROUTER, "classify: gateway IP -> router");
 
     memset(&d, 0, sizeof(d));
-    strcpy(d.vendor, "ASUSTek");
+    d.vendor = "ASUSTek";
     ST_CHECK(classify_device(&d, 0xc0a80101) == NETDASH_TYPE_MESH_NODE, "classify: ASUS, not gateway -> mesh_node");
 
     memset(&d, 0, sizeof(d));
-    strcpy(d.vendor, "Netgear");
+    d.vendor = "Netgear";
     ST_CHECK(classify_device(&d, 0) == NETDASH_TYPE_SWITCH, "classify: Netgear, no services -> switch");
 
     memset(&d, 0, sizeof(d));
-    strcpy(d.vendor, "Synology");
+    d.vendor = "Synology";
     ST_CHECK(classify_device(&d, 0) == NETDASH_TYPE_NAS, "classify: Synology vendor -> nas");
 
     memset(&d, 0, sizeof(d));
-    strcpy(d.vendor, "LG Electronics");
+    d.vendor = "LG Electronics";
     ST_CHECK(classify_device(&d, 0) == NETDASH_TYPE_TV, "classify: LG Electronics -> tv");
 
     memset(&d, 0, sizeof(d));
@@ -1863,19 +2236,19 @@ static void selftest_classify(void)
     ST_CHECK(classify_device(&d, 0) == NETDASH_TYPE_PC, "classify: workstation service -> pc");
 
     memset(&d, 0, sizeof(d));
-    strcpy(d.vendor, "Espressif");
+    d.vendor = "Espressif";
     ST_CHECK(classify_device(&d, 0) == NETDASH_TYPE_IOT, "classify: Espressif -> iot");
 
     memset(&d, 0, sizeof(d));
-    strcpy(d.vendor, "HP");
+    d.vendor = "HP";
     ST_CHECK(classify_device(&d, 0) == NETDASH_TYPE_PRINTER, "classify: HP vendor -> printer");
 
     memset(&d, 0, sizeof(d));
-    strcpy(d.vendor, "Apple");
+    d.vendor = "Apple";
     ST_CHECK(classify_device(&d, 0) == NETDASH_TYPE_PHONE, "classify: Apple, no services -> phone");
 
     memset(&d, 0, sizeof(d));
-    strcpy(d.vendor, "Realtek");
+    d.vendor = "Realtek";
     ST_CHECK(classify_device(&d, 0) == NETDASH_TYPE_UNKNOWN, "classify: nothing matches -> unknown");
 
     for (int t = 0; t < NETDASH_TYPE_MAX; t++) {

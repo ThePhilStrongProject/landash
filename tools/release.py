@@ -59,7 +59,7 @@ There is no source code here.
 | | |
 |---|---|
 | [`latest.json`](latest.json) | The current release: its version, the image file and its size. |
-| [`firmware/`](firmware) | One firmware image per release, `netdash-vX.Y.Z.bin`. |
+| [`firmware/`](firmware) | One firmware image per release, `landash-vX.Y.Z.bin` (older ones `netdash-…`). |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release. |
 
 ## How a dongle updates
@@ -97,8 +97,8 @@ Every image records its own project name and version. With Python and
 [esptool](https://github.com/espressif/esptool) installed:
 
 ```
-esptool image-info firmware/netdash-vX.Y.Z.bin                  # esptool 5
-python -m esptool image_info --version 2 firmware/netdash-vX.Y.Z.bin   # esptool 4
+esptool image-info firmware/landash-vX.Y.Z.bin                  # esptool 5
+python -m esptool image_info --version 2 firmware/landash-vX.Y.Z.bin   # esptool 4
 ```
 
 Look for `Project name: netdash` and the version you expect.
@@ -201,7 +201,7 @@ def main():
             fail("latest.json already names %s; %s is not newer, and dongles would ignore it"
                  % (current, tag))
 
-    rel_file = "firmware/netdash-%s.bin" % tag
+    rel_file = "firmware/landash-%s.bin" % tag
     os.makedirs(os.path.join(rel, "firmware"), exist_ok=True)
     shutil.copyfile(BIN, os.path.join(rel, rel_file))
     with open(manifest_path, "w", encoding="utf-8", newline="\n") as f:

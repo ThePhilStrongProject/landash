@@ -426,7 +426,10 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "scan_total", scan_total);
     cJSON_AddNumberToObject(root, "last_sweep", (double)scanner_last_sweep_time());
     add_subnet_json(root);
-    cJSON_AddNumberToObject(root, "devices_total", (double)total);
+    /* Every device remembered, not only the active ones in RAM. */
+    const size_t known = device_db_known_count();
+    cJSON_AddNumberToObject(root, "devices_total", (double)(known > total ? known : total));
+    cJSON_AddNumberToObject(root, "devices_archived", (double)(known > total ? known - total : 0));
     cJSON_AddNumberToObject(root, "devices_online", (double)online);
     cJSON_AddNumberToObject(root, "devices_new_24h", (double)new_24h);
     if (mode == WIFI_MGR_MODE_AP || mode == WIFI_MGR_MODE_APSTA) {
@@ -547,7 +550,7 @@ static cJSON *device_to_json(const netdash_device_t *d, int64_t now)
      * device_add_ports() for the single-device view.
      */
     netdash_ports_t ports;
-    if (device_db_get_ports(d->mac, &ports)) {
+    if (device_db_get_port_summary(d->mac, &ports)) {
         cJSON_AddNumberToObject(o, "open_port_count", ports.count);
         cJSON_AddNumberToObject(o, "portscan_tier", ports.tier);
         cJSON_AddNumberToObject(o, "portscan_last", (double)ports.last_scan);
@@ -603,6 +606,57 @@ static int cmp_by_ip(const void *a, const void *b)
     return 0;
 }
 
+/*
+ * Sends one device as a JSON array element, with a leading comma after the
+ * first. Streaming a row at a time keeps a long list from ever being in RAM
+ * at once.
+ */
+static esp_err_t send_device_row(httpd_req_t *req, const netdash_device_t *d, int64_t now,
+                                 bool archived, size_t *sent)
+{
+    cJSON *o = device_to_json(d, now);
+    if (archived) {
+        cJSON_AddBoolToObject(o, "archived", true);
+    }
+    char *text = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    if (text == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    esp_err_t err = ESP_OK;
+    if (*sent > 0) {
+        err = httpd_resp_send_chunk(req, ",", 1);
+    }
+    if (err == ESP_OK) {
+        err = httpd_resp_send_chunk(req, text, strlen(text));
+    }
+    cJSON_free(text);
+    (*sent)++;
+    return err;
+}
+
+/*
+ * The devices that are only in the register, one flash read each. Asked for
+ * on demand, never polled: there can be a thousand of them.
+ */
+static esp_err_t send_archived_rows(httpd_req_t *req, bool show_hidden, int64_t now,
+                                    size_t *sent)
+{
+    esp_err_t    err   = ESP_OK;
+    const size_t slots = device_db_register_slots();
+    for (size_t i = 0; i < slots && err == ESP_OK; i++) {
+        netdash_device_t d;
+        if (!device_db_get_archived(i, &d)) {
+            continue;
+        }
+        if ((d.flags & NETDASH_FLAG_HIDDEN) != 0 && !show_hidden) {
+            continue;
+        }
+        err = send_device_row(req, &d, now, true, sent);
+    }
+    return err;
+}
+
 /* ------------------------------------------------------------------------- */
 /* GET /api/devices                                                          */
 /* ------------------------------------------------------------------------- */
@@ -610,6 +664,7 @@ static int cmp_by_ip(const void *a, const void *b)
 static esp_err_t devices_list_handler(httpd_req_t *req)
 {
     bool show_hidden   = false;
+    bool archived      = false;
     int  online_filter = -1; /* -1 = no filter */
 
     char query[64];
@@ -618,9 +673,29 @@ static esp_err_t devices_list_handler(httpd_req_t *req)
         if (httpd_query_key_value(query, "hidden", val, sizeof(val)) == ESP_OK) {
             show_hidden = (val[0] == '1');
         }
+        if (httpd_query_key_value(query, "archived", val, sizeof(val)) == ESP_OK) {
+            archived = (val[0] == '1');
+        }
         if (httpd_query_key_value(query, "online", val, sizeof(val)) == ESP_OK) {
             online_filter = (val[0] == '1') ? 1 : 0;
         }
+    }
+
+    if (archived) {
+        /* Only the remembered devices, which are all offline by definition. */
+        int64_t   now  = now_or_zero();
+        size_t    sent = 0;
+        httpd_resp_set_status(req, "200 OK");
+        httpd_resp_set_type(req, "application/json; charset=utf-8");
+        esp_err_t err = httpd_resp_send_chunk(req, "[", 1);
+        if (err == ESP_OK && online_filter != 1) {
+            err = send_archived_rows(req, show_hidden, now, &sent);
+        }
+        if (err == ESP_OK) {
+            err = httpd_resp_send_chunk(req, "]", 1);
+        }
+        httpd_resp_send_chunk(req, NULL, 0);
+        return err;
     }
 
     size_t             n   = 0;
@@ -658,21 +733,7 @@ static esp_err_t devices_list_handler(httpd_req_t *req)
             continue;
         }
 
-        cJSON *o = device_to_json(d, now);
-        char  *text = cJSON_PrintUnformatted(o);
-        cJSON_Delete(o);
-        if (text == NULL) {
-            err = ESP_ERR_NO_MEM;
-            break;
-        }
-        if (sent > 0) {
-            err = httpd_resp_send_chunk(req, ",", 1);
-        }
-        if (err == ESP_OK) {
-            err = httpd_resp_send_chunk(req, text, strlen(text));
-        }
-        cJSON_free(text);
-        sent++;
+        err = send_device_row(req, d, now, false, &sent);
     }
     free(buf);
 
@@ -711,29 +772,49 @@ static esp_err_t devices_export_handler(httpd_req_t *req)
     netdash_settings_t cfg;
     settings_get(&cfg);
 
-    int64_t now = now_or_zero();
-    cJSON  *arr = cJSON_CreateArray();
-    for (size_t i = 0; i < n; i++) {
-        cJSON_AddItemToArray(arr, device_to_json(&buf[i], now));
-    }
-    free(buf);
-
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddNumberToObject(root, "version", 1);
-    cJSON_AddNumberToObject(root, "exported_at", (double)now);
-    cJSON_AddStringToObject(root, "hostname", cfg.hostname);
-    cJSON_AddItemToObject(root, "devices", arr);
-
-    char *text = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
+    /*
+     * Streamed like the device list: the header fields as a small object with
+     * its closing brace left off, then the devices a row at a time, active
+     * and remembered, then the brackets that close both. Building it as one
+     * tree used to dip free heap to 47 KB with 28 devices; the register can
+     * hold a thousand.
+     */
+    int64_t now  = now_or_zero();
+    cJSON  *head = cJSON_CreateObject();
+    cJSON_AddNumberToObject(head, "version", 1);
+    cJSON_AddNumberToObject(head, "exported_at", (double)now);
+    cJSON_AddStringToObject(head, "hostname", cfg.hostname);
+    char *text = cJSON_PrintUnformatted(head);
+    cJSON_Delete(head);
     if (text == NULL) {
+        free(buf);
         return send_json_error(req, "500 Internal Server Error", "out of memory");
     }
+    size_t len = strlen(text);
+    if (len > 0 && text[len - 1] == '}') {
+        len--;
+    }
+
     httpd_resp_set_status(req, "200 OK");
     httpd_resp_set_type(req, "application/json; charset=utf-8");
     httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"landash-devices.json\"");
-    esp_err_t err = httpd_resp_send(req, text, strlen(text));
+    esp_err_t err = httpd_resp_send_chunk(req, text, len);
     cJSON_free(text);
+    if (err == ESP_OK) {
+        err = httpd_resp_send_chunk(req, ",\"devices\":[", 12);
+    }
+    size_t sent = 0;
+    for (size_t i = 0; i < n && err == ESP_OK; i++) {
+        err = send_device_row(req, &buf[i], now, false, &sent);
+    }
+    free(buf);
+    if (err == ESP_OK) {
+        err = send_archived_rows(req, true, now, &sent);
+    }
+    if (err == ESP_OK) {
+        err = httpd_resp_send_chunk(req, "]}", 2);
+    }
+    httpd_resp_send_chunk(req, NULL, 0);
     return err;
 }
 

@@ -7,7 +7,7 @@ GitHub repo that holds nothing but built firmware and one small file,
 ```json
 {
   "version": "v0.14.1",
-  "file": "firmware/netdash-v0.14.1.bin",
+  "file": "firmware/landash-v0.14.1.bin",
   "size": 1982176
 }
 ```
