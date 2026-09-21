@@ -96,6 +96,7 @@ tbody tr:hover{background:rgba(var(--accent-rgb),.06)}
 .badge{display:inline-block;font-size:var(--fs-xs);font-weight:700;padding:1px 6px;border-radius:var(--r-sm);
 border:1px solid var(--new);color:var(--new);background:none;margin-left:6px;vertical-align:middle;
 text-transform:uppercase;letter-spacing:.06em}
+.badge-quiet{border-color:var(--border);color:var(--muted);font-weight:600}
 .namecell{display:flex;align-items:center;gap:6px;min-width:0}
 .namecell .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 @media (min-width:721px) and (hover:hover){
@@ -1100,7 +1101,7 @@ maxGroups: 8,
 linksMeta: null,
 notifs: [],
 theme: "dark",
-detail: "comfort",
+detailLevel: "comfort",
 icons: [],
 iconsMeta: null,
 notifUnread: 0,
@@ -1279,7 +1280,7 @@ parts.push("<span class=\"sb " + esc(w.state) + "\" title=\"ICMP " +
 icon(w.state === "up" ? "i-globe" : "i-globe-off") + esc(label) + "</span>");
 }
 
-    if (state.detail === "hacker"){
+    if (state.detailLevel === "hacker"){
 if (s.heap_free){
 parts.push("<span class=\"sb\">" + icon("i-gauge") + esc(fmtBytes(s.heap_free)) +
 " free</span>");
@@ -1331,13 +1332,13 @@ return "comfort";
  */
 function applyAppearance(theme, detail, remember){
 state.theme  = validTheme(theme);
-state.detail = validDetail(detail);
+state.detailLevel = validDetail(detail);
 document.documentElement.setAttribute("data-theme", state.theme);
-document.documentElement.setAttribute("data-detail", state.detail);
+document.documentElement.setAttribute("data-detail", state.detailLevel);
 if (remember){
 try {
 localStorage.setItem("netdash-theme", state.theme);
-localStorage.setItem("netdash-detail", state.detail);
+localStorage.setItem("netdash-detail", state.detailLevel);
 } catch(e){}
 }
 renderClock();
@@ -1352,7 +1353,7 @@ if (!t) return;
 var now = new Date();
 var h = now.getHours(), m = now.getMinutes();
 var txt = (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m;
-if (state.detail === "hacker"){
+if (state.detailLevel === "hacker"){
 var sec = now.getSeconds();
 txt += ":" + (sec < 10 ? "0" : "") + sec;
 }
@@ -1435,13 +1436,25 @@ if (av < bv) return -1*dir; if (av > bv) return 1*dir; return 0;
 });
 return arr;
 }
+/* The MAC the device really answers with. Differs from the key only for a
+   device behind a shared MAC, whose key is synthetic (see docs/API.md). */
+function hwMacOf(key){
+var d = state.devicesByMac && state.devicesByMac[key];
+return (d && d.hw_mac) || key;
+}
+function macCellHtml(d){
+return esc(d.hw_mac || d.mac) + (d.shared_mac
+? " <span class=\"badge badge-quiet\" title=\"Several devices answer with this MAC, usually because a Wi-Fi extender is bridging them. This entry is pinned to its IP.\">shared</span>"
+: "");
+}
+
 function renderDevices(){
 if (state.editingMac) return;
 var q = state.filter.trim().toLowerCase();
 var list = state.devices.filter(function(d){
 if (d.hidden && !state.showHidden) return false;
 if (!q) return true;
-return [d.display_name,d.ip,d.mac,d.vendor,d.hostname].join(" ").toLowerCase().indexOf(q) !== -1;
+return [d.display_name,d.ip,d.hw_mac||d.mac,d.vendor,d.hostname].join(" ").toLowerCase().indexOf(q) !== -1;
 });
 list = sortDevices(list);
 $("devEmpty").hidden = list.length !== 0;
@@ -1473,7 +1486,7 @@ return "<tr data-mac=\"" + esc(d.mac) + "\" class=\"devrow\" tabindex=\"0\">" +
 "<td data-col=\"type\" data-label=\"Type\"><button type=\"button\" class=\"typebtn\" data-act=\"type\">" +
 icon(TYPE_ICON[type]||"i-unknown") + esc(TYPE_LABEL[type]||type) + "</button></td>" +
 "<td data-col=\"ip\" data-label=\"IP\" class=\"mono\">" + esc(d.ip) + "</td>" +
-"<td data-col=\"mac\" data-label=\"MAC\" class=\"mono muted mobilehidden\">" + esc(d.mac) + "</td>" +
+"<td data-col=\"mac\" data-label=\"MAC\" class=\"mono muted mobilehidden\">" + macCellHtml(d) + "</td>" +
 "<td data-col=\"vendor\" data-label=\"Vendor\" class=\"mobilehidden\">" + esc(d.vendor||"—") + "</td>" +
 "<td data-col=\"hostname\" data-label=\"Hostname\" class=\"mobilehidden\" title=\"sources: " + esc((d.sources||[]).join(", ")||"none") + "\">" + esc(d.hostname||"—") + "</td>" +
 "<td data-col=\"ports\" data-label=\"Open ports\" class=\"mobilehidden\">" + portsCellHtml(d) + "</td>" +
@@ -1753,7 +1766,8 @@ return "" +
 "<div class=\"muted\" style=\"margin:2px 0 16px;font-size:.82rem\">" + (d.online?"Online":"Offline") + "</div>" +
 "<div class=\"detailsection\"><h4>Identity</h4><dl class=\"kv\">" +
 "<dt>IP</dt><dd class=\"mono\">" + esc(d.ip) + "</dd>" +
-"<dt>MAC</dt><dd class=\"mono\">" + esc(d.mac) + "</dd>" +
+"<dt>MAC</dt><dd class=\"mono\">" + macCellHtml(d) + "</dd>" +
+(d.shared_mac ? "<dt></dt><dd class=\"muted\" style=\"font-size:.78rem\">Other devices answer with this MAC too, most often because a Wi-Fi extender bridges them onto the network. This entry follows its IP address rather than the MAC.</dd>" : "") +
 "<dt>Vendor</dt><dd>" + esc(d.vendor||"—") + "</dd>" +
 "<dt>Hostname</dt><dd>" + esc(d.hostname||"—") + "</dd>" +
 "<dt>Type</dt><dd><button type=\"button\" class=\"typebtn\" id=\"detailTypeBtn\">" +
@@ -2220,11 +2234,11 @@ icon("i-note") + esc(l.note) + "</div>") : "") +
 /* Hacker only: what the port is, when it was last proved alive, and the MAC
    the link is really pinned to. Built rather than hidden, so it costs nothing
    at the other levels. */
-(state.detail === "hacker"
+(state.detailLevel === "hacker"
 ? ("<div class=\"lc-meta\">" +
 esc((l.service ? l.service : "port " + l.port) +
 (l.service_checked ? " \u00b7 " + relTime(l.service_checked) : "")) +
-"</div><div class=\"lc-meta\">" + esc(l.mac) + "</div>")
+"</div><div class=\"lc-meta\">" + esc(hwMacOf(l.mac)) + "</div>")
 : "");
 var cardTag;
 if (known && !editing){
@@ -3194,7 +3208,7 @@ return "<button type=\"button\" class=\"themecard\" data-theme-pick=\"" + t.id +
 
 dl.innerHTML = DETAILS.map(function(d){
 return "<button type=\"button\" class=\"detailrow\" data-detail-pick=\"" + d.id +
-"\" aria-pressed=\"" + (state.detail === d.id ? "true" : "false") + "\">" +
+"\" aria-pressed=\"" + (state.detailLevel === d.id ? "true" : "false") + "\">" +
 "<span class=\"tick\">" + icon("i-check") + "</span>" +
 "<span><span class=\"dname\">" + esc(d.name) + "</span>" +
 "<span class=\"dnote\">" + esc(d.note) + "</span></span></button>";
@@ -3214,9 +3228,9 @@ b.addEventListener("click", function(){ setAppearance(null, b.dataset.detailPick
  * validate that would justify the extra step.
  */
 function setAppearance(theme, detail){
-applyAppearance(theme || state.theme, detail || state.detail, true);
+applyAppearance(theme || state.theme, detail || state.detailLevel, true);
 renderAppearance();
-api("PUT","/api/settings",{theme:state.theme, detail:state.detail})
+api("PUT","/api/settings",{theme:state.theme, detail:state.detailLevel})
 .catch(function(e){ toast("Saved on this browser only: " + ((e&&e.message)||"failed"), "err"); });
 }
 

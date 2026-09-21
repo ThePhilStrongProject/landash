@@ -67,6 +67,15 @@ typedef enum {
 
 /* netdash_device_t::flags */
 #define NETDASH_FLAG_HIDDEN     (1u << 0)
+/*
+ * This hardware MAC answers at more than one address - a Wi-Fi extender in
+ * client mode rewrites every wired device behind it to its own MAC - so the
+ * entry is pinned to its IP rather than following the MAC. Set by device_db,
+ * never by the user; see "Devices that share a MAC" in docs/API.md.
+ */
+#define NETDASH_FLAG_SHARED_MAC (1u << 1)
+/* The bits device_db_set_user() may change. The rest belong to device_db. */
+#define NETDASH_FLAGS_USER      NETDASH_FLAG_HIDDEN
 
 /*
  * Hostname sources, ordered by priority: a name from a higher-numbered source
@@ -85,7 +94,14 @@ typedef enum {
 #define NETDASH_SRC_BIT(src) ((uint8_t)(1u << (src)))
 
 typedef struct {
+    /*
+     * The key. The hardware MAC for every ordinary device; for a device behind
+     * a shared MAC (NETDASH_FLAG_SHARED_MAC) other than the one that holds the
+     * MAC itself, a synthetic id starting 0x03 - multicast, so it can never
+     * collide with a real device - derived from hw_mac and ip.
+     */
     uint8_t  mac[6];
+    uint8_t  hw_mac[6];             /* the MAC it answers ARP with           */
     uint32_t ip;                    /* last known IPv4, host byte order      */
     char     hostname[32];          /* best auto name, see name_src          */
     char     vendor[24];            /* OUI lookup, empty when unknown        */
@@ -141,6 +157,11 @@ bool device_db_get_at(size_t index, netdash_device_t *out);
  * Inserts the device when unknown, resets miss_count, and posts NETDASH_EVENT
  * DEVICE_NEW / DEVICE_ONLINE / DEVICE_IP_CHANGED as appropriate.
  *
+ * mac is the hardware MAC as ARP reported it. When one MAC turns out to answer
+ * at several addresses at once, this routes each address to its own entry
+ * rather than moving a single entry back and forth; callers do not need to
+ * know, but must pass every (mac, ip) pair they see, not one per MAC.
+ *
  * rtt_ms is the ICMP round trip, or -1 when the host was only found via ARP.
  * Returns true when the device was newly inserted.
  */
@@ -188,7 +209,18 @@ esp_err_t device_db_remove(const uint8_t mac[6]);
  */
 esp_err_t device_db_ensure(const uint8_t mac[6]);
 
-/* nickname, else hostname, else vendor plus last 2 MAC bytes, else the MAC. */
+/*
+ * Recreates an entry for a device behind a shared MAC from an export: id is
+ * its key, hw_mac and ip what it answers with. Like device_db_ensure(), a
+ * no-op when id is already known, and posts nothing.
+ */
+esp_err_t device_db_ensure_shared(const uint8_t id[6], const uint8_t hw_mac[6], uint32_t ip);
+
+/*
+ * nickname, else hostname, else vendor plus last 2 MAC bytes, else the MAC.
+ * An unnamed entry behind a shared MAC also gets its address's last octet,
+ * since the MAC alone would name two entries identically.
+ */
 void device_db_display_name(const netdash_device_t *dev, char *buf, size_t len);
 
 /* ------------------------------------------------------------------------- */

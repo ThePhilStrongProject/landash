@@ -304,6 +304,19 @@ only has to keep already-online devices online will pass while a sweep that has
 to find them from scratch fails. That is exactly how the 16/s regression got
 through: reboot first, then count.
 
+**A MAC is not always one device.** A Wi-Fi extender in client mode (a TP-Link
+RE700X, for one) rewrites the MAC of every wired device behind it to its own,
+so the extender and the PC behind it both answer ARP with one MAC at two
+addresses. Keyed by MAC alone that was one entry flipping between the two
+every sweep, with an `ip_changed` notification each time. `device_db` now
+tracks MACs seen at a second address and, once both addresses have been alive
+together for longer than lwIP's five-minute ARP cache can explain, pins the
+entry and gives every other address its own entry under a synthetic key
+(`03:` + a hash of MAC and address). The scanner's per-sweep dedupe is keyed
+on (MAC, address) for the same reason. Do not shorten `SHARED_CONFIRM_S` below
+`ARP_MAXAGE`: a stale entry for a device that really moved would then look like
+a second device. The API doc's "Devices that share a MAC" has the rest.
+
 **The OUI table must be generated with every prefix per vendor.** Sampling a
 handful of blocks per manufacturer looks fine and matches almost nothing real:
 ASUS alone holds dozens of blocks. Regenerate with

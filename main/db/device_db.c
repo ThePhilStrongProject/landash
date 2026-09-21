@@ -10,10 +10,17 @@
  * I/O and event posting against the snapshot. The events ring buffer has its
  * own, independent mutex.
  *
- * NVS: namespace "dev", key = 12 lowercase hex chars of the MAC, value a
- * packed blob {version, nickname[32], type_override, flags, first_seen,
- * last_ip}. Only the user-owned fields and first_seen are persisted; live
- * telemetry (ip/hostname/vendor/services/last_seen/rtt/miss_count) is not.
+ * NVS: namespace "dev", key = 12 lowercase hex chars of the device key, value
+ * a packed blob {version, nickname[32], type_override, flags, first_seen,
+ * last_ip, hw_mac[6]}. Only the user-owned fields, first_seen and what a
+ * shared-MAC entry needs to be recognised again are persisted; live telemetry
+ * (hostname/vendor/services/last_seen/rtt/miss_count) is not.
+ *
+ * Shared MACs: a Wi-Fi extender in client mode answers ARP for every wired
+ * device behind it with its own MAC, so one MAC can be alive at several
+ * addresses at once. The address tracker below tells that apart from a DHCP
+ * move, and once it is sure, each extra address gets an entry of its own keyed
+ * by a synthetic id. docs/API.md, "Devices that share a MAC", has the why.
  */
 #include "device_db.h"
 
@@ -26,6 +33,7 @@
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "nvs.h"
@@ -63,6 +71,150 @@ static SemaphoreHandle_t s_lock;
 /* Scratch buffer for device_db_mark_sweep_end(); only that function touches
  * it, and only the scanner task calls it, so no extra lock is needed. */
 static uint8_t s_offline_macs[NETDASH_MAX_DEVICES][6];
+
+/* ------------------------------------------------------------------------- */
+/* MACs seen at more than one address                                        */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * lwIP keeps a departed host's ARP entry for ARP_MAXAGE, five minutes, so for
+ * that long after a genuine DHCP move the scanner still finds the MAC at its
+ * old address as well as its new one. Two addresses only prove a shared MAC
+ * once each has been seen more than this long after the other appeared.
+ */
+#define SHARED_CONFIRM_S 360
+/* Tracker entries nobody has seen for this long are dropped. */
+#define ADDR_EXPIRE_S    3600
+#define ADDR_TRACK_SLOTS 16
+
+/*
+ * Only MACs that have been seen at a second address are tracked, so a handful
+ * of slots covers a whole network: every other device never gets an entry.
+ */
+typedef struct {
+    uint8_t  mac[6];       /* hardware MAC                                  */
+    uint32_t ip;           /* 0 = free slot                                 */
+    uint32_t first_s;      /* uptime seconds this address (re)appeared      */
+    uint32_t last_s;       /* uptime seconds of its latest sighting         */
+    uint32_t moved_from;   /* the entry moved here from this address and the
+                              ip_changed notification is still owed, else 0 */
+} addr_track_t;
+
+static addr_track_t s_addrs[ADDR_TRACK_SLOTS];
+
+/* Scratch for device_db_mark_sweep_end(), like s_offline_macs. */
+static addr_track_t s_moves_due[ADDR_TRACK_SLOTS];
+
+static uint32_t uptime_s(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000000);
+}
+
+/* Caller holds the lock. */
+static addr_track_t *addr_find_locked(const uint8_t mac[6], uint32_t ip)
+{
+    for (size_t i = 0; i < ADDR_TRACK_SLOTS; i++) {
+        if (s_addrs[i].ip == ip && ip != 0 && memcmp(s_addrs[i].mac, mac, 6) == 0) {
+            return &s_addrs[i];
+        }
+    }
+    return NULL;
+}
+
+/* Caller holds the lock. */
+static bool addr_tracked_locked(const uint8_t mac[6])
+{
+    for (size_t i = 0; i < ADDR_TRACK_SLOTS; i++) {
+        if (s_addrs[i].ip != 0 && memcmp(s_addrs[i].mac, mac, 6) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Caller holds the lock. */
+static void addr_forget_locked(const uint8_t mac[6])
+{
+    for (size_t i = 0; i < ADDR_TRACK_SLOTS; i++) {
+        if (memcmp(s_addrs[i].mac, mac, 6) == 0) {
+            memset(&s_addrs[i], 0, sizeof(s_addrs[i]));
+        }
+    }
+}
+
+/*
+ * Records a sighting of mac at ip and returns its entry. An address that went
+ * unseen for longer than the confirmation window counts as appearing afresh,
+ * so a device returning to an old lease days later is a move, not evidence
+ * that it had been at both addresses all along. Caller holds the lock.
+ */
+static addr_track_t *addr_note_locked(const uint8_t mac[6], uint32_t ip, uint32_t now_s)
+{
+    addr_track_t *a = addr_find_locked(mac, ip);
+    if (a == NULL) {
+        for (size_t i = 0; i < ADDR_TRACK_SLOTS; i++) {
+            if (s_addrs[i].ip == 0) {
+                a = &s_addrs[i];
+                break;
+            }
+            if (a == NULL || s_addrs[i].last_s < a->last_s) {
+                a = &s_addrs[i];
+            }
+        }
+        memset(a, 0, sizeof(*a));
+        memcpy(a->mac, mac, 6);
+        a->ip      = ip;
+        a->first_s = now_s;
+    } else if (now_s - a->last_s > SHARED_CONFIRM_S) {
+        a->first_s = now_s;
+    }
+    a->last_s = now_s;
+    return a;
+}
+
+/*
+ * True when another address of the same MAC has been alive at the same time as
+ * a: each seen more than SHARED_CONFIRM_S after the other first appeared. A
+ * stale ARP entry cannot manage that, because it dies within ARP_MAXAGE of the
+ * host leaving. Caller holds the lock.
+ */
+static bool addr_concurrent_locked(const addr_track_t *a)
+{
+    for (size_t i = 0; i < ADDR_TRACK_SLOTS; i++) {
+        const addr_track_t *x = &s_addrs[i];
+        if (x == a || x->ip == 0 || memcmp(x->mac, a->mac, 6) != 0) {
+            continue;
+        }
+        if ((int64_t)a->last_s - (int64_t)x->first_s > SHARED_CONFIRM_S &&
+            (int64_t)x->last_s - (int64_t)a->first_s > SHARED_CONFIRM_S) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * The key for an address behind a shared MAC. FNV-1a over the MAC and the
+ * address, so the same device gets the same key after a reboot and finds its
+ * persisted nickname again. The first byte is 0x03: the multicast bit means no
+ * real device can ever have this as its MAC.
+ */
+static void shared_id(const uint8_t hw[6], uint32_t ip, uint8_t out[6])
+{
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (int i = 0; i < 6; i++) {
+        h ^= hw[i];
+        h *= 0x100000001b3ull;
+    }
+    for (int i = 3; i >= 0; i--) {
+        h ^= (ip >> (i * 8)) & 0xff;
+        h *= 0x100000001b3ull;
+    }
+    out[0] = 0x03;
+    for (int i = 1; i < 6; i++) {
+        out[i] = (uint8_t)(h >> (8 * (i - 1)));
+    }
+}
 
 /* ------------------------------------------------------------------------- */
 /* Wall-clock helper                                                         */
@@ -124,6 +276,48 @@ static int find_index_locked(const uint8_t mac[6])
         }
     }
     return -1;
+}
+
+/* True when an entry other than skip answers with hardware MAC hw. */
+static bool has_sibling_locked(const uint8_t hw[6], int skip)
+{
+    for (size_t i = 0; i < s_count; i++) {
+        if ((int)i != skip && memcmp(s_devices[i].hw_mac, hw, 6) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool evict_one_locked(void);
+
+/*
+ * Appends a blank entry keyed by id for a device answering with hardware MAC
+ * hw, evicting something if the table is full. Returns its index, or -1 when
+ * there is no room. Caller holds the lock.
+ */
+static int new_slot_locked(const uint8_t id[6], const uint8_t hw[6])
+{
+    if (s_count >= NETDASH_MAX_DEVICES && !evict_one_locked()) {
+        return -1;
+    }
+    const int         idx = (int)s_count++;
+    netdash_device_t *d   = &s_devices[idx];
+    memset(d, 0, sizeof(*d));
+    memcpy(d->mac, id, 6);
+    memcpy(d->hw_mac, hw, 6);
+    d->rtt_ms = -1;
+    memset(&s_ports[idx], 0, sizeof(s_ports[idx]));
+    memset(s_hist[idx], 0, NETDASH_HISTORY_BYTES);
+    ports_restore_locked(idx);
+
+    const char *vendor = oui_lookup(hw);
+    if (vendor != NULL) {
+        strncpy(d->vendor, vendor, sizeof(d->vendor) - 1);
+    }
+    s_seen[idx]      = false;
+    s_persisted[idx] = false;
+    return idx;
 }
 
 /*
@@ -318,8 +512,9 @@ bool device_db_get_history(const uint8_t mac[6], uint8_t *out, size_t cap, uint1
 /* ------------------------------------------------------------------------- */
 
 #define DEV_NVS_NS       "dev"
-#define DEV_BLOB_VERSION 1
+#define DEV_BLOB_VERSION 2
 
+/* Version 1 had no hw_mac: the key was always the hardware MAC. */
 typedef struct __attribute__((packed)) {
     uint8_t  version;
     char     nickname[32];
@@ -327,7 +522,20 @@ typedef struct __attribute__((packed)) {
     uint8_t  flags;
     int64_t  first_seen;
     uint32_t last_ip;
+} dev_blob_v1_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t  version;
+    char     nickname[32];
+    uint8_t  type_override;
+    uint8_t  flags;
+    int64_t  first_seen;
+    uint32_t last_ip;       /* for a shared-MAC entry, the address it is pinned to */
+    uint8_t  hw_mac[6];
 } dev_blob_t;
+
+_Static_assert(sizeof(dev_blob_v1_t) == 47, "v1 device blob layout is persisted, never change it");
+_Static_assert(sizeof(dev_blob_t) == 53, "device blob layout is persisted");
 
 static void mac_to_key(const uint8_t mac[6], char key[13])
 {
@@ -373,6 +581,7 @@ static esp_err_t nvs_write_user_fields(const netdash_device_t *d)
     blob.flags          = d->flags;
     blob.first_seen     = d->first_seen;
     blob.last_ip        = d->ip;
+    memcpy(blob.hw_mac, d->hw_mac, 6);
 
     char key[13];
     mac_to_key(d->mac, key);
@@ -459,6 +668,7 @@ esp_err_t device_db_init(void)
     memset(s_devices, 0, sizeof(s_devices));
     memset(s_seen, 0, sizeof(s_seen));
     memset(s_persisted, 0, sizeof(s_persisted));
+    memset(s_addrs, 0, sizeof(s_addrs));
 
     nvs_handle_t h;
     esp_err_t    err = nvs_open(DEV_NVS_NS, NVS_READWRITE, &h);
@@ -477,11 +687,17 @@ esp_err_t device_db_init(void)
             if (s_count < NETDASH_MAX_DEVICES && key_to_mac(info.key, mac)) {
                 dev_blob_t blob;
                 size_t     sz = sizeof(blob);
-                if (nvs_get_blob(h, info.key, &blob, &sz) == ESP_OK &&
-                    sz == sizeof(blob) && blob.version == DEV_BLOB_VERSION) {
+                bool       ok = nvs_get_blob(h, info.key, &blob, &sz) == ESP_OK;
+                if (ok && sz == sizeof(dev_blob_v1_t) && blob.version == 1) {
+                    memcpy(blob.hw_mac, mac, 6);   /* v1: the key was the MAC */
+                } else if (!ok || sz != sizeof(blob) || blob.version != DEV_BLOB_VERSION) {
+                    ok = false;
+                }
+                if (ok) {
                     netdash_device_t *d = &s_devices[s_count];
                     memset(d, 0, sizeof(*d));
                     memcpy(d->mac, mac, 6);
+                    memcpy(d->hw_mac, blob.hw_mac, 6);
                     d->ip = blob.last_ip;
                     strncpy(d->nickname, blob.nickname, sizeof(d->nickname) - 1);
                     d->type_override = blob.type_override;
@@ -491,7 +707,7 @@ esp_err_t device_db_init(void)
                     d->rtt_ms        = -1;
                     d->miss_count    = 255; /* offline until seen this run */
 
-                    const char *vendor = oui_lookup(mac);
+                    const char *vendor = oui_lookup(d->hw_mac);
                     if (vendor != NULL) {
                         strncpy(d->vendor, vendor, sizeof(d->vendor) - 1);
                     }
@@ -500,6 +716,7 @@ esp_err_t device_db_init(void)
                     s_persisted[s_count] = true;
                     s_seen[s_count]      = false;
                     memset(&s_ports[s_count], 0, sizeof(s_ports[s_count]));
+                    memset(s_hist[s_count], 0, NETDASH_HISTORY_BYTES);
                     ports_restore_locked((int)s_count);
                     s_count++;
                 } else {
@@ -937,39 +1154,108 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
     }
 
     netdash_device_t snapshot = {0};
+    netdash_device_t primary  = {0};   /* the MAC's own entry, once declared shared */
     bool     inserted           = false;
     bool     became_online      = false;
     bool     ip_changed         = false;
-    bool     persist_first_seen = false;
+    bool     persist            = false;
     bool     table_full         = false;
     bool     was_gone           = false;
+    bool     declared_shared    = false;
+    bool     stale              = false;   /* an old address still in the ARP cache */
+    bool     split              = false;   /* this address gets an entry of its own */
     uint32_t prev_ip            = 0;
+    uint8_t  pid[6]             = {0};
+    const uint32_t now_s        = uptime_s();
 
     device_db_lock();
 
     history_advance_locked(now);
 
-    int idx = find_index_locked(mac);
+    int idx = -1;
+    if (ip != 0) {
+        shared_id(mac, ip, pid);
+        idx = find_index_locked(pid);   /* an address already split off */
+    }
     if (idx < 0) {
-        if (s_count >= NETDASH_MAX_DEVICES && !evict_one_locked()) {
+        idx = find_index_locked(mac);
+    }
+
+    if (idx >= 0 && ip != 0 && memcmp(s_devices[idx].mac, mac, 6) == 0 && s_devices[idx].ip != 0) {
+        netdash_device_t *d = &s_devices[idx];
+
+        /*
+         * A different address, or any sighting of a MAC already under watch,
+         * goes through the tracker. Every other device skips all of this.
+         */
+        if ((d->flags & NETDASH_FLAG_SHARED_MAC) == 0 &&
+            (d->ip != ip || addr_tracked_locked(mac))) {
+            if (d->ip != ip && addr_find_locked(mac, d->ip) == NULL) {
+                (void)addr_note_locked(mac, d->ip, now_s);   /* where it was until now */
+            }
+            addr_track_t *a = addr_note_locked(mac, ip, now_s);
+
+            if (addr_concurrent_locked(a)) {
+                /*
+                 * Two addresses alive at once for longer than any stale ARP
+                 * entry lasts: this MAC is shared. The entry stays where it
+                 * is, pinned, and forgets the name, services and ports it had
+                 * collected, since they came from both devices at once and
+                 * discovery will fill them in again for each one separately.
+                 */
+                d->flags        |= NETDASH_FLAG_SHARED_MAC;
+                d->hostname[0]   = '\0';
+                d->name_src      = NETDASH_NAME_SRC_NONE;
+                d->sources       = 0;
+                d->services      = 0;
+                d->type          = classify_device(d, wifi_mgr_get_gateway());
+                s_persisted[idx] = true;   /* written below; also not evictable now */
+                addr_forget_locked(mac);   /* and any move it owed is withdrawn */
+                primary          = *d;
+                declared_shared  = true;
+            } else if (d->ip != ip) {
+                /*
+                 * The entry follows whichever address appeared most recently.
+                 * A sighting at an older one is the ARP cache remembering where
+                 * the device used to be, not the device moving back.
+                 */
+                addr_track_t *cur = addr_find_locked(mac, d->ip);
+                if (cur == NULL || a->first_s >= cur->first_s) {
+                    ip_changed    = true;
+                    prev_ip       = d->ip;
+                    a->moved_from = d->ip;
+                    if (cur != NULL) {
+                        cur->moved_from = 0;
+                    }
+                } else {
+                    stale = true;
+                }
+            }
+        }
+        split = (d->flags & NETDASH_FLAG_SHARED_MAC) != 0 && d->ip != ip;
+    }
+
+    if (split) {
+        idx = new_slot_locked(pid, mac);
+        if (idx < 0) {
             table_full = true;
         } else {
-            idx                 = (int)s_count++;
-            netdash_device_t *d = &s_devices[idx];
-            memset(d, 0, sizeof(*d));
-            memcpy(d->mac, mac, 6);
-            d->rtt_ms = -1;
-            memset(&s_ports[idx], 0, sizeof(s_ports[idx]));
-            memset(s_hist[idx], 0, NETDASH_HISTORY_BYTES);
-            ports_restore_locked(idx);
-
-            const char *vendor = oui_lookup(mac);
-            if (vendor != NULL) {
-                strncpy(d->vendor, vendor, sizeof(d->vendor) - 1);
+            s_devices[idx].flags = NETDASH_FLAG_SHARED_MAC;
+            inserted             = true;
+            persist              = true;   /* its hw_mac and address must survive a reboot */
+        }
+    } else if (idx < 0) {
+        idx = new_slot_locked(mac, mac);
+        if (idx < 0) {
+            table_full = true;
+        } else {
+            inserted = true;
+            /* The MAC's own entry was deleted while addresses split off from it
+               were not: it is still shared, and still pinned. */
+            if (has_sibling_locked(mac, idx)) {
+                s_devices[idx].flags |= NETDASH_FLAG_SHARED_MAC;
+                persist               = true;
             }
-            s_seen[idx]      = false;
-            s_persisted[idx] = false;
-            inserted         = true;
         }
     }
 
@@ -977,18 +1263,18 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
         netdash_device_t *d = &s_devices[idx];
 
         became_online = d->miss_count > 0;
-        ip_changed    = !inserted && d->ip != 0 && ip != 0 && d->ip != ip;
-        prev_ip       = d->ip;
         /* Only a device that had been declared offline counts as coming back;
            one that merely missed a sweep or two never left. */
         was_gone      = d->miss_count >= NETDASH_OFFLINE_AFTER_MISSES;
 
         if (d->first_seen == 0 && now != 0) {
-            d->first_seen      = now;
-            persist_first_seen = true;
+            d->first_seen = now;
+            persist       = true;
         }
 
-        d->ip         = ip;
+        if (!stale) {
+            d->ip = ip;
+        }
         d->last_seen  = now;
         d->rtt_ms     = rtt_ms;
         d->miss_count = 0;
@@ -1008,7 +1294,19 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
         return false;
     }
 
-    if (persist_first_seen) {
+    if (declared_shared) {
+        ESP_LOGI(TAG, "%02x:%02x:%02x:%02x:%02x:%02x answers at more than one address; "
+                 "splitting it per address", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        if (nvs_write_user_fields(&primary) == ESP_OK) {
+            mark_persisted(primary.mac);
+        }
+        /* Collected from two devices at once, so worth nothing to either. */
+        device_db_clear_ports(primary.mac);
+        events_log_push(NETDASH_LOG_INFO, primary.mac, primary.ip,
+                        "MAC shared with another address");
+    }
+
+    if (persist) {
         if (nvs_write_user_fields(&snapshot) == ESP_OK) {
             mark_persisted(snapshot.mac);
         }
@@ -1020,8 +1318,18 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
     if (inserted) {
         esp_event_post(NETDASH_EVENT, NETDASH_EVENT_DEVICE_NEW, &snapshot, sizeof(snapshot), 0);
         events_log_push(NETDASH_LOG_DEVICE_NEW, snapshot.mac, snapshot.ip, name);
-        notify_push(NETDASH_NOTIF_NEW_DEVICE, snapshot.mac, snapshot.ip,
-                    snapshot.vendor[0] != '\0' ? snapshot.vendor : "Not seen here before");
+
+        char text[NETDASH_NOTIF_TEXT];
+        netdash_device_t owner;
+        if (split && device_db_get_by_mac(mac, &owner)) {
+            char owner_name[32];
+            device_db_display_name(&owner, owner_name, sizeof(owner_name));
+            snprintf(text, sizeof(text), "Shares a MAC with %s", owner_name);
+        } else {
+            snprintf(text, sizeof(text), "%s",
+                     snapshot.vendor[0] != '\0' ? snapshot.vendor : "Not seen here before");
+        }
+        notify_push(NETDASH_NOTIF_NEW_DEVICE, snapshot.mac, snapshot.ip, text);
     } else if (became_online) {
         esp_event_post(NETDASH_EVENT, NETDASH_EVENT_DEVICE_ONLINE, &snapshot, sizeof(snapshot), 0);
         events_log_push(NETDASH_LOG_DEVICE_ONLINE, snapshot.mac, snapshot.ip, name);
@@ -1030,19 +1338,46 @@ bool device_db_upsert_seen(const uint8_t mac[6], uint32_t ip, int16_t rtt_ms, in
         }
     }
     if (ip_changed) {
+        /*
+         * The entry, the event and the log follow the move now. The feed does
+         * not: device_db_mark_sweep_end() posts it once the old address has
+         * gone quiet, because until then this might be a shared MAC rather
+         * than a move, and a feed full of moves back and forth is noise.
+         */
+        (void)prev_ip;
         esp_event_post(NETDASH_EVENT, NETDASH_EVENT_DEVICE_IP_CHANGED, &snapshot, sizeof(snapshot), 0);
         events_log_push(NETDASH_LOG_DEVICE_IP_CHANGED, snapshot.mac, snapshot.ip, name);
-
-        /* The notification carries the new address in ip and names the old one
-           in the text, which is the half a reader cannot look up afterwards. */
-        char moved[NETDASH_NOTIF_TEXT];
-        snprintf(moved, sizeof(moved), "Was %u.%u.%u.%u", (unsigned)((prev_ip >> 24) & 0xff),
-                 (unsigned)((prev_ip >> 16) & 0xff), (unsigned)((prev_ip >> 8) & 0xff),
-                 (unsigned)(prev_ip & 0xff));
-        notify_push(NETDASH_NOTIF_IP_CHANGED, snapshot.mac, snapshot.ip, moved);
     }
 
     return inserted;
+}
+
+/*
+ * Moves whose old address has now been silent long enough that it cannot be a
+ * second device behind the same MAC. Collects them under the lock into
+ * s_moves_due and clears their debt; returns how many. Also drops tracker
+ * entries nobody has seen in an hour.
+ */
+static size_t collect_moves_due_locked(uint32_t now_s)
+{
+    size_t n = 0;
+    for (size_t i = 0; i < ADDR_TRACK_SLOTS; i++) {
+        addr_track_t *a = &s_addrs[i];
+        if (a->ip == 0) {
+            continue;
+        }
+        if (a->moved_from != 0) {
+            const addr_track_t *old = addr_find_locked(a->mac, a->moved_from);
+            if (old == NULL || now_s - old->last_s > SHARED_CONFIRM_S) {
+                s_moves_due[n++] = *a;
+                a->moved_from    = 0;
+            }
+        }
+        if (a->moved_from == 0 && now_s - a->last_s > ADDR_EXPIRE_S) {
+            memset(a, 0, sizeof(*a));
+        }
+    }
+    return n;
 }
 
 void device_db_mark_sweep_end(int64_t now)
@@ -1067,7 +1402,20 @@ void device_db_mark_sweep_end(int64_t now)
             memcpy(s_offline_macs[offline_count++], d->mac, 6);
         }
     }
+    const size_t moves_due = collect_moves_due_locked(uptime_s());
     device_db_unlock();
+
+    for (size_t i = 0; i < moves_due; i++) {
+        /* The notification carries the new address in ip and names the old one
+           in the text, which is the half a reader cannot look up afterwards. */
+        const addr_track_t *m    = &s_moves_due[i];
+        const uint32_t      prev = m->moved_from;
+        char moved[NETDASH_NOTIF_TEXT];
+        snprintf(moved, sizeof(moved), "Was %u.%u.%u.%u", (unsigned)((prev >> 24) & 0xff),
+                 (unsigned)((prev >> 16) & 0xff), (unsigned)((prev >> 8) & 0xff),
+                 (unsigned)(prev & 0xff));
+        notify_push(NETDASH_NOTIF_IP_CHANGED, m->mac, m->ip, moved);
+    }
 
     for (size_t i = 0; i < offline_count; i++) {
         netdash_device_t snap;
@@ -1178,7 +1526,8 @@ esp_err_t device_db_set_user(const uint8_t mac[6], const char *nickname,
         d->type_override = (uint8_t)type_override;
     }
     if (flags >= 0 && flags <= 0xff) {
-        d->flags = (uint8_t)flags;
+        /* Only the user's bits: SHARED_MAC is device_db's own finding. */
+        d->flags = (uint8_t)((d->flags & ~NETDASH_FLAGS_USER) | (flags & NETDASH_FLAGS_USER));
     }
     snapshot = *d;
     device_db_unlock();
@@ -1213,6 +1562,8 @@ esp_err_t device_db_remove(const uint8_t mac[6])
         memset(&s_ports[last], 0, sizeof(s_ports[last]));
         memset(s_hist[last], 0, NETDASH_HISTORY_BYTES);
         s_count--;
+        /* Whatever was being worked out about its addresses starts over. */
+        addr_forget_locked(mac);
     }
     device_db_unlock();
 
@@ -1231,37 +1582,38 @@ esp_err_t device_db_ensure(const uint8_t mac[6])
         return ESP_ERR_INVALID_ARG;
     }
 
+    return device_db_ensure_shared(mac, mac, 0);
+}
+
+esp_err_t device_db_ensure_shared(const uint8_t id[6], const uint8_t hw_mac[6], uint32_t ip)
+{
+    if (id == NULL || hw_mac == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const bool shared = memcmp(id, hw_mac, 6) != 0;
+
     device_db_lock();
     bool no_room = false;
-    int  idx     = find_index_locked(mac);
+    int  idx     = find_index_locked(id);
     if (idx < 0) {
-        if (s_count >= NETDASH_MAX_DEVICES && !evict_one_locked()) {
+        idx = new_slot_locked(id, hw_mac);
+        if (idx < 0) {
             no_room = true;
         } else {
-            idx                 = (int)s_count++;
             netdash_device_t *d = &s_devices[idx];
-            memset(d, 0, sizeof(*d));
-            memcpy(d->mac, mac, 6);
-            d->rtt_ms     = -1;
             d->miss_count = 255; /* offline: it has not actually been seen */
-            memset(&s_ports[idx], 0, sizeof(s_ports[idx]));
-            ports_restore_locked(idx);
-
-            const char *vendor = oui_lookup(mac);
-            if (vendor != NULL) {
-                strncpy(d->vendor, vendor, sizeof(d->vendor) - 1);
+            if (shared) {
+                d->ip    = ip;   /* the address that tells it apart */
+                d->flags = NETDASH_FLAG_SHARED_MAC;
             }
             d->type = classify_device(d, 0);
-
-            s_seen[idx]      = false;
-            s_persisted[idx] = false;
         }
     }
     device_db_unlock();
 
     if (no_room) {
         ESP_LOGW(TAG, "device table full, cannot import %02x:%02x:%02x:%02x:%02x:%02x",
-                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                 id[0], id[1], id[2], id[3], id[4], id[5]);
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
@@ -1277,16 +1629,25 @@ void device_db_display_name(const netdash_device_t *dev, char *buf, size_t len)
         return;
     }
 
+    const uint8_t *hw = dev->hw_mac;
     if (dev->nickname[0] != '\0') {
         snprintf(buf, len, "%s", dev->nickname);
-    } else if (dev->hostname[0] != '\0') {
+        return;
+    }
+    if (dev->hostname[0] != '\0') {
         snprintf(buf, len, "%s", dev->hostname);
-    } else if (dev->vendor[0] != '\0') {
-        snprintf(buf, len, "%s %02x%02x", dev->vendor, dev->mac[4], dev->mac[5]);
+        return;
+    }
+    int n;
+    if (dev->vendor[0] != '\0') {
+        n = snprintf(buf, len, "%s %02x%02x", dev->vendor, hw[4], hw[5]);
     } else {
-        snprintf(buf, len, "%02x:%02x:%02x:%02x:%02x:%02x",
-                 dev->mac[0], dev->mac[1], dev->mac[2],
-                 dev->mac[3], dev->mac[4], dev->mac[5]);
+        n = snprintf(buf, len, "%02x:%02x:%02x:%02x:%02x:%02x",
+                     hw[0], hw[1], hw[2], hw[3], hw[4], hw[5]);
+    }
+    /* Otherwise every unnamed entry behind one MAC reads the same. */
+    if ((dev->flags & NETDASH_FLAG_SHARED_MAC) != 0 && n > 0 && (size_t)n < len) {
+        snprintf(buf + n, len - (size_t)n, " .%u", (unsigned)(dev->ip & 0xff));
     }
 }
 

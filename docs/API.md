@@ -117,6 +117,8 @@ Used by `/api/devices`, `/api/devices/{mac}` and `/api/devices/export`.
 ```json
 {
   "mac": "b8:27:eb:0a:1b:2c",
+  "hw_mac": "b8:27:eb:0a:1b:2c",
+  "shared_mac": false,
   "ip": "192.168.1.31",
   "display_name": "Kitchen Pi",
   "nickname": "Kitchen Pi",
@@ -138,8 +140,10 @@ Used by `/api/devices`, `/api/devices/{mac}` and `/api/devices/export`.
 
 | Field | Type | Notes |
 |---|---|---|
-| `mac` | string | lowercase colon-separated, the primary key |
-| `ip` | string | last known IPv4 |
+| `mac` | string | lowercase colon-separated, the primary key. The hardware MAC, except for a device behind a shared MAC (below) |
+| `hw_mac` | string | the MAC the device actually answers ARP with. Equal to `mac` for every ordinary device; show this one to people |
+| `shared_mac` | bool | this MAC answers at more than one address, so the entry is pinned to its `ip` |
+| `ip` | string | last known IPv4; for a `shared_mac` entry, the address it is pinned to |
 | `display_name` | string | nickname, else hostname, else `"<vendor> xxyy"`, else the MAC. Never empty |
 | `nickname` | string | user-set, `""` when unset |
 | `hostname` | string | best auto-discovered name, `""` when unknown |
@@ -154,6 +158,35 @@ Used by `/api/devices`, `/api/devices/{mac}` and `/api/devices/export`.
 | `hidden` | bool | the user hid it from the default list |
 | `rtt_ms` | number | last ICMP round trip, `-1` when the host only answered ARP |
 | `miss_count` | number | consecutive sweeps not seen, `0..255` |
+
+### Devices that share a MAC
+
+A Wi-Fi extender or bridge in client mode can only present one MAC to the
+network, so it rewrites the MAC of every wired device behind it to its own.
+The extender and each device behind it then answer ARP with the same MAC at
+different addresses. Keyed by MAC alone they would collapse into one entry that
+"moves" between addresses every sweep.
+
+The firmware recognises this pattern and splits it: the entry already holding
+that MAC keeps it and is pinned to one address, and every other address gets an
+entry of its own with `shared_mac: true`, the same `hw_mac`, and a synthetic
+`mac` that serves as its key everywhere a key is needed - PATCH, notes,
+secrets, links, history, the port scan. A synthetic key starts with `03:`,
+which as a multicast address can never be a real device's MAC. It is derived
+from `hw_mac` and the address, so the same device gets the same key after a
+reboot and its nickname and notes come back with it.
+
+Telling this apart from an ordinary DHCP move needs time rather than a single
+sighting, because lwIP keeps a departed host's ARP entry for up to five
+minutes: for that long a device that genuinely moved still appears at its old
+address as well as its new one. So a MAC is only declared shared when it is
+still answering at the address it supposedly left more than six minutes after
+the move. Until then the entry follows the newest address, as before, but
+sightings at the old address do not move it back.
+
+The cost is that a device behind a shared MAC is identified by its address. If
+DHCP gives it a new one, it appears as a new entry and the old one goes
+offline; nickname the new one, or give the device a DHCP reservation.
 
 ### `type` values
 
@@ -269,7 +302,10 @@ The full table plus a header, for backing up nicknames.
 
 Restores user fields. Accepts exactly what `export` produces; every field other
 than `mac`, `nickname`, `type_override` and `hidden` is ignored, and devices in
-the file that are not on the network are created as offline entries.
+the file that are not on the network are created as offline entries. The one
+exception is an entry with `shared_mac: true`, where `hw_mac` and `ip` are read
+too, because without them a synthetic key cannot be matched to the device it
+stands for.
 
 ```json
 {
@@ -1037,6 +1073,15 @@ device renamed since the notification landed reads by its new name. `mac` and
 
 `type` is one of `new_device`, `ip_changed`, `new_port`, `device_gone`,
 `device_back`, `wan_down`, `wan_up`.
+
+`ip_changed` is posted once the old address has been silent for six minutes -
+typically six to eleven minutes after the move, not when it happens. That delay
+is how a real move is told apart from a MAC shared by several devices (see
+"Devices that share a MAC"): if the old address keeps answering, it was never a
+move, and the feed gets a `new_device` for the device that was
+hiding behind the shared MAC instead of a stream of moves back and forth. The
+device entry itself follows the new address straight away; only the
+notification waits.
 
 `unread` is also embedded in `GET /api/status`, so a badge can be kept right
 without a second poll.

@@ -30,6 +30,7 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi_types.h"
+#include "lwip/inet.h"
 #include "nvs.h"
 
 #include "app_events.h"
@@ -451,8 +452,13 @@ static cJSON *device_to_json(const netdash_device_t *d, int64_t now)
     bool has_override = d->type_override != NETDASH_TYPE_UNKNOWN;
     netdash_type_t effective = has_override ? (netdash_type_t)d->type_override : (netdash_type_t)d->type;
 
+    char hw_str[18];
+    mac_to_str(d->hw_mac, hw_str);
+
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "mac", mac_str);
+    cJSON_AddStringToObject(o, "hw_mac", hw_str);
+    cJSON_AddBoolToObject(o, "shared_mac", (d->flags & NETDASH_FLAG_SHARED_MAC) != 0);
     cJSON_AddStringToObject(o, "ip", ip_str);
     cJSON_AddStringToObject(o, "display_name", name);
     cJSON_AddStringToObject(o, "nickname", d->nickname);
@@ -788,7 +794,27 @@ static esp_err_t devices_import_handler(httpd_req_t *req)
             skipped++;
             continue;
         }
-        if (device_db_ensure(mac) != ESP_OK) {
+        /*
+         * An entry behind a shared MAC has a synthetic key, which means
+         * nothing without the MAC and address it stands for.
+         */
+        esp_err_t ens;
+        cJSON    *j_shared = cJSON_GetObjectItemCaseSensitive(entry, "shared_mac");
+        if (cJSON_IsTrue(j_shared)) {
+            cJSON  *j_hw = cJSON_GetObjectItemCaseSensitive(entry, "hw_mac");
+            cJSON  *j_ip = cJSON_GetObjectItemCaseSensitive(entry, "ip");
+            uint8_t hw[6];
+            esp_ip4_addr_t addr;
+            if (!cJSON_IsString(j_hw) || !parse_mac(j_hw->valuestring, hw) ||
+                !cJSON_IsString(j_ip) || esp_netif_str_to_ip4(j_ip->valuestring, &addr) != ESP_OK) {
+                skipped++;
+                continue;
+            }
+            ens = device_db_ensure_shared(mac, hw, ntohl(addr.addr));
+        } else {
+            ens = device_db_ensure(mac);
+        }
+        if (ens != ESP_OK) {
             skipped++;
             continue;
         }

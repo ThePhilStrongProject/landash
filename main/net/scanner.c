@@ -109,11 +109,17 @@ static int64_t           s_last_sweep;        /* guarded by s_mux            */
 static portMUX_TYPE      s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 /*
- * MACs already recorded during the running sweep. Only the closing ARP-table
- * snapshot reads it, so that a passively learned entry cannot overwrite the
- * rtt_ms of a host that actually answered its echo.
+ * (MAC, address) pairs already recorded during the running sweep. Only the
+ * closing ARP-table snapshot reads it, so that a passively learned entry cannot
+ * overwrite the rtt_ms of a host that actually answered its echo. The address
+ * is part of the key because a Wi-Fi extender answers for several devices with
+ * one MAC, and each of them has to reach device_db.
  */
-static uint8_t  s_seen_macs[NETDASH_MAX_DEVICES][6];
+typedef struct {
+    uint8_t  mac[6];
+    uint32_t ip;
+} seen_t;
+static seen_t   s_seen_macs[NETDASH_MAX_DEVICES];
 static uint16_t s_seen_count;
 
 /* Per-sweep state, kept out of the stack and off the ring helpers' arguments. */
@@ -182,17 +188,19 @@ static void mac_seen_reset(void)
     s_seen_count = 0;
 }
 
-static void mac_seen_add(const uint8_t mac[6])
+static void mac_seen_add(const uint8_t mac[6], uint32_t ip)
 {
     if (s_seen_count < NETDASH_MAX_DEVICES) {
-        memcpy(s_seen_macs[s_seen_count++], mac, 6);
+        memcpy(s_seen_macs[s_seen_count].mac, mac, 6);
+        s_seen_macs[s_seen_count].ip = ip;
+        s_seen_count++;
     }
 }
 
-static bool mac_seen(const uint8_t mac[6])
+static bool mac_seen(const uint8_t mac[6], uint32_t ip)
 {
     for (uint16_t i = 0; i < s_seen_count; i++) {
-        if (memcmp(s_seen_macs[i], mac, 6) == 0) {
+        if (s_seen_macs[i].ip == ip && memcmp(s_seen_macs[i].mac, mac, 6) == 0) {
             return true;
         }
     }
@@ -332,14 +340,14 @@ static void ring_pop_resolve(void)
      * anyway, because only this path knows the round-trip time, but do not
      * count it twice.
      */
-    const bool already = mac_seen(mac);
+    const bool already = mac_seen(mac, entry.ip);
 
     /* No database lock is held here; upsert_seen takes its own. */
     if (device_db_upsert_seen(mac, entry.ip, entry.rtt_ms, s_sweep.now_unix)) {
         s_sweep.fresh++;
     }
     if (!already) {
-        mac_seen_add(mac);
+        mac_seen_add(mac, entry.ip);
         s_sweep.alive++;
     }
 
@@ -592,13 +600,13 @@ static void arp_snapshot(uint32_t network, uint32_t mask)
         if (mask != 0 && (ip & mask) != network) {
             continue;   /* off-subnet leftovers */
         }
-        if (mac_seen(dump.entry[i].mac)) {
+        if (mac_seen(dump.entry[i].mac, ip)) {
             continue;
         }
         if (device_db_upsert_seen(dump.entry[i].mac, ip, -1, s_sweep.now_unix)) {
             s_sweep.fresh++;
         }
-        mac_seen_add(dump.entry[i].mac);
+        mac_seen_add(dump.entry[i].mac, ip);
         s_sweep.from_arp++;
         log_host("arp-only", ip);
     }
