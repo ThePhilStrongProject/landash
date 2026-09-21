@@ -1591,7 +1591,7 @@ return [d.display_name,d.ip,d.hw_mac||d.mac,d.vendor,d.hostname].join(" ").toLow
 list = sortDevices(list);
 /* An empty table during the welcome tour shows the dongle itself as an
    example, so the cards about rows have a row to point at. */
-if (!list.length && state.tourDemo) list = [state.tourDemo];
+if (!list.length && state.tourDemo) list = [tourDemoDevice()];
 $("devEmpty").hidden = list.length !== 0;
 $("devBody").innerHTML = list.map(rowHtml).join("");
 }
@@ -3522,7 +3522,9 @@ open_port_count: 1, portscan_tier: 1 };
 function tourDevicesEnter(){
 return loadDevices().then(function(){
 var visible = (state.devices || []).some(function(d){ return !d.hidden; });
-state.tourDemo = visible ? null : tourDemoDevice();
+/* Built afresh on every redraw, from whatever the status poll has
+   brought in by then - the first one may not have landed yet. */
+state.tourDemo = !visible;
 renderDevices();
 });
 }
@@ -3659,7 +3661,7 @@ function leaveTourStep(next){
 var prev = tour.steps && tour.steps[tour.i];
 if (prev && prev.leave) prev.leave();
 if (state.tourDemo && (!next || next.tab !== "devices")){
-state.tourDemo = null;
+state.tourDemo = false;
 if (state.tab === "devices") renderDevices();
 }
 }
