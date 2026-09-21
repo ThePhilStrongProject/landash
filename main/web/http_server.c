@@ -1223,6 +1223,7 @@ static cJSON *settings_to_json(const netdash_settings_t *cfg)
     cJSON_AddNumberToObject(o, "portscan_rate", cfg->portscan_rate);
     cJSON_AddNumberToObject(o, "portscan_max_tier", cfg->portscan_max_tier);
     cJSON_AddNumberToObject(o, "portscan_rescan_days", cfg->portscan_rescan_days);
+    cJSON_AddNumberToObject(o, "portscan_rescan_tier", cfg->portscan_rescan_tier);
     cJSON_AddBoolToObject(o, "wan_enabled", cfg->wan_enabled);
     cJSON_AddNumberToObject(o, "wan_interval_s", cfg->wan_interval_s);
     cJSON_AddStringToObject(o, "wan_ping_host", cfg->wan_ping_host);
@@ -1444,6 +1445,15 @@ static esp_err_t settings_put_handler(httpd_req_t *req)
             return send_json_error(req, "400 Bad Request", "ota_interval_h must be 1-168");
         }
         next.ota_interval_h = (uint16_t)j->valueint;
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "portscan_rescan_tier");
+    if (j != NULL) {
+        if (!cJSON_IsNumber(j) || j->valueint < 1 || j->valueint > 3) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "portscan_rescan_tier must be 1-3");
+        }
+        next.portscan_rescan_tier = (uint8_t)j->valueint;
     }
 
     j = cJSON_GetObjectItemCaseSensitive(json, "portscan_rescan_days");

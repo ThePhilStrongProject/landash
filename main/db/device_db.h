@@ -296,6 +296,13 @@ bool device_db_get_port_summary(const uint8_t mac[6], netdash_ports_t *out);
  */
 bool device_db_add_open_port(const uint8_t mac[6], uint16_t port);
 
+/*
+ * Forgets one open port: a re-scan found it closed. Returns true when it was
+ * on the list. The service bits it implied are left alone - other sources
+ * may vouch for them, and the next discovery pass settles it.
+ */
+bool device_db_remove_open_port(const uint8_t mac[6], uint16_t port);
+
 /* Updates the progress fields shown by the API. */
 void device_db_set_scan_progress(const uint8_t mac[6], uint8_t scanning_tier,
                                  uint32_t cursor, uint32_t tier_total);

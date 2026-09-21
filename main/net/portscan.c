@@ -95,8 +95,9 @@ static struct {
     uint32_t found;
     int64_t  cycle_started;
 
-    uint16_t rescan_days;   /* re-probe tier 1 this often, 0 = never          */
-    bool     rescanning;    /* the current device is a re-probe, not a first  */
+    uint16_t rescan_days;   /* re-scan this often, 0 = never                  */
+    uint8_t  rescan_tier;   /* how deep a re-scan goes, capped at max_tier    */
+    bool     rescanning;    /* the current device is a re-scan, not a first   */
 
     /* Set by portscan_rescan_device(); consumed by the task. */
     bool     jump_valid;
@@ -108,6 +109,41 @@ static struct {
  * scan task writes it, and only between devices, so it needs no lock.
  */
 static bool s_report_new_ports;
+
+/*
+ * The re-scan of one device, which works up through the tiers to the rescan
+ * depth before the scanner moves on. It notes every port it finds open, so
+ * that at the end any port on the old list that it re-checked and did not
+ * find can be dropped. Scan task only.
+ */
+#define RS_MAX NETDASH_MAX_OPEN_PORTS
+static struct {
+    bool     active;
+    uint8_t  goal;              /* last tier this re-scan covers           */
+    uint8_t  mac[6];
+    uint16_t before[RS_MAX];    /* the list as it stood when it started    */
+    uint8_t  before_n;
+    uint16_t found[RS_MAX];     /* open during this re-scan                */
+    uint8_t  found_n;
+    bool     found_overflow;    /* more open than we can track: keep all   */
+} s_rs;
+
+static void rs_note_open(const uint8_t mac[6], uint16_t port)
+{
+    if (!s_rs.active || memcmp(mac, s_rs.mac, 6) != 0) {
+        return;
+    }
+    for (uint8_t i = 0; i < s_rs.found_n; i++) {
+        if (s_rs.found[i] == port) {
+            return;
+        }
+    }
+    if (s_rs.found_n < RS_MAX) {
+        s_rs.found[s_rs.found_n++] = port;
+    } else {
+        s_rs.found_overflow = true;
+    }
+}
 
 static void state_lock(void)
 {
@@ -133,6 +169,7 @@ static void reload_settings(void)
     s_ps.rate        = cfg.portscan_rate > 0 ? cfg.portscan_rate : 1;
     s_ps.max_tier    = cfg.portscan_max_tier;
     s_ps.rescan_days = cfg.portscan_rescan_days;
+    s_ps.rescan_tier = cfg.portscan_rescan_tier;
     if (s_ps.tier == 0) {
         s_ps.tier = PS_TIER_COMMON;
     }
@@ -148,6 +185,7 @@ static void reload_settings(void)
 
 static void record_open_port(const uint8_t mac[6], uint32_t ip, uint16_t port)
 {
+    rs_note_open(mac, port);   /* before the early return: known ports count too */
     if (!device_db_add_open_port(mac, port)) {
         return;   /* already knew about this one */
     }
@@ -186,6 +224,66 @@ static uint32_t tier_total(uint8_t tier)
     case PS_TIER_WELLKNOWN: return 1024;              /* 1..1024      */
     case PS_TIER_FULL:      return 65535 - 1024;      /* 1025..65535  */
     default:                return 0;
+    }
+}
+
+/* True when a re-scan reaching goal probed port. Tiers are cumulative. */
+static bool tier_covers(uint8_t goal, uint16_t port)
+{
+    if (goal >= PS_TIER_FULL) {
+        return true;
+    }
+    if (goal >= PS_TIER_WELLKNOWN && port <= 1024) {
+        return true;
+    }
+    for (size_t i = 0; i < PS_COMMON_COUNT; i++) {
+        if (s_common_ports[i] == port) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * The end of a device's re-scan: drop the ports it had that this pass checked
+ * and did not find open. Skipped when the device is not online now - a device
+ * that left part-way would look as if every port had closed - or when it had
+ * more open than could be tracked.
+ */
+static void rs_finish(uint32_t ip)
+{
+    netdash_device_t dev;
+    if (!s_rs.active) {
+        return;
+    }
+    s_rs.active = false;
+    if (s_rs.found_overflow || !device_db_get_by_mac(s_rs.mac, &dev) ||
+        !netdash_device_online(&dev)) {
+        return;
+    }
+    for (uint8_t i = 0; i < s_rs.before_n; i++) {
+        const uint16_t port = s_rs.before[i];
+        bool           still = false;
+        for (uint8_t k = 0; k < s_rs.found_n && !still; k++) {
+            still = s_rs.found[k] == port;
+        }
+        if (still || !tier_covers(s_rs.goal, port) ||
+            !device_db_remove_open_port(s_rs.mac, port)) {
+            continue;
+        }
+        ESP_LOGI(TAG, "closed %u.%u.%u.%u:%u", (unsigned)(ip >> 24),
+                 (unsigned)((ip >> 16) & 0xff), (unsigned)((ip >> 8) & 0xff),
+                 (unsigned)(ip & 0xff), (unsigned)port);
+        const char *svc = netdash_port_service(port);
+        char        text[NETDASH_NOTIF_TEXT];
+        if (svc != NULL) {
+            char label[32];
+            netdash_service_label(svc, label, sizeof(label));
+            snprintf(text, sizeof(text), "Port %u closed (%s)", (unsigned)port, label);
+        } else {
+            snprintf(text, sizeof(text), "Port %u closed", (unsigned)port);
+        }
+        notify_push(NETDASH_NOTIF_PORT_CLOSED, s_rs.mac, ip, text);
     }
 }
 
@@ -411,12 +509,10 @@ static bool next_device_for_tier(uint8_t ceiling, uint16_t *index,
     }
 
     /*
-     * Pass three: a device that finished long enough ago to be worth checking
-     * again. Only the common ports are re-probed - the point is to notice a
-     * service that has started listening since, and anything worth knowing
-     * about is almost always on a well-known port. The stored port list is
-     * deliberately not cleared first, because the diff against it is the
-     * whole reason for the pass.
+     * Pass three: a device that finished long enough ago to be scanned again,
+     * from the common ports up to the rescan depth. The stored list is not
+     * cleared first: comparing against it is how a newly opened port is
+     * noticed, and how one that has closed is dropped (see rs_finish()).
      */
     if (!found && rescan_days > 0) {
         const int64_t now = (int64_t)time(NULL);
@@ -551,6 +647,23 @@ static void portscan_task(void *arg)
             state_unlock();
             s_report_new_ports = is_rescan;
             have_dev           = true;
+
+            if (is_rescan) {
+                netdash_ports_t old;
+                state_lock();
+                const uint8_t depth = s_ps.rescan_tier < max_tier ? s_ps.rescan_tier : max_tier;
+                state_unlock();
+                memset(&s_rs, 0, sizeof(s_rs));
+                s_rs.active = true;
+                s_rs.goal   = depth < PS_TIER_COMMON ? PS_TIER_COMMON : depth;
+                memcpy(s_rs.mac, mac, 6);
+                if (device_db_get_ports(mac, &old)) {
+                    s_rs.before_n = old.count > RS_MAX ? RS_MAX : old.count;
+                    memcpy(s_rs.before, old.ports, s_rs.before_n * sizeof(s_rs.before[0]));
+                }
+            } else {
+                s_rs.active = false;
+            }
         }
 
         state_lock();
@@ -559,7 +672,21 @@ static void portscan_task(void *arg)
         s_ps.running          = true;
         state_unlock();
 
+        if (cursor >= total && s_rs.active && memcmp(mac, s_rs.mac, 6) == 0 &&
+            dev_tier < s_rs.goal) {
+            dev_tier++;
+            state_lock();
+            s_ps.cursor      = 0;
+            s_ps.active_tier = dev_tier;
+            s_ps.tier_total  = tier_total(dev_tier);
+            state_unlock();
+            device_db_set_scan_progress(mac, dev_tier, 0, tier_total(dev_tier));
+            continue;
+        }
         if (cursor >= total) {
+            if (s_rs.active && memcmp(mac, s_rs.mac, 6) == 0) {
+                rs_finish(ip);
+            }
             device_db_finish_tier(mac, dev_tier, (int64_t)time(NULL));
             state_lock();
             s_ps.device_index++;   /* move past the device just finished */

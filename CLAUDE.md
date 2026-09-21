@@ -223,9 +223,13 @@ main/
 
   net/portscan.c/.h         tiered background TCP connect scan. Each device
                             advances through its own tiers in order (common ->
-                            1-1024 -> 1025-65535) with the global tier as a
-                            ceiling, and a never-scanned device jumps the queue.
-                            Results live in device_db, NVS namespace "ports".
+                            1-1024 -> 1025-65535) up to the first-look depth,
+                            and a never-scanned device jumps the queue. Every
+                            portscan_rescan_days a device is scanned again up
+                            to portscan_rescan_tier: new ports are announced,
+                            and listed ports it re-checked and found closed are
+                            dropped (not if the device left mid-pass). Results
+                            live in the device register (db/dev_store.c).
 
   web/http_server.c/.h      esp_http_server: gzipped index.html + the REST API.
   web/www/index.html        the whole dashboard, gzipped at build time by CMake

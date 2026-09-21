@@ -69,6 +69,12 @@ typedef struct {
      * version 7 or earlier.
      */
     uint8_t  tour_rev;
+    /*
+     * Added in version 9. How deep the periodic re-scan goes (1 common, 2 up
+     * to 1024, 3 every port). Never deeper than portscan_max_tier in effect.
+     * portscan_rescan_days is how often, 0 = never.
+     */
+    uint8_t  portscan_rescan_tier;
 } netdash_settings_t;
 
 /* Loads (or creates) the blob and generates ap_pass on first boot. */

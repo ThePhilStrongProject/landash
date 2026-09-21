@@ -35,6 +35,7 @@ typedef enum {
     NETDASH_NOTIF_WAN_DOWN,
     NETDASH_NOTIF_WAN_UP,
     NETDASH_NOTIF_UPDATE,       /* firmware update found, installed, rolled back */
+    NETDASH_NOTIF_PORT_CLOSED,  /* a re-scan found a known port no longer open   */
     NETDASH_NOTIF_COUNT
 } netdash_notif_type_t;
 
@@ -49,7 +50,8 @@ typedef enum {
 #define NETDASH_NOTIF_DEFAULT_MASK                                           \
     ((uint16_t)(NETDASH_NOTIF_ALL_MASK &                                     \
                 ~(NETDASH_NOTIF_BIT(NETDASH_NOTIF_DEVICE_GONE) |             \
-                  NETDASH_NOTIF_BIT(NETDASH_NOTIF_DEVICE_BACK))))
+                  NETDASH_NOTIF_BIT(NETDASH_NOTIF_DEVICE_BACK) |             \
+                  NETDASH_NOTIF_BIT(NETDASH_NOTIF_PORT_CLOSED))))
 
 #define NETDASH_NOTIF_RING 48
 #define NETDASH_NOTIF_TEXT 56

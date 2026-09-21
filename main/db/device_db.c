@@ -1180,6 +1180,50 @@ bool device_db_add_open_port(const uint8_t mac[6], uint16_t port)
     return true;
 }
 
+typedef struct {
+    uint16_t port;
+    bool     removed;
+    uint8_t  count;
+} remove_port_ctx_t;
+
+static bool edit_remove_port(dev_rec_t *rec, bool created, void *ctx)
+{
+    remove_port_ctx_t *c = ctx;
+    (void)created;
+    uint8_t n = rec->port_count > NETDASH_MAX_OPEN_PORTS ? NETDASH_MAX_OPEN_PORTS
+                                                         : rec->port_count;
+    c->count = n;
+    for (uint8_t i = 0; i < n; i++) {
+        if (rec->ports[i] == c->port) {
+            memmove(&rec->ports[i], &rec->ports[i + 1], (size_t)(n - i - 1) * sizeof(rec->ports[0]));
+            rec->ports[n - 1] = 0;
+            rec->port_count   = (uint8_t)(n - 1);
+            c->removed        = true;
+            c->count          = rec->port_count;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool device_db_remove_open_port(const uint8_t mac[6], uint16_t port)
+{
+    if (mac == NULL || port == 0) {
+        return false;
+    }
+    remove_port_ctx_t ctx = { .port = port };
+    if (dev_store_update(mac, false, edit_remove_port, &ctx, NULL, NULL) != ESP_OK || !ctx.removed) {
+        return false;
+    }
+    device_db_lock();
+    const int idx = find_index_locked(mac);
+    if (idx >= 0) {
+        s_ports[idx].count = ctx.count;
+    }
+    device_db_unlock();
+    return true;
+}
+
 void device_db_set_scan_progress(const uint8_t mac[6], uint8_t scanning_tier,
                                  uint32_t cursor, uint32_t tier_total)
 {

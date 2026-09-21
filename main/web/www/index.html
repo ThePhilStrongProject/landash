@@ -902,27 +902,56 @@ for you.</div>
 <p class="hint" id="sweepEstimate" style="margin-top:6px"></p>
 </div>
 <div class="checkfield">
-<input type="checkbox" id="setPassive"><label for="setPassive" style="margin:0">Passive only (no active sweeps)</label>
+<input type="checkbox" id="setPassive"><label for="setPassive" style="margin:0">Quiet mode: don't sweep the network</label>
 </div>
+<div class="hint" style="margin:-4px 0 12px">Normally LANDA.SH pings every address on your network
+every few minutes to see what is there. In quiet mode it stops: it only notices devices it happens
+to hear from, so it finds far fewer, and it can no longer tell when a device leaves, so nothing is
+shown going offline. It still asks devices for their names, and port scanning below carries on
+unless you turn it off.</div>
 </div>
 <div class="settgroup">
 <h3>Port scanning</h3>
+<p class="hint" style="margin:0 0 12px">LANDA.SH quietly tries each device's ports in the
+background to see which services it offers.</p>
 <div class="checkfield">
-<input type="checkbox" id="setPortscanEnabled"><label for="setPortscanEnabled" style="margin:0">Enable background port scanning</label>
+<input type="checkbox" id="setPortscanEnabled"><label for="setPortscanEnabled" style="margin:0">Check which services each device offers</label>
 </div>
 <div class="field">
-<label for="setPortscanRate">Port scan rate (probes/sec, across all devices)</label>
-<input type="number" id="setPortscanRate" min="1" max="200">
-</div>
-<div class="field">
-<label for="setPortscanMaxTier">Port scan depth</label>
+<label for="setPortscanMaxTier">First look</label>
 <select id="setPortscanMaxTier">
-<option value="1">Common ports only (~120 ports, fastest)</option>
-<option value="2">Common ports + all of 1&ndash;1024</option>
-<option value="3">Everything &mdash; all 65535 ports</option>
+<option value="1">Light &mdash; about 120 common services</option>
+<option value="2">Standard &mdash; every port from 1 to 1024</option>
+<option value="3">Thorough &mdash; all 65,535 ports</option>
 </select>
+<div class="hint">How far to look when a device is first found.</div>
 <div class="hint" id="tier3Warn" style="color:var(--danger)" hidden>Every port on every device takes
 days to finish, and security software on your devices may notice it.</div>
+</div>
+<div class="field">
+<label for="setRescanDays">Look again</label>
+<select id="setRescanDays">
+<option value="0">Never</option>
+<option value="1">Every day</option>
+<option value="7">Every week</option>
+<option value="14">Every two weeks</option>
+<option value="30">Every month</option>
+</select>
+<div class="hint">Notices services that have started since, and drops ones that have stopped.</div>
+</div>
+<div class="field">
+<label for="setRescanTier">How far to look again</label>
+<select id="setRescanTier">
+<option value="1">Light &mdash; about 120 common services</option>
+<option value="2">Standard &mdash; every port from 1 to 1024</option>
+<option value="3">Thorough &mdash; all 65,535 ports</option>
+</select>
+<div class="hint">Never deeper than the first look.</div>
+</div>
+<div class="field">
+<label for="setPortscanRate">Pace</label>
+<input type="number" id="setPortscanRate" min="1" max="200">
+<div class="hint">Ports tried per second, across all devices. Slower is gentler.</div>
 </div>
 </div>
 <div class="settgroup">
@@ -959,12 +988,7 @@ day, and a feed that cries wolf is one nobody reads.</p>
 <label class="switch"><input type="checkbox" data-notif="wan_down"> The internet connection breaks</label>
 <label class="switch"><input type="checkbox" data-notif="wan_up"> The internet connection recovers</label>
 <label class="switch"><input type="checkbox" data-notif="update"> A firmware update is found, installed or rolled back</label>
-<div class="field" style="margin-top:14px">
-<label for="setRescanDays">Re-probe common ports every (days)</label>
-<input type="number" id="setRescanDays" min="0" max="365">
-<div class="hint">Finding a port open that was not before is the point of this. 0 turns
-re-probing off, which also turns off the "new open port" notification in practice.</div>
-</div>
+<label class="switch"><input type="checkbox" data-notif="port_closed"> A device stops offering a service it used to</label>
 </div>
 </div>
 <div class="setpage" id="setpage-vault" role="tabpanel" aria-labelledby="settab-vault" hidden>
@@ -1554,6 +1578,14 @@ function renderPortscanBar(){ renderStatusBar(); }
  * list it sends every few seconds. Say how many there are, and fetch them only
  * when asked: there can be a thousand.
  */
+/* A repeat scan never goes deeper than the first look, so offer only that far. */
+function capRescanTier(){
+var first = Number($("setPortscanMaxTier").value) || 1;
+var sel = $("setRescanTier");
+Array.prototype.forEach.call(sel.options, function(o){ o.disabled = Number(o.value) > first; });
+if (Number(sel.value) > first) sel.value = String(first);
+}
+
 function renderArchivedLine(){
 var n = (state.status && state.status.devices_archived) || 0;
 var line = $("archivedLine");
@@ -3207,18 +3239,18 @@ $("linkEditBtn").addEventListener("click", function(){ setEditMode(false); });
 var NOTIF_ICON = {
 new_device:"i-plus", ip_changed:"i-swap", new_port:"i-key",
 device_gone:"i-offline", device_back:"i-online",
-wan_down:"i-globe-off", wan_up:"i-globe", update:"i-download"
+wan_down:"i-globe-off", wan_up:"i-globe", update:"i-download", port_closed:"i-key"
 };
 /* Tone, not decoration: colour is reserved for the ones that mean something
    is wrong, so a feed of routine arrivals stays quiet. */
 var NOTIF_TONE = {
 new_device:"", ip_changed:"warn", new_port:"warn",
-device_gone:"warn", device_back:"good", wan_down:"bad", wan_up:"good", update:""
+device_gone:"warn", device_back:"good", wan_down:"bad", wan_up:"good", update:"", port_closed:""
 };
 var NOTIF_WHAT = {
 new_device:"New device", ip_changed:"Address changed", new_port:"New open port",
 device_gone:"Went offline", device_back:"Back online",
-wan_down:"Internet problem", wan_up:"Internet restored", update:"Firmware"
+wan_down:"Internet problem", wan_up:"Internet restored", update:"Firmware", port_closed:"Port closed"
 };
 
 function loadNotifs(){
@@ -3381,7 +3413,17 @@ $("setNtp").value = s.ntp_server || "";
 $("setTz").value = s.tz || "";
 applyAppearance(s.theme, s.detail, true);
 renderAppearance();
-$("setRescanDays").value = s.portscan_rescan_days;
+(function(){
+var sel = $("setRescanDays"), days = String(s.portscan_rescan_days || 0);
+if (!sel.querySelector('option[value="' + days + '"]')){
+var o = document.createElement("option");
+o.value = days; o.textContent = "Every " + days + " days";
+sel.appendChild(o);
+}
+sel.value = days;
+})();
+$("setRescanTier").value = s.portscan_rescan_tier || 1;
+capRescanTier();
 $("otaEnabled").checked = !!s.ota_enabled;
 $("otaAuto").checked = !!s.ota_auto;
 $("otaAuto").disabled = !s.ota_enabled;
@@ -4034,6 +4076,7 @@ if (state.showArchived) loadArchived(); else renderDevices();
 renderTzDetect();
 $("setPortscanMaxTier").addEventListener("change", function(){
 $("tier3Warn").hidden = this.value !== "3";
+capRescanTier();
 });
 $("tzDetectBtn").addEventListener("click", function(){ $("setTz").value = this.dataset.tz; });
 document.querySelectorAll(".presets [data-tz]").forEach(function(b){
@@ -4055,6 +4098,7 @@ portscan_max_tier: Number($("setPortscanMaxTier").value),
 ntp_server: $("setNtp").value,
 tz: $("setTz").value,
 portscan_rescan_days: Number($("setRescanDays").value),
+portscan_rescan_tier: Number($("setRescanTier").value),
 wan_enabled: $("setWanEnabled").checked,
 wan_interval_s: Number($("setWanInterval").value),
 wan_ping_host: $("setWanPing").value,

@@ -510,6 +510,7 @@ is stored.
   "portscan_rate": 10,
   "portscan_max_tier": 3,
   "portscan_rescan_days": 7,
+  "portscan_rescan_tier": 1,
   "wan_enabled": true,
   "wan_interval_s": 60,
   "wan_ping_host": "1.1.1.1",
@@ -536,8 +537,9 @@ is stored.
 |---|---|---|
 | `portscan_enabled` | bool | background TCP port scan on or off |
 | `portscan_rate` | number | 1-200 probes per second, shared across every device |
-| `portscan_max_tier` | number | 1 common ports, 2 ports 1-1024, 3 every port |
-| `portscan_rescan_days` | number | how often to re-probe the common ports, 0 to never |
+| `portscan_max_tier` | number | how far the first scan of a device goes: 1 about 120 common ports, 2 ports 1-1024, 3 every port |
+| `portscan_rescan_days` | number | how often a device is scanned again, 0 to never |
+| `portscan_rescan_tier` | number | how far a repeat scan goes, 1-3; never deeper than `portscan_max_tier` in effect |
 | `wan_enabled` | bool | run the internet health checks |
 | `wan_interval_s` | number | seconds between checks |
 | `wan_ping_host` | string | an IP literal, so the test does not depend on DNS |
@@ -577,10 +579,11 @@ Every member is optional; absent members are left unchanged.
 | `ap_pass` | string | 8..63 chars | WPA2 limits |
 | `scan_interval_min` | number | 1..1440 | |
 | `hosts_per_sec` | number | 1..64 | |
-| `passive_only` | bool | | disables active sweeps |
+| `passive_only` | bool | | "quiet mode": no ping sweep. Only devices the dongle happens to hear from are found, and online/offline stops updating. Name lookups and the port scan are unaffected |
 | `tz` | string | 0..47 chars | POSIX TZ string |
 | `ntp_server` | string | 0..63 chars | |
-| `portscan_rescan_days` | number | 0..365 | 0 disables re-probing |
+| `portscan_rescan_days` | number | 0..365 | 0 disables repeat scans |
+| `portscan_rescan_tier` | number | 1..3 | |
 | `wan_enabled` | bool | | |
 | `wan_interval_s` | number | 15..3600 | below 15 s the checks are their own noise |
 | `wan_ping_host` | string | 1..39 chars | |
@@ -1201,7 +1204,15 @@ device renamed since the notification landed reads by its new name. `mac` and
 `ip` are `null` when the notification is not about a device.
 
 `type` is one of `new_device`, `ip_changed`, `new_port`, `device_gone`,
-`device_back`, `wan_down`, `wan_up`, `update`.
+`device_back`, `wan_down`, `wan_up`, `update`, `port_closed`.
+
+`new_port` and `port_closed` come only from a repeat scan. A device's first
+scan finds its ports without announcing them. A repeat scan works up from the
+common ports to `portscan_rescan_tier`, announces a port it finds open that was
+not on the device's list, and drops - announcing with `port_closed`, which is
+off by default - a listed port it checked and found closed. Nothing is dropped
+if the device was not online at the end of the pass, since a device that left
+part-way would look as if every port had closed.
 
 `update` covers three things: a newer release was found and is waiting for you
 (only when automatic install is off, or blocked - see below), the dongle has

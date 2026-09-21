@@ -25,7 +25,7 @@ static const char *TAG = "settings";
 #define SETTINGS_NS      "cfg"
 #define SETTINGS_KEY     "blob"
 #define SETTINGS_VER_KEY "ver"
-#define SETTINGS_VERSION 8
+#define SETTINGS_VERSION 9
 
 #define AP_PASS_LEN 8
 
@@ -112,6 +112,7 @@ static void apply_defaults(netdash_settings_t *cfg)
     cfg->ota_enabled    = true;
     cfg->ota_auto       = true;
     cfg->ota_interval_h = 12;
+    cfg->portscan_rescan_tier = 1;   /* what re-probing always did before */
 }
 
 static void clamp(netdash_settings_t *cfg)
@@ -169,6 +170,9 @@ static void clamp(netdash_settings_t *cfg)
     }
     if (cfg->portscan_rescan_days > 365) {
         cfg->portscan_rescan_days = 365;
+    }
+    if (cfg->portscan_rescan_tier < 1 || cfg->portscan_rescan_tier > 3) {
+        cfg->portscan_rescan_tier = 1;
     }
     cfg->notif_mask &= NETDASH_NOTIF_ALL_MASK;
 
@@ -292,6 +296,7 @@ static esp_err_t load_locked(bool *out_dirty)
                 apply_defaults(&fresh);
                 MIGRATE_FIELD(tour_seen);   /* v7 */
                 MIGRATE_FIELD(tour_rev);    /* v8 */
+                MIGRATE_FIELD(portscan_rescan_tier);   /* v9 */
 
                 ESP_LOGW(TAG, "migrated settings from v%u (%u bytes) to v%u (%u bytes)",
                          (unsigned)ver, (unsigned)stored,
