@@ -164,13 +164,11 @@ main/
                             "no DNS" can be told apart. Uses esp_ping rather than
                             a second raw socket of our own.
 
-  net/ota.c/.h              updates from the latest GitHub release of the repo
-                            baked in by CONFIG_NETDASH_OTA_REPO (never a web
-                            setting: the API has no auth). Streams the release
-                            JSON through a tiny tokenizer instead of cJSON,
-                            resolves the asset redirect by hand so the token
-                            never leaves api.github.com, checks the image names
-                            itself as project netdash and as the tag, and
+  net/ota.c/.h              updates from latest.json in the releases repo baked
+                            in by CONFIG_NETDASH_OTA_REPO (never a web setting:
+                            the API has no auth), read through
+                            raw.githubusercontent.com. Checks the image names
+                            itself as project netdash and as that version, and
                             confirms or rolls back a new image after boot.
                             docs/UPDATES.md is the publishing guide.
 
@@ -193,8 +191,9 @@ docs/API.md                 the REST contract. Firmware and UI both follow it;
                             change this file before changing either side.
 tools/gen_oui.py            IEEE oui.csv -> oui_table.inc (--curated | --full).
 tools/release.py            checks build/netdash.bin is exactly the tag HEAD is
-                            on, stages it in dist/, and with --publish creates
-                            the GitHub release.
+                            on and newer than what is published, then commits
+                            it and latest.json into ../landash-releases. The
+                            push there is what publishes it.
 partitions.csv              nvs 64K, otadata 8K, phy 4K, ota_0 3M, ota_1 3M,
                             storage 1M. "storage" is a SPIFFS volume mounted
                             at /ic by db/icons.c; it is formatted on first use,
@@ -269,14 +268,21 @@ in `http_server.h`; routes past the limit fail to register and look exactly
 like a routing bug at runtime. There is now a `_Static_assert` against the size
 of the route table, so raise the constant when the build tells you to.
 
-## Three traps in OTA
+## Traps in OTA
 
-**`esp_http_client_get_url()` drops the query string.** It rebuilds the URL
-from scheme, host, port and path. GitHub's asset download redirects to a signed
-URL whose signature *is* the query string, so following the redirect with
-`esp_http_client_set_redirection()` + `get_url()` produced an unsigned URL and a
-baffling `Server error (618)`. `ota.c` captures the `Location` header from
-`HTTP_EVENT_ON_HEADER` instead.
+**Releases are files on a branch, not GitHub release objects.** A release
+object cannot be pushed, only created through the website or the API, which
+made publishing a separate manual step. `latest.json` plus the image, committed
+to the public releases repo and read from `raw.githubusercontent.com`, makes a
+push the whole of publishing, needs no token, and has no redirect to a signed
+URL on another host.
+
+If you ever go back to release assets: `esp_http_client_get_url()` drops the
+query string. It rebuilds the URL from scheme, host, port and path, and a
+GitHub asset download redirects to a signed URL whose signature *is* the query
+string. Following the redirect with `esp_http_client_set_redirection()` plus
+`get_url()` produced an unsigned URL and a baffling `Server error (618)`.
+Capture the `Location` header from `HTTP_EVENT_ON_HEADER` instead.
 
 **An update never replaces the bootloader.** Rollback
 (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`) lives in the bootloader, so the first
@@ -286,16 +292,13 @@ has the same property: it reaches only boards that are reflashed by cable.
 **Heap during TLS.** A GitHub handshake took free heap from ~90 KB to ~35 KB
 with static mbedTLS buffers. `CONFIG_MBEDTLS_DYNAMIC_BUFFER` and its two
 `FREE_*` companions bring the low point to ~55 KB. Do not turn them off, and
-do not buffer the release JSON (17 KB for esptool's) - stream it.
+keep what is read before the download small.
 
-To exercise the whole path without a release of our own, build into a
-separate directory against a public repo and a fake low version, and watch the
-console: it finds the release, follows the redirect, starts the download and
-then refuses the image because it is not an app:
+To try an update without publishing one, build into a separate directory with
+a fake low version, so the real release looks new, and watch the console:
 
 ```powershell
-# build_otatest/sdkconfig: a copy of sdkconfig with CONFIG_NETDASH_OTA_REPO=
-# "espressif/esptool" and CONFIG_NETDASH_OTA_ASSET= one of its zip assets.
+# build_otatest/sdkconfig: a copy of sdkconfig.
 idf.py -B build_otatest "-DSDKCONFIG=build_otatest/sdkconfig" "-DPROJECT_VER=v0.0.1" build
 ```
 

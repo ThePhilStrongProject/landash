@@ -1,17 +1,9 @@
 dependencies:
   espressif/button:
-    component_hash: a1f34e8ed2e61ffef1a230fd9477005c2db335c7e1f6a239f43e5f119dcbe1b0
-    dependencies:
-    - name: espressif/cmake_utilities
-      registry_url: https://components.espressif.com
-      require: private
-      version: '*'
-    - name: idf
-      require: private
-      version: '>=4.0'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
+      path: C:\Users\PhilStrong\Documents\GitHub\landash\managed_components\espressif__button
+      type: local
     version: 4.2.1
   espressif/cmake_utilities:
     component_hash: 05165f30922b422b4b90c08845e6d449329b97370fbd06309803d8cb539d79e3
@@ -20,32 +12,20 @@ dependencies:
       require: private
       version: '>=4.1'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.1.1
   espressif/esp_lvgl_port:
-    component_hash: d3c020b45c3dfc0d1706a83b63a1c34a6eb444a6e935f9afff79f92b7b94dcef
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=5.2'
-    - name: lvgl/lvgl
-      registry_url: https://components.espressif.com
-      require: public
-      version: '>=8,<10'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
+      path: C:\Users\PhilStrong\Documents\GitHub\landash\managed_components\espressif__esp_lvgl_port
+      type: local
     version: 2.9.0
   espressif/mdns:
-    component_hash: b679eafd0acae2066e2645bd91d073e33ca5be515e2545cd3c4e55a3e3bce3cb
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=5.0'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
+      path: C:\Users\PhilStrong\Documents\GitHub\landash\managed_components\espressif__mdns
+      type: local
     version: 1.13.1
   idf:
     source:
@@ -85,10 +65,11 @@ dependencies:
     version: 9.6.0~1
 direct_dependencies:
 - espressif/button
+- espressif/cmake_utilities
 - espressif/esp_lvgl_port
 - espressif/mdns
 - idf
 - lvgl/lvgl
-manifest_hash: 22a11d37cfbd0b10477bb5a99916810778819fc0b69df39a78740e0098dc5a1f
+manifest_hash: eaa451db62f0fae2650c3fa72281f2c39d3ec5675b9d2ce113179a8d0056428b
 target: esp32c6
 version: 2.0.0

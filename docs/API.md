@@ -1033,19 +1033,26 @@ Runs a check on the next tick instead of waiting out the interval.
 
 ## Firmware updates
 
-The dongle updates itself from the releases of one GitHub repository, fixed at
-build time (`CONFIG_NETDASH_OTA_REPO`, default `ThePhilStrongProject/landash`).
-It asks `GET /repos/{repo}/releases/latest` - so drafts and pre-releases are
-never installed - takes the asset named `netdash.bin` (`CONFIG_NETDASH_OTA_ASSET`),
-and installs it when its tag is a newer version than the running firmware.
-docs/UPDATES.md is the guide to publishing one.
+The dongle updates itself from a releases repository fixed at build time
+(`CONFIG_NETDASH_OTA_REPO`, default `ThePhilStrongProject/landash-releases`,
+branch `CONFIG_NETDASH_OTA_BRANCH`, default `main`). It reads `latest.json`
+from `raw.githubusercontent.com`:
+
+```json
+{"version": "v0.14.1", "file": "firmware/netdash-v0.14.1.bin", "size": 1982176}
+```
+
+and installs the named file when `version` is newer than the running firmware.
+`file` must be a plain relative path inside the repository; the manifest
+chooses which image, never which host. docs/UPDATES.md is the guide to
+publishing one.
 
 Why the repository is not a setting: this API has no authentication, so
 anything it can change, anyone on the LAN can change. A writable repository
 field would let any of them install their own firmware.
 
 Before an image is written, the dongle checks that it names itself as project
-`netdash` and as the release's tag. A new image boots on probation and is
+`netdash` and as the version `latest.json` gave. A new image boots on probation and is
 kept only once it has been up for a minute and, if Wi-Fi is configured, has
 got back online within ten; otherwise the bootloader returns to the previous
 version, and that version is then never installed automatically again.
@@ -1063,18 +1070,17 @@ Settings, in `GET/PUT /api/settings`:
 | `ota_enabled` | bool | check for new releases every `ota_interval_h` hours (and two minutes after boot) |
 | `ota_auto` | bool | install a newer release without asking |
 | `ota_interval_h` | number, 1-168 | hours between checks, default 12 |
-| `ota_token` | string or null, write-only | a GitHub token for a private repository. `""` leaves it unchanged, `null` removes it. Never returned; `ota_token_set` says whether one is stored |
+| `ota_token` | string or null, write-only | a GitHub token, only for a private releases repository. `""` leaves it unchanged, `null` removes it. Never returned; `ota_token_set` says whether one is stored |
 
-The token is only ever sent to `api.github.com`. The asset download redirects to
-a short-lived signed URL on another host, and that request is made without it.
+The token is only ever sent to `raw.githubusercontent.com`.
 
 ### GET /api/ota
 
 ```json
 {
   "state": "available",
-  "current": "v0.13.0",
-  "latest": "v0.13.1",
+  "current": "v0.14.0",
+  "latest": "v0.14.1",
   "available": true,
   "auto_blocked": false,
   "error": null,
@@ -1082,8 +1088,8 @@ a short-lived signed URL on another host, and that request is made without it.
   "last_check": 1790000000,
   "bytes_done": 0,
   "bytes_total": 1975488,
-  "repo": "ThePhilStrongProject/landash",
-  "token_set": true
+  "repo": "ThePhilStrongProject/landash-releases",
+  "token_set": false
 }
 ```
 
@@ -1091,8 +1097,8 @@ a short-lived signed URL on another host, and that request is made without it.
 |---|---|---|
 | `state` | string | `idle` (not checked since boot), `checking`, `up_to_date`, `available`, `downloading`, `rebooting`, `error` |
 | `current` | string | the running version, as `GET /api/status` reports `fw` |
-| `latest` | string or null | the newest release's tag, once a check has succeeded |
-| `available` | bool | `latest` is newer than `current` and has the asset |
+| `latest` | string or null | the version `latest.json` names, once a check has succeeded |
+| `available` | bool | `latest` is newer than `current` |
 | `auto_blocked` | bool | available, but will not install itself: a development build, or `latest` was rolled back here before |
 | `error` | string or null | why the last check or install failed |
 | `rolled_back` | string or null | a version that failed to start and was rolled back |

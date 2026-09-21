@@ -1,11 +1,13 @@
 /*
- * Over-the-air updates from GitHub releases.
+ * Over-the-air updates from a GitHub releases repository.
  *
- * The dongle asks the GitHub API for the latest release of the repository
- * compiled into it (CONFIG_NETDASH_OTA_REPO), and when that release is newer
- * than the running firmware and carries the firmware asset
- * (CONFIG_NETDASH_OTA_ASSET), it downloads it into the idle OTA slot, checks
- * the image names itself as that release, and reboots into it.
+ * The dongle reads latest.json from the repository compiled into it
+ * (CONFIG_NETDASH_OTA_REPO, branch CONFIG_NETDASH_OTA_BRANCH) through
+ * raw.githubusercontent.com. When the version it names is newer than the
+ * running firmware, it downloads the image file it names into the idle OTA
+ * slot, checks the image calls itself that version, and reboots into it.
+ * Publishing is therefore a commit and a push; tools/release.py makes the
+ * commit.
  *
  * Why the repository is a build setting and not a web setting: the dashboard
  * has no login, so anything it can change, anyone on the LAN can change. A
@@ -13,10 +15,10 @@
  * token, by contrast, is safe to accept from the page - the worst a stranger
  * can do with it is point the dongle at a repository it cannot read.
  *
- * A private repository needs a fine-grained GitHub token with read-only access
- * to its contents. It is kept in settings (NVS), is never returned by the API,
- * and is only ever sent to api.github.com: the asset download redirects to a
- * signed URL on another host, and that request is made without it.
+ * A public releases repository needs no token. A private one needs a
+ * fine-grained token with read-only access to its contents; it is kept in
+ * settings (NVS), never returned by the API, and only ever sent to
+ * raw.githubusercontent.com.
  *
  * Rollback: CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE is on, so a freshly
  * installed image boots in a pending state. ota_init() marks it good once it
@@ -25,9 +27,8 @@
  * rolled back by the bootloader, and that version is never auto-installed
  * again. A manual install still can, deliberately.
  *
- * Memory: the release JSON is scanned as it streams in rather than buffered,
- * because the TLS session alone takes about 40 KB of a heap that has about
- * 100 KB free.
+ * Memory: a TLS session with GitHub is the biggest thing this firmware ever
+ * does. With mbedTLS's dynamic buffers it leaves about 55 KB of heap free.
  */
 #pragma once
 

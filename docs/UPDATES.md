@@ -1,149 +1,126 @@
-# Firmware updates from GitHub
+# Firmware updates
 
-The dongle updates itself from the **releases** of one GitHub repository. Twice
-a day (and two minutes after it boots) it asks GitHub for the latest release. If
-that release is a newer version than the one it is running and has
-`netdash.bin` attached, it downloads it, checks it, and restarts into it.
+The dongle updates itself from a **releases repository**: a separate, public
+GitHub repo that holds nothing but built firmware and one small file,
+`latest.json`, saying which one is current:
 
-The repository is fixed when the firmware is built: `ThePhilStrongProject/landash`,
-set by `CONFIG_NETDASH_OTA_REPO` under **NetDash** in `idf.py menuconfig`. It is
-not a web setting on purpose. The dashboard has no login, so anyone on your
-network could otherwise point the dongle at their own firmware.
+```json
+{
+  "version": "v0.14.1",
+  "file": "firmware/netdash-v0.14.1.bin",
+  "size": 1982176
+}
+```
+
+Two minutes after it boots, and every 12 hours after that, the dongle reads
+`latest.json` from `raw.githubusercontent.com`. If the version is newer than
+its own, it downloads that file, checks it, and restarts into it.
+
+Publishing is therefore a commit and a push. `tools/release.py` makes the
+commit; the push is yours, because that is the moment it goes live.
+
+| | |
+|---|---|
+| Source code | `ThePhilStrongProject/landash`, private |
+| Releases | `ThePhilStrongProject/landash-releases`, public, branch `main` |
+| Set by | `CONFIG_NETDASH_OTA_REPO` and `CONFIG_NETDASH_OTA_BRANCH`, under **NetDash** in `idf.py menuconfig` |
+
+The releases repository is fixed when the firmware is built, not a web
+setting, on purpose. The dashboard has no login, so anyone on your network
+could otherwise point the dongle at their own firmware.
+
+Because it is public, dongles need no token, and nothing expires. Anyone can
+download a built image, but nobody can see the source.
 
 ---
 
 ## One-time setup
 
-### 1. Put the code on GitHub
+1. **Clone the releases repository next to this one**, so the two folders sit
+   side by side:
 
-Create the repository **ThePhilStrongProject/landash** as **Private**, and push
-this project to it. In GitHub Desktop: *File > Add local repository*, pick this
-folder, then *Publish repository*, set the name to `landash`, the owner to
-`ThePhilStrongProject`, and tick *Keep this code private*. From a terminal instead:
+   ```
+   Documents/GitHub/landash
+   Documents/GitHub/landash-releases
+   ```
 
-```bash
-git remote add origin https://github.com/ThePhilStrongProject/landash.git
-git push -u origin main --tags
-```
+   `tools/release.py` looks for it there; `--releases <path>` points it elsewhere.
 
-`--tags` matters: every release hangs off a tag.
+2. **Flash each dongle over USB once** with a build from v0.14.0 or later.
+   Updates rely on a bootloader that can roll back a failed update, and an
+   update never replaces the bootloader:
 
-### 2. A read-only token for the dongles
+   ```powershell
+   idf.py build
+   idf.py -p COM5 flash
+   ```
 
-A private repository's releases can only be downloaded with a token. The dongle
-needs one that can read this repository and nothing else.
-
-1. GitHub > your avatar > **Settings** > **Developer settings** >
-   **Personal access tokens** > **Fine-grained tokens** > **Generate new token**.
-2. **Token name:** `landash dongles`.
-3. **Resource owner:** `ThePhilStrongProject`. If that is an organisation rather
-   than your personal account, it has to allow fine-grained tokens
-   (*Organisation settings > Personal access tokens*), and may ask an owner (you)
-   to approve this one before it works.
-4. **Expiration:** up to you. When it expires, updates stop with
-   "GitHub rejected the access token" until you paste a new one. A year is a
-   sensible middle ground; set a calendar reminder.
-5. **Repository access:** *Only select repositories* > `landash`.
-6. **Permissions > Repository permissions > Contents: Read-only.** Leave
-   everything else at *No access*. (*Metadata: Read-only* is added
-   automatically and is harmless.)
-7. **Generate token** and copy it. It starts `github_pat_`.
-
-Then, on each dongle: **Settings > Maintenance > Firmware updates > Access
-token**, paste it, **Save token**, then **Check now**.
-
-What that token can do if someone extracts it from a dongle: read the source
-code and releases of `landash`. Nothing else, and nothing it can change. It is
-never shown by the dashboard or returned by its API, and the dongle only ever
-sends it to `api.github.com`.
-
-> Prefer no token on the dongles at all? Keep the code private but publish
-> releases to a second, **public** repository (for example
-> `ThePhilStrongProject/landash-releases`), and set `CONFIG_NETDASH_OTA_REPO`
-> to that. The dongles then need no token, and anyone can download a binary
-> but nobody can see the source.
-
-### 3. A token for publishing (optional)
-
-Only needed if you want `tools/release.py --publish` to create releases for
-you. Otherwise use the GitHub web page (below).
-
-Same steps as above, but name it `landash release` and give it
-**Contents: Read and write**. Keep this one on your PC only. It can change the
-repository, so it should never go near a dongle.
-
-### 4. Get an update-capable build onto each dongle, over USB, once
-
-Updates rely on a bootloader that can roll back a failed update, and an update
-never replaces the bootloader. So the first build with update support has to be
-flashed over USB:
-
-```powershell
-idf.py build
-idf.py -p COM5 flash
-```
-
-From then on, everything can arrive over the air.
+   From then on everything arrives over the air.
 
 ---
 
 ## Publishing a release
 
-Every release is a git tag, a build made on exactly that tag, and that build's
-`build/netdash.bin` attached to a GitHub release for the tag.
-
 ```powershell
-# 1. Commit everything, then tag. The version IS the tag, so it must be a
-#    higher vMAJOR.MINOR.PATCH than what the dongles run.
-git tag -a v0.13.2 -m "What changed, in a sentence or two"
+# 1. Commit everything, then tag. The tag IS the version, so it must be a
+#    higher vMAJOR.MINOR.PATCH than the one out there now.
+git tag -a v0.14.2 -m "What changed, in a sentence or two"
 
-# 2. Build ON the tag. The version baked into the image comes from
-#    git describe, so building first stamps the old version plus -dirty.
+# 2. Build ON the tag. The version inside the image comes from git describe,
+#    so building before tagging stamps the old version plus -dirty.
 idf.py build
 
-# 3. Check the image really is v0.13.2 and stage a copy in dist/.
+# 3. Check the image, copy it into ../landash-releases, rewrite latest.json,
+#    and commit there. Nothing is live yet.
 python tools/release.py
 
-# 4. Push the commit and the tag.
-git push origin main v0.13.2
+# 4. Go live.
+cd ../landash-releases
+git push
+
+# 5. And keep the source repository's tags in step.
+cd ../landash
+git push origin main v0.14.2
 ```
 
-Then either:
+`tools/release.py` refuses, and says why, if:
 
-- **Web page:** GitHub > `landash` > **Releases** > **Draft a new release** >
-  choose tag `v0.13.2` > attach `build/netdash.bin` (the file must be called
-  exactly `netdash.bin`) > leave *Set as a pre-release* **unticked** >
-  **Publish release**.
-- **Script:** `$env:GITHUB_TOKEN = "github_pat_…"` (the read-and-write one),
-  then `python tools/release.py --publish`.
+- this tree has uncommitted changes, or HEAD is not exactly on a tag,
+- `build/netdash.bin` is not project `netdash` with that same version (the
+  usual cause is building before tagging),
+- the version is not newer than the one `latest.json` already names, or
+- the releases clone has uncommitted changes of its own.
 
-Dongles pick it up at their next check, within 12 hours, or straight away with
-**Settings > Maintenance > Check now**.
+Dongles pick a pushed release up within 12 hours, or straight away with
+**Settings › Maintenance › Check now**. GitHub caches raw files for up to five
+minutes, so a check in the first few minutes after a push may still see the
+previous `latest.json`.
 
-A **draft** or **pre-release** is never installed, because the dongle asks for
-GitHub's "latest release", which excludes both. That is a handy way to stage a
-release before letting it loose.
+To **hold a release back**, commit it and do not push. To **withdraw** one
+that is already out, publish a newer version. Dongles never install a version
+lower than their own, so pointing `latest.json` back at an old file does
+nothing for dongles that already have the bad one.
 
 ---
 
 ## What the dongle does, in order
 
-1. Asks `api.github.com` for the latest release of `landash` (with the token,
-   if one is set).
-2. Compares the tag with its own version: `v0.13.2` beats `v0.13.1`, and a
-   build a few commits past `v0.13.1` counts as `v0.13.1`.
-3. If it is newer and *Install them automatically* is on, it downloads
-   `netdash.bin`. If automatic install is off, it puts "v0.13.2 is available"
-   in the feed and waits for **Install**.
+1. Reads `latest.json` from the releases repository.
+2. Compares its `version` with its own. `v0.14.2` beats `v0.14.1`, and a build
+   a few commits past `v0.14.1` counts as `v0.14.1`.
+3. If the release is newer and *Install them automatically* is on, it
+   downloads `file`. If automatic install is off, it puts "v0.14.2 is
+   available" in the feed and waits for **Install**.
 4. Before writing anything, it checks the image calls itself project `netdash`
-   and version `v0.13.2`. A binary attached to the wrong release is refused.
-5. It writes the image to the other app slot, restarts into it, and the web page
-   reloads itself onto the new version.
+   and version `v0.14.2`, so a manifest pointing at the wrong file is refused.
+   The image's own SHA-256 is checked once it is written.
+5. It restarts into the new image, and an open dashboard page reloads itself
+   onto the new version.
 6. The new version is on probation. Once it has run for a minute and got back
-   onto Wi-Fi, it is kept, and the feed says "Updated to v0.13.2 (was v0.13.1)".
-   If it crashes first, or cannot get online within ten minutes, the bootloader
-   goes back to v0.13.1, the feed says so, and v0.13.2 is never installed
-   automatically again. (Publish a v0.13.3 with the fix.)
+   onto Wi-Fi, it is kept, and the feed says "Updated to v0.14.2 (was
+   v0.14.1)". If it crashes first, or cannot get online within ten minutes, the
+   bootloader goes back to v0.14.1, the feed says so, and v0.14.2 is never
+   installed automatically again. Publish a v0.14.3 with the fix.
 
 **Development builds are left alone.** A dongle running a build with
 uncommitted changes (`…-dirty`) is never updated automatically, since whoever
@@ -151,16 +128,34 @@ flashed it is presumably working on it. **Install** still works on it by hand.
 
 ---
 
+## A private releases repository
+
+A private releases repository works too, if you would rather binaries were not
+public. The dongles then each need a read-only token:
+
+1. GitHub › **Settings** › **Developer settings** › **Fine-grained tokens** ›
+   **Generate new token**. Set the owner to `ThePhilStrongProject`, choose
+   *Only select repositories* › `landash-releases`, and give it
+   **Contents: Read-only** and nothing else.
+2. On each dongle, go to **Settings › Maintenance › Access token**, paste the
+   token and press **Save token**.
+
+The token is never shown again or returned by the API, and is sent only to
+`raw.githubusercontent.com`. When it expires, updates stop with "GitHub
+refused the access token" until a new one is pasted in. That is why the public
+repository is the default.
+
+---
+
 ## When it does not work
 
-**Settings > Maintenance** shows the last error. The likely ones:
+**Settings › Maintenance** shows the last error. The likely ones:
 
 | Message | Meaning |
 |---|---|
-| No release found (a private repository needs a token) | No token is set, and the repository is private (or has no releases yet). |
-| No release found, or the token cannot see the repository | The token is not scoped to `landash`, or the organisation has not approved it. |
-| GitHub rejected the access token | It has expired or been revoked. Generate a new one and paste it in. |
-| GitHub refused the request (rate limit or token permissions) | Without a token GitHub allows 60 requests an hour per IP. Otherwise the token lacks *Contents: Read*. |
-| Release v0.13.2 has no netdash.bin attached | The asset is missing, or is named something else. |
-| The asset says v0.13.2-dirty, the release says v0.13.2 | The build was made before the tag, or with uncommitted changes. Rebuild on the tag and replace the asset. |
+| No latest.json found (a private repository needs a token) | Nothing has been pushed yet, or the branch is not `main`, or the repository is private. |
+| latest.json has no usable "version" / "file" | The manifest was edited by hand. Let `tools/release.py` write it. |
+| The image says v0.14.2-dirty, latest.json says v0.14.2 | The build was made before the tag, or with uncommitted changes. |
+| The file is not a netdash image | `file` points at something else. |
+| GitHub is rate-limiting requests | It retries at the next interval. |
 | Not connected to Wi-Fi | It retries every five minutes. |

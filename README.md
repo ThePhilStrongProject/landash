@@ -59,10 +59,10 @@ Board pins, scan rate and the default hostname live under **NetDash** in
 ## Updates
 
 Once one build with update support is on the dongle (over USB, as above), later
-versions arrive by themselves: it checks the GitHub repository's latest release
-twice a day and installs anything newer, with an automatic rollback if the new
-version fails to start. **docs/UPDATES.md** covers setting up the repository,
-the read-only token a private one needs, and publishing a release.
+versions arrive by themselves: twice a day it reads `latest.json` from the
+public releases repository and installs anything newer, with an automatic
+rollback if the new version fails to start. Publishing is a commit and a push;
+**docs/UPDATES.md** has the details.
 
 ## First run
 

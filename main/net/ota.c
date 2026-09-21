@@ -4,12 +4,14 @@
  */
 #include "ota.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <time.h>
 
+#include "cJSON.h"
 #include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
@@ -32,13 +34,11 @@
 static const char *TAG = "ota";
 
 #define OTA_USER_AGENT      "LANDA.SH-dongle"
-#define OTA_API_VERSION     "2022-11-28"
 #define FIRST_CHECK_DELAY_S 120     /* let discovery have the first minutes  */
 #define RETRY_OFFLINE_S     300     /* no Wi-Fi yet: try again this soon     */
 #define CONFIRM_AFTER_S     60      /* a new image must survive this long... */
 #define CONFIRM_DEADLINE_S  600     /* ...and be online by this, or roll back */
-#define URL_MAX             192     /* api.github.com asset URLs are ~80     */
-#define REDIRECT_URL_MAX    2048    /* the signed download URL is ~800       */
+#define MANIFEST_MAX        1024    /* latest.json is ~100 bytes             */
 
 #define REQ_CHECK   (1u << 0)
 #define REQ_INSTALL (1u << 1)
@@ -56,8 +56,8 @@ static TaskHandle_t      s_task;
 static ota_status_t      s_status;
 
 /* Only the task touches these. */
-static char     s_asset_url[URL_MAX];
-static uint32_t s_asset_size;
+static char     s_file_url[256];    /* the image latest.json names          */
+static uint32_t s_file_size;        /* its size, 0 when the manifest omits it */
 static bool     s_pending_verify;   /* running image not yet confirmed good  */
 
 static void lock(void)   { xSemaphoreTake(s_lock, portMAX_DELAY); }
@@ -79,13 +79,6 @@ static int64_t now_unix(void)
 {
     time_t t = time(NULL);
     return t > 1700000000 ? (int64_t)t : 0;   /* 0 until NTP has synced */
-}
-
-/* Bounded copy that says so: truncation here is intended, not a bug. */
-static void copy_str(char *dst, size_t cap, const char *src)
-{
-    strncpy(dst, src, cap - 1);
-    dst[cap - 1] = '\0';
 }
 
 static uint32_t uptime_s(void)
@@ -185,236 +178,81 @@ static bool is_release_build(const char *current)
 }
 
 /* ------------------------------------------------------------------------- */
-/* Streaming scan of the GitHub release JSON                                 */
+/* The manifest                                                              */
 /* ------------------------------------------------------------------------- */
 
 /*
- * GET /repos/{repo}/releases/latest answers with several kilobytes - release
- * notes, uploader profiles, a block per asset - of which we need three
- * values: tag_name, and the url and size of the asset with our name. Parsing
- * it with cJSON would need the whole text and its tree in RAM next to a live
- * TLS session, so this tokenizer walks it a chunk at a time instead, keeping
- * only the key path and the few strings that matter.
+ * The releases repository holds latest.json next to the images it names:
+ *
+ *     {"version": "v0.14.1", "file": "firmware/netdash-v0.14.1.bin", "size": 1982176}
+ *
+ * Both come from raw.githubusercontent.com, straight off the branch, so
+ * publishing is a commit and a push: no release objects, no API, and no
+ * redirect to a signed URL on some other host. The manifest may say which
+ * image, never where from - "file" must be a plain path inside the repository.
  */
 
-#define JS_MAX_DEPTH 8
-
-typedef struct {
-    uint8_t  depth;                         /* containers open               */
-    uint8_t  overflow;                      /* extra depth beyond MAX_DEPTH  */
-    char     kind[JS_MAX_DEPTH];            /* '{' or '['                    */
-    bool     want_key[JS_MAX_DEPTH];        /* object: next string is a key  */
-    char     key[JS_MAX_DEPTH][20];         /* last key seen at each level   */
-
-    bool     in_str, esc, str_is_key, keep;
-    uint8_t  uskip;                         /* \uXXXX hex digits to skip     */
-    char     str[URL_MAX];
-    size_t   slen;
-    char     lit[16];
-    size_t   llen;
-
-    /* The asset object being read, then the one that matched. */
-    char     a_url[URL_MAX];
-    char     a_name[64];
-    uint32_t a_size;
-
-    char     tag[32];
-    char     url[URL_MAX];
-    uint32_t size;
-    bool     found;
-} gh_scan_t;
-
-static bool in_asset_object(const gh_scan_t *s)
+static void raw_url(char *out, size_t cap, const char *path)
 {
-    return s->overflow == 0 && s->depth == 3 && s->kind[0] == '{' &&
-           strcmp(s->key[0], "assets") == 0 && s->kind[1] == '[' && s->kind[2] == '{';
+    snprintf(out, cap, "https://raw.githubusercontent.com/%s/%s/%s", ota_repo(),
+             CONFIG_NETDASH_OTA_BRANCH, path);
 }
 
-static bool at_root_key(const gh_scan_t *s, const char *k)
+static bool safe_repo_path(const char *p)
 {
-    return s->overflow == 0 && s->depth == 1 && s->kind[0] == '{' && strcmp(s->key[0], k) == 0;
-}
-
-static void scan_end_literal(gh_scan_t *s)
-{
-    if (s->llen == 0) {
-        return;
+    if (p == NULL || p[0] == '\0' || p[0] == '/' || strlen(p) > 96 || strstr(p, "..") != NULL) {
+        return false;
     }
-    s->lit[s->llen] = '\0';
-    if (in_asset_object(s) && strcmp(s->key[2], "size") == 0) {
-        s->a_size = (uint32_t)strtoul(s->lit, NULL, 10);
-    }
-    s->llen = 0;
-}
-
-static void scan_end_string(gh_scan_t *s)
-{
-    s->str[s->slen] = '\0';
-    if (s->str_is_key) {
-        if (s->overflow == 0 && s->depth > 0) {
-            copy_str(s->key[s->depth - 1], sizeof(s->key[0]), s->str);
-            s->want_key[s->depth - 1] = false;
-        }
-        return;
-    }
-    if (!s->keep) {
-        return;
-    }
-    if (at_root_key(s, "tag_name")) {
-        copy_str(s->tag, sizeof(s->tag), s->str);
-    } else if (in_asset_object(s) && strcmp(s->key[2], "url") == 0) {
-        copy_str(s->a_url, sizeof(s->a_url), s->str);
-    } else if (in_asset_object(s) && strcmp(s->key[2], "name") == 0) {
-        copy_str(s->a_name, sizeof(s->a_name), s->str);
-    }
-}
-
-static void scan_open(gh_scan_t *s, char c)
-{
-    scan_end_literal(s);
-    if (s->overflow > 0 || s->depth == JS_MAX_DEPTH) {
-        s->overflow++;
-        return;
-    }
-    s->kind[s->depth]     = c;
-    s->want_key[s->depth] = (c == '{');
-    s->key[s->depth][0]   = '\0';
-    s->depth++;
-    if (in_asset_object(s)) {
-        s->a_url[0]  = '\0';
-        s->a_name[0] = '\0';
-        s->a_size    = 0;
-    }
-}
-
-static void scan_close(gh_scan_t *s, const char *asset_name)
-{
-    scan_end_literal(s);
-    if (s->overflow > 0) {
-        s->overflow--;
-        return;
-    }
-    if (in_asset_object(s) && !s->found && strcmp(s->a_name, asset_name) == 0 &&
-        s->a_url[0] != '\0') {
-        snprintf(s->url, sizeof(s->url), "%s", s->a_url);
-        s->size  = s->a_size;
-        s->found = true;
-    }
-    if (s->depth > 0) {
-        s->depth--;
-    }
-}
-
-static void scan_feed(gh_scan_t *s, const char *buf, size_t n, const char *asset_name)
-{
-    for (size_t i = 0; i < n; i++) {
-        const char c = buf[i];
-
-        if (s->in_str) {
-            if (s->uskip > 0) {
-                s->uskip--;
-                continue;
-            }
-            if (s->esc) {
-                s->esc = false;
-                char out = c;
-                if (c == 'u') {
-                    s->uskip = 4;
-                    out      = '?';   /* nothing we keep is outside ASCII */
-                }
-                if (s->keep && s->slen < sizeof(s->str) - 1) {
-                    s->str[s->slen++] = out;
-                }
-                continue;
-            }
-            if (c == '\\') {
-                s->esc = true;
-            } else if (c == '"') {
-                s->in_str = false;
-                scan_end_string(s);
-            } else if (s->keep && s->slen < sizeof(s->str) - 1) {
-                s->str[s->slen++] = c;
-            }
-            continue;
-        }
-
-        switch (c) {
-        case '"': {
-            scan_end_literal(s);
-            const bool is_key = s->overflow == 0 && s->depth > 0 &&
-                                s->kind[s->depth - 1] == '{' && s->want_key[s->depth - 1];
-            s->in_str     = true;
-            s->str_is_key = is_key;
-            s->slen       = 0;
-            s->keep       = is_key || at_root_key(s, "tag_name") ||
-                            (in_asset_object(s) && (strcmp(s->key[2], "url") == 0 ||
-                                                    strcmp(s->key[2], "name") == 0));
-            break;
-        }
-        case '{':
-        case '[':
-            scan_open(s, c);
-            break;
-        case '}':
-        case ']':
-            scan_close(s, asset_name);
-            break;
-        case ',':
-            scan_end_literal(s);
-            if (s->overflow == 0 && s->depth > 0 && s->kind[s->depth - 1] == '{') {
-                s->want_key[s->depth - 1] = true;
-            }
-            break;
-        case ':':
-        case ' ':
-        case '\t':
-        case '\r':
-        case '\n':
-            scan_end_literal(s);
-            break;
-        default:
-            if (s->llen < sizeof(s->lit) - 1) {
-                s->lit[s->llen++] = c;
-            }
-            break;
+    for (const char *c = p; *c != '\0'; c++) {
+        if (!isalnum((unsigned char)*c) && *c != '.' && *c != '_' && *c != '-' && *c != '/') {
+            return false;
         }
     }
+    return true;
 }
 
-/* ------------------------------------------------------------------------- */
-/* GitHub                                                                    */
-/* ------------------------------------------------------------------------- */
+/*
+ * A private releases repository needs a token, on both requests. The header
+ * value lives here rather than on the stack because esp_https_ota's
+ * init callback takes no context. Only the task touches it.
+ */
+static char s_auth[sizeof(((netdash_settings_t *)0)->ota_token) + 8];
 
-static void add_github_headers(esp_http_client_handle_t c, const char *accept, const char *token)
+static void set_auth(const char *token)
 {
-    esp_http_client_set_header(c, "Accept", accept);
-    esp_http_client_set_header(c, "X-GitHub-Api-Version", OTA_API_VERSION);
     if (token != NULL && token[0] != '\0') {
-        char auth[sizeof(((netdash_settings_t *)0)->ota_token) + 8];
-        snprintf(auth, sizeof(auth), "Bearer %s", token);
-        esp_http_client_set_header(c, "Authorization", auth);
+        snprintf(s_auth, sizeof(s_auth), "token %s", token);
+    } else {
+        s_auth[0] = '\0';
     }
 }
 
-static const char *status_error(int code, bool have_token)
+static esp_err_t add_auth(esp_http_client_handle_t c)
 {
+    if (s_auth[0] != '\0') {
+        esp_http_client_set_header(c, "Authorization", s_auth);
+    }
+    return ESP_OK;
+}
+
+static const char *status_error(int code)
+{
+    const bool have_token = s_auth[0] != '\0';
     switch (code) {
-    case 401: return "GitHub rejected the access token";
-    case 403: return "GitHub refused the request (rate limit or token permissions)";
-    case 404: return have_token ? "No release found, or the token cannot see the repository"
-                                : "No release found (a private repository needs a token)";
+    case 401:
+    case 403: return have_token ? "GitHub refused the access token" : "GitHub refused the request";
+    case 404: return have_token ? "No latest.json found, or the token cannot see the repository"
+                                : "No latest.json found (a private repository needs a token)";
+    case 429: return "GitHub is rate-limiting requests; it will try again later";
     default:  return "Unexpected answer from GitHub";
     }
 }
 
-/* Fills tag / s_asset_url / s_asset_size from the latest release. */
-static esp_err_t fetch_latest(const char *token, char *tag, size_t tag_cap, char *err, size_t err_cap)
+/* Fills version, s_file_url and s_file_size from latest.json. */
+static esp_err_t fetch_manifest(char *version, size_t vcap, char *err, size_t err_cap)
 {
-    static gh_scan_t scan;   /* ~700 bytes, task-owned, off the stack */
-    static char      buf[512];
-
-    char url[128];
-    snprintf(url, sizeof(url), "https://api.github.com/repos/%s/releases/latest", ota_repo());
+    char url[160];
+    raw_url(url, sizeof(url), "latest.json");
 
     esp_http_client_config_t cfg = {
         .url               = url,
@@ -429,123 +267,70 @@ static esp_err_t fetch_latest(const char *token, char *tag, size_t tag_cap, char
         snprintf(err, err_cap, "Out of memory");
         return ESP_ERR_NO_MEM;
     }
-    add_github_headers(c, "application/vnd.github+json", token);
+    add_auth(c);
 
     esp_err_t e = esp_http_client_open(c, 0);
     if (e != ESP_OK) {
-        snprintf(err, err_cap, "Could not reach api.github.com (%s)", esp_err_to_name(e));
+        snprintf(err, err_cap, "Could not reach GitHub (%s)", esp_err_to_name(e));
         esp_http_client_cleanup(c);
         return e;
     }
     (void)esp_http_client_fetch_headers(c);
     const int code = esp_http_client_get_status_code(c);
     if (code != 200) {
-        snprintf(err, err_cap, "%s (HTTP %d)", status_error(code, token[0] != '\0'), code);
+        snprintf(err, err_cap, "%s (HTTP %d)", status_error(code), code);
         esp_http_client_close(c);
         esp_http_client_cleanup(c);
         return ESP_FAIL;
     }
 
-    memset(&scan, 0, sizeof(scan));
-    int n;
-    while ((n = esp_http_client_read(c, buf, sizeof(buf))) > 0) {
-        scan_feed(&scan, buf, (size_t)n, CONFIG_NETDASH_OTA_ASSET);
+    char *buf = malloc(MANIFEST_MAX);
+    int   len = 0;
+    int   n   = 0;
+    if (buf != NULL) {
+        while (len < MANIFEST_MAX - 1 &&
+               (n = esp_http_client_read(c, buf + len, MANIFEST_MAX - 1 - len)) > 0) {
+            len += n;
+        }
     }
+    const bool more = buf != NULL && len == MANIFEST_MAX - 1 && esp_http_client_read(c, url, 1) > 0;
     esp_http_client_close(c);
     esp_http_client_cleanup(c);
 
-    if (n < 0) {
-        snprintf(err, err_cap, "Connection dropped while reading the release");
-        return ESP_FAIL;
-    }
-    if (scan.tag[0] == '\0') {
-        snprintf(err, err_cap, "The release has no tag");
-        return ESP_FAIL;
-    }
-    snprintf(tag, tag_cap, "%s", scan.tag);
-    if (!scan.found) {
-        snprintf(err, err_cap, "Release %s has no %s attached", scan.tag, CONFIG_NETDASH_OTA_ASSET);
-        return ESP_ERR_NOT_FOUND;
-    }
-    snprintf(s_asset_url, sizeof(s_asset_url), "%s", scan.url);
-    s_asset_size = scan.size;
-    return ESP_OK;
-}
-
-/*
- * The asset URL on api.github.com answers with a redirect to a short-lived
- * signed URL on another host. That host must NOT see the token - it rejects
- * requests carrying one, and there is no reason to hand it over anyway - so
- * the redirect is resolved here by hand and the download made without it.
- *
- * The Location header is taken straight from the response. Do not be tempted
- * by esp_http_client_set_redirection() + esp_http_client_get_url(): get_url
- * rebuilds the URL from scheme, host and path and drops the query string,
- * which is where the signature lives, and the download host then answers
- * with nonsense ("Server error (618)").
- */
-typedef struct {
-    char  *buf;
-    size_t cap;
-    bool   got;
-    bool   too_long;
-} location_ctx_t;
-
-static esp_err_t location_event(esp_http_client_event_t *evt)
-{
-    location_ctx_t *ctx = evt->user_data;
-    if (evt->event_id == HTTP_EVENT_ON_HEADER && ctx != NULL && evt->header_key != NULL &&
-        evt->header_value != NULL && strcasecmp(evt->header_key, "Location") == 0) {
-        if (strlen(evt->header_value) >= ctx->cap) {
-            ctx->too_long = true;
-        } else {
-            strcpy(ctx->buf, evt->header_value);
-            ctx->got = true;
-        }
-    }
-    return ESP_OK;
-}
-
-static esp_err_t resolve_download(const char *token, char *out, size_t cap, char *err, size_t err_cap)
-{
-    location_ctx_t loc = {.buf = out, .cap = cap};
-    esp_http_client_config_t cfg = {
-        .url                   = s_asset_url,
-        .crt_bundle_attach     = esp_crt_bundle_attach,
-        .timeout_ms            = 15000,
-        .buffer_size           = 2048,
-        .buffer_size_tx        = 1024,
-        .user_agent            = OTA_USER_AGENT,
-        .disable_auto_redirect = true,
-        .event_handler         = location_event,
-        .user_data             = &loc,
-    };
-    esp_http_client_handle_t c = esp_http_client_init(&cfg);
-    if (c == NULL) {
+    if (buf == NULL) {
         snprintf(err, err_cap, "Out of memory");
         return ESP_ERR_NO_MEM;
     }
-    add_github_headers(c, "application/octet-stream", token);
-
-    esp_err_t e = esp_http_client_open(c, 0);
-    if (e == ESP_OK) {
-        (void)esp_http_client_fetch_headers(c);
-        const int code = esp_http_client_get_status_code(c);
-        if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
-            if (!loc.got) {
-                snprintf(err, err_cap, loc.too_long ? "The download redirect is too long"
-                                                    : "The download redirect had no Location");
-                e = ESP_FAIL;
-            }
-        } else {
-            snprintf(err, err_cap, "%s (HTTP %d)", status_error(code, token[0] != '\0'), code);
-            e = ESP_FAIL;
-        }
-        esp_http_client_close(c);
-    } else {
-        snprintf(err, err_cap, "Could not reach api.github.com (%s)", esp_err_to_name(e));
+    if (n < 0 || more) {
+        free(buf);
+        snprintf(err, err_cap, more ? "latest.json is too large" : "Connection dropped reading latest.json");
+        return ESP_FAIL;
     }
-    esp_http_client_cleanup(c);
+    buf[len] = '\0';
+
+    cJSON *j = cJSON_Parse(buf);
+    free(buf);
+    const cJSON *jv = cJSON_GetObjectItemCaseSensitive(j, "version");
+    const cJSON *jf = cJSON_GetObjectItemCaseSensitive(j, "file");
+    const cJSON *js = cJSON_GetObjectItemCaseSensitive(j, "size");
+    int          ver[3];
+    e = ESP_OK;
+    if (j == NULL) {
+        snprintf(err, err_cap, "latest.json is not valid JSON");
+        e = ESP_FAIL;
+    } else if (!cJSON_IsString(jv) || strlen(jv->valuestring) >= vcap ||
+               !parse_version(jv->valuestring, ver, NULL)) {
+        snprintf(err, err_cap, "latest.json has no usable \"version\"");
+        e = ESP_FAIL;
+    } else if (!cJSON_IsString(jf) || !safe_repo_path(jf->valuestring)) {
+        snprintf(err, err_cap, "latest.json has no usable \"file\"");
+        e = ESP_FAIL;
+    } else {
+        snprintf(version, vcap, "%s", jv->valuestring);
+        raw_url(s_file_url, sizeof(s_file_url), jf->valuestring);
+        s_file_size = cJSON_IsNumber(js) && js->valuedouble > 0 ? (uint32_t)js->valuedouble : 0;
+    }
+    cJSON_Delete(j);
     return e;
 }
 
@@ -591,7 +376,7 @@ static bool nvs_get_str_buf(const char *key, char *out, size_t cap)
     return ok;
 }
 
-/* Returns true when a newer release is available and s_asset_url is set. */
+/* Returns true when a newer release is available and s_file_url is set. */
 static bool do_check(void)
 {
     netdash_settings_t cfg;
@@ -607,9 +392,10 @@ static bool do_check(void)
     }
 
     set_state(OTA_STATE_CHECKING, NULL);
+    set_auth(cfg.ota_token);
     char tag[32] = "";
     char err[80] = "";
-    const esp_err_t e = fetch_latest(cfg.ota_token, tag, sizeof(tag), err, sizeof(err));
+    const esp_err_t e = fetch_manifest(tag, sizeof(tag), err, sizeof(err));
 
     lock();
     s_status.last_check = now_unix();
@@ -621,10 +407,6 @@ static bool do_check(void)
                                       strcmp(tag, s_status.rolled_back) == 0);
     unlock();
 
-    if (e == ESP_ERR_NOT_FOUND && !newer) {
-        set_state(OTA_STATE_UP_TO_DATE, NULL);   /* nothing to install anyway */
-        return false;
-    }
     if (e != ESP_OK) {
         ESP_LOGW(TAG, "check failed: %s", err);
         set_state(OTA_STATE_ERROR, err);
@@ -650,45 +432,31 @@ static void do_install(void)
     lock();
     snprintf(tag, sizeof(tag), "%s", s_status.latest);
     s_status.bytes_done  = 0;
-    s_status.bytes_total = s_asset_size;
+    s_status.bytes_total = s_file_size;
     s_status.state       = OTA_STATE_DOWNLOADING;
     s_status.error[0]    = '\0';
     unlock();
 
-    char  err[80] = "";
-    char *url     = malloc(REDIRECT_URL_MAX);
-    if (url == NULL) {
-        set_state(OTA_STATE_ERROR, "Out of memory");
-        return;
-    }
-    if (resolve_download(cfg.ota_token, url, REDIRECT_URL_MAX, err, sizeof(err)) != ESP_OK) {
-        free(url);
-        set_state(OTA_STATE_ERROR, err);
-        return;
-    }
-
-    /* Just the host: the query is a signature, and too long to be worth logging. */
-    const char *host = strstr(url, "://");
-    host             = host != NULL ? host + 3 : url;
-    ESP_LOGI(TAG, "download redirected to %.*s", (int)strcspn(host, "/?"), host);
+    char err[80] = "";
+    set_auth(cfg.ota_token);
 
     esp_http_client_config_t http = {
-        .url               = url,
+        .url               = s_file_url,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms        = 20000,
         .buffer_size       = 2048,
-        .buffer_size_tx    = 2048,   /* the request line carries the long URL */
+        .buffer_size_tx    = 1024,
         .user_agent        = OTA_USER_AGENT,
         .keep_alive_enable = true,
     };
     esp_https_ota_config_t ota_cfg = {
-        .http_config = &http,
+        .http_config         = &http,
+        .http_client_init_cb = add_auth,
     };
 
-    ESP_LOGI(TAG, "downloading %s", tag);
+    ESP_LOGI(TAG, "downloading %s from %s", tag, s_file_url);
     esp_https_ota_handle_t h = NULL;
     esp_err_t              e = esp_https_ota_begin(&ota_cfg, &h);
-    free(url);   /* esp_http_client took its own copy */
     if (e != ESP_OK) {
         snprintf(err, sizeof(err), "Download failed to start (%s)", esp_err_to_name(e));
         set_state(OTA_STATE_ERROR, err);
@@ -696,9 +464,9 @@ static void do_install(void)
     }
 
     /*
-     * The image has to name itself as this project and as the release it was
-     * attached to. That catches a binary uploaded to the wrong release, or a
-     * build made from uncommitted changes, before it is written anywhere.
+     * The image has to name itself as this project and as the version
+     * latest.json promised. That catches a manifest pointing at the wrong file,
+     * or a build made from uncommitted changes, before it is written anywhere.
      */
     esp_app_desc_t desc;
     e = esp_https_ota_get_img_desc(h, &desc);
@@ -706,10 +474,10 @@ static void do_install(void)
     if (e != ESP_OK) {
         snprintf(err, sizeof(err), "Could not read the image header");
     } else if (strncmp(desc.project_name, running->project_name, sizeof(desc.project_name)) != 0) {
-        snprintf(err, sizeof(err), "The asset is not a %s image", running->project_name);
+        snprintf(err, sizeof(err), "The file is not a %s image", running->project_name);
         e = ESP_ERR_INVALID_VERSION;
     } else if (strncmp(desc.version, tag, sizeof(desc.version)) != 0) {
-        snprintf(err, sizeof(err), "The asset says %.20s, the release says %.20s", desc.version, tag);
+        snprintf(err, sizeof(err), "The image says %.20s, latest.json says %.20s", desc.version, tag);
         e = ESP_ERR_INVALID_VERSION;
     }
     if (e != ESP_OK) {
@@ -903,7 +671,8 @@ esp_err_t ota_init(void)
     if (xTaskCreate(ota_task, "ota", 8192, NULL, 3, &s_task) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "updates from github.com/%s, asset %s", ota_repo(), CONFIG_NETDASH_OTA_ASSET);
+    ESP_LOGI(TAG, "updates from github.com/%s (%s/latest.json)", ota_repo(),
+             CONFIG_NETDASH_OTA_BRANCH);
     return ESP_OK;
 }
 

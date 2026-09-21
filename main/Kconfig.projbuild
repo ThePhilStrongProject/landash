@@ -180,21 +180,22 @@ menu "NetDash"
 
     config NETDASH_OTA_REPO
         string "GitHub repository updates come from (owner/name)"
-        default "ThePhilStrongProject/landash"
+        default "ThePhilStrongProject/landash-releases"
         help
-            The dongle installs the firmware attached to the latest release of
-            this repository. Empty disables updates. Deliberately a build
+            A releases-only repository: latest.json on NETDASH_OTA_BRANCH names
+            the current version and the image file beside it, and the dongle
+            installs that image when it is newer. Empty disables updates. Deliberately a build
             setting rather than a web setting: the dashboard has no login, so
             anyone on the LAN could otherwise point it at their own firmware.
             A private repository also needs a read-only token, which is set
-            from the web page (Settings > Maintenance).
+            from the web page (Settings > Maintenance); a public one needs
+            nothing.
 
-    config NETDASH_OTA_ASSET
-        string "Release asset holding the firmware"
-        default "netdash.bin"
+    config NETDASH_OTA_BRANCH
+        string "Branch of that repository to read"
+        default "main"
         help
-            File name of the app image attached to each release: the
-            build/netdash.bin that idf.py build produces. tools/release.py
-            uploads it under this name.
+            latest.json and the images are read from this branch through
+            raw.githubusercontent.com. tools/release.py writes them.
 
 endmenu
