@@ -289,10 +289,18 @@ Capture the `Location` header from `HTTP_EVENT_ON_HEADER` instead.
 image with it must go on over USB. Anything else that changes the bootloader
 has the same property: it reaches only boards that are reflashed by cable.
 
-**Heap during TLS.** A GitHub handshake took free heap from ~90 KB to ~35 KB
-with static mbedTLS buffers. `CONFIG_MBEDTLS_DYNAMIC_BUFFER` and its two
-`FREE_*` companions bring the low point to ~55 KB. Do not turn them off, and
-keep what is read before the download small.
+**Heap during TLS, and why the download resumes.** A GitHub handshake took
+free heap from ~90 KB to ~35 KB with static mbedTLS buffers.
+`CONFIG_MBEDTLS_DYNAMIC_BUFFER` and its two `FREE_*` companions bring the low
+point to ~55 KB; do not turn them off. Even so, streaming the 2 MB image dips
+free heap to ~23 KB, and the first real update died a megabyte in with
+`esp-tls-mbedtls: read error :-0x7F00` (`MBEDTLS_ERR_SSL_ALLOC_FAILED`).
+esp_https_ota cannot carry on from an offset, so `ota.c` writes with
+`esp_ota_*` itself and reopens a stream that stops short with a `Range`
+request at the byte it had reached, up to six times. The verified run needed
+one resume, at 1,272,832 of 1,980,640 bytes. If updates start failing
+outright, look at what else holds heap during a download before touching
+this.
 
 To try an update without publishing one, build into a separate directory with
 a fake low version, so the real release looks new, and watch the console:
@@ -300,7 +308,19 @@ a fake low version, so the real release looks new, and watch the console:
 ```powershell
 # build_otatest/sdkconfig: a copy of sdkconfig.
 idf.py -B build_otatest "-DSDKCONFIG=build_otatest/sdkconfig" "-DPROJECT_VER=v0.0.1" build
+git checkout dependencies.lock    # see the next trap
 ```
+
+## The dependencies.lock trap
+
+**Any build in a fresh build directory rewrites `dependencies.lock` with
+absolute paths on this machine** when `managed_components/` already exists:
+the component manager takes the downloaded components for local overrides.
+That happened after `idf.py fullclean` and again with `build_otatest`, and the
+first time it got committed. Check `git diff dependencies.lock` before every
+commit. If it shows `type: local` and a `C:\` path, run
+`git checkout dependencies.lock`, delete `managed_components/`, and build
+again; a fresh download leaves the lock alone.
 
 ## The esp_ping session lifetime trap
 

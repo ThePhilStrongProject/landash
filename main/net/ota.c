@@ -5,6 +5,7 @@
 #include "ota.h"
 
 #include <ctype.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +16,8 @@
 #include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
-#include "esp_https_ota.h"
+#include "esp_app_format.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_ota_ops.h"
@@ -212,9 +214,9 @@ static bool safe_repo_path(const char *p)
 }
 
 /*
- * A private releases repository needs a token, on both requests. The header
- * value lives here rather than on the stack because esp_https_ota's
- * init callback takes no context. Only the task touches it.
+ * A private releases repository needs a token on every request - the manifest
+ * and each attempt at the image. Built once per check or install and kept
+ * here, off the stack; only the task touches it.
  */
 static char s_auth[sizeof(((netdash_settings_t *)0)->ota_token) + 8];
 
@@ -422,11 +424,89 @@ static bool do_check(void)
     return true;
 }
 
+/*
+ * The download resumes. The first real update died about 30 s into 2 MB: the
+ * server closed the connection cleanly partway through, and esp_https_ota
+ * cannot carry on from a byte offset, so the whole attempt was thrown away.
+ * Writing with esp_ota_* directly lets a stream that stops short be reopened
+ * with a Range request at the byte it had reached.
+ */
+#define DL_CHUNK          4096
+#define DL_ATTEMPTS       6
+#define DL_RETRY_DELAY_MS 3000
+#define DL_LOG_EVERY      (256 * 1024)
+
+/* Opens the image at offset. Returns NULL when it could not connect at all. */
+static esp_http_client_handle_t open_image_at(uint32_t offset, int *code, int64_t *length)
+{
+    esp_http_client_config_t cfg = {
+        .url               = s_file_url,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .timeout_ms        = 15000,
+        .buffer_size       = 2048,
+        .buffer_size_tx    = 1024,
+        .user_agent        = OTA_USER_AGENT,
+    };
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (c == NULL) {
+        return NULL;
+    }
+    add_auth(c);
+    if (offset > 0) {
+        char range[32];
+        snprintf(range, sizeof(range), "bytes=%" PRIu32 "-", offset);
+        esp_http_client_set_header(c, "Range", range);
+    }
+    if (esp_http_client_open(c, 0) != ESP_OK) {
+        esp_http_client_cleanup(c);
+        return NULL;
+    }
+    *length = esp_http_client_fetch_headers(c);
+    *code   = esp_http_client_get_status_code(c);
+    return c;
+}
+
+static void close_image(esp_http_client_handle_t c)
+{
+    esp_http_client_close(c);
+    esp_http_client_cleanup(c);
+}
+
+/*
+ * The image has to name itself as this project and as the version latest.json
+ * promised. That catches a manifest pointing at the wrong file, or a build
+ * made from uncommitted changes, before a byte of it is written.
+ */
+static bool image_header_ok(const uint8_t *p, size_t n, const char *tag, char *err, size_t err_cap)
+{
+    const size_t at = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t);
+    if (n < at + sizeof(esp_app_desc_t) || p[0] != ESP_IMAGE_HEADER_MAGIC) {
+        snprintf(err, err_cap, "The file is not a firmware image");
+        return false;
+    }
+    esp_app_desc_t desc;
+    memcpy(&desc, p + at, sizeof(desc));
+    const esp_app_desc_t *running = esp_app_get_description();
+    if (desc.magic_word != ESP_APP_DESC_MAGIC_WORD ||
+        strncmp(desc.project_name, running->project_name, sizeof(desc.project_name)) != 0) {
+        snprintf(err, err_cap, "The file is not a %s image", running->project_name);
+        return false;
+    }
+    if (strncmp(desc.version, tag, sizeof(desc.version)) != 0) {
+        snprintf(err, err_cap, "The image says %.20s, latest.json says %.20s", desc.version, tag);
+        return false;
+    }
+    return true;
+}
+
 /* Downloads and installs the release found by do_check(). Reboots on success. */
 static void do_install(void)
 {
+    static uint8_t buf[DL_CHUNK];   /* task-owned, off the stack */
+
     netdash_settings_t cfg;
     settings_get(&cfg);
+    set_auth(cfg.ota_token);
 
     char tag[32];
     lock();
@@ -437,77 +517,128 @@ static void do_install(void)
     s_status.error[0]    = '\0';
     unlock();
 
-    char err[80] = "";
-    set_auth(cfg.ota_token);
-
-    esp_http_client_config_t http = {
-        .url               = s_file_url,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms        = 20000,
-        .buffer_size       = 2048,
-        .buffer_size_tx    = 1024,
-        .user_agent        = OTA_USER_AGENT,
-        .keep_alive_enable = true,
-    };
-    esp_https_ota_config_t ota_cfg = {
-        .http_config         = &http,
-        .http_client_init_cb = add_auth,
-    };
-
-    ESP_LOGI(TAG, "downloading %s from %s", tag, s_file_url);
-    esp_https_ota_handle_t h = NULL;
-    esp_err_t              e = esp_https_ota_begin(&ota_cfg, &h);
-    if (e != ESP_OK) {
-        snprintf(err, sizeof(err), "Download failed to start (%s)", esp_err_to_name(e));
-        set_state(OTA_STATE_ERROR, err);
+    const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
+    if (part == NULL) {
+        set_state(OTA_STATE_ERROR, "No partition to install into");
+        return;
+    }
+    uint32_t total = s_file_size;
+    if (total > part->size) {
+        set_state(OTA_STATE_ERROR, "The image is larger than the app partition");
         return;
     }
 
-    /*
-     * The image has to name itself as this project and as the version
-     * latest.json promised. That catches a manifest pointing at the wrong file,
-     * or a build made from uncommitted changes, before it is written anywhere.
-     */
-    esp_app_desc_t desc;
-    e = esp_https_ota_get_img_desc(h, &desc);
-    const esp_app_desc_t *running = esp_app_get_description();
-    if (e != ESP_OK) {
-        snprintf(err, sizeof(err), "Could not read the image header");
-    } else if (strncmp(desc.project_name, running->project_name, sizeof(desc.project_name)) != 0) {
-        snprintf(err, sizeof(err), "The file is not a %s image", running->project_name);
-        e = ESP_ERR_INVALID_VERSION;
-    } else if (strncmp(desc.version, tag, sizeof(desc.version)) != 0) {
-        snprintf(err, sizeof(err), "The image says %.20s, latest.json says %.20s", desc.version, tag);
-        e = ESP_ERR_INVALID_VERSION;
-    }
-    if (e != ESP_OK) {
-        esp_https_ota_abort(h);
-        ESP_LOGW(TAG, "%s", err);
-        set_state(OTA_STATE_ERROR, err);
-        return;
-    }
+    ESP_LOGI(TAG, "downloading %s (%" PRIu32 " bytes) from %s", tag, total, s_file_url);
 
-    const int total = esp_https_ota_get_image_size(h);
-    while ((e = esp_https_ota_perform(h)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
-        lock();
-        s_status.bytes_done = (uint32_t)esp_https_ota_get_image_len_read(h);
-        if (total > 0) {
-            s_status.bytes_total = (uint32_t)total;
+    char             err[80] = "";
+    esp_ota_handle_t ota     = 0;
+    bool             begun   = false;   /* esp_ota_begin() done              */
+    bool             fatal   = false;   /* retrying cannot help              */
+    bool             done_ok = false;
+    uint32_t         done    = 0;
+    uint32_t         next_log = DL_LOG_EVERY;
+
+    for (int attempt = 1; attempt <= DL_ATTEMPTS && !done_ok && !fatal; attempt++) {
+        if (attempt > 1) {
+            ESP_LOGW(TAG, "%s; resuming at %" PRIu32 " of %" PRIu32 " (attempt %d, heap %u, largest %u)",
+                     err, done, total, attempt, (unsigned)esp_get_free_heap_size(),
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+            vTaskDelay(pdMS_TO_TICKS(DL_RETRY_DELAY_MS));
         }
-        unlock();
+
+        int                      code   = 0;
+        int64_t                  length = 0;
+        esp_http_client_handle_t c      = open_image_at(done, &code, &length);
+        if (c == NULL) {
+            snprintf(err, sizeof(err), "Could not reach GitHub");
+            continue;
+        }
+        if (code != 200 && !(done > 0 && code == 206)) {
+            snprintf(err, sizeof(err), "%s (HTTP %d)", status_error(code), code);
+            close_image(c);
+            fatal = code == 401 || code == 403 || code == 404;
+            continue;
+        }
+        if (total == 0 && code == 200 && length > 0) {
+            total = (uint32_t)length;
+            lock();
+            s_status.bytes_total = total;
+            unlock();
+        }
+        /* A server that ignored the Range header starts from zero again. */
+        uint32_t skip = (code == 200) ? done : 0;
+
+        int n;
+        while (!fatal && (n = esp_http_client_read(c, (char *)buf, sizeof(buf))) > 0) {
+            const uint8_t *p = buf;
+            size_t         m = (size_t)n;
+            if (skip > 0) {
+                const size_t s = skip < m ? skip : m;
+                p += s;
+                m -= s;
+                skip -= (uint32_t)s;
+                if (m == 0) {
+                    continue;
+                }
+            }
+            if (!begun) {
+                if (!image_header_ok(p, m, tag, err, sizeof(err))) {
+                    fatal = true;
+                    break;
+                }
+                esp_err_t e = esp_ota_begin(part, OTA_WITH_SEQUENTIAL_WRITES, &ota);
+                if (e != ESP_OK) {
+                    snprintf(err, sizeof(err), "Could not start writing (%s)", esp_err_to_name(e));
+                    fatal = true;
+                    break;
+                }
+                begun = true;
+            }
+            esp_err_t e = esp_ota_write(ota, p, m);
+            if (e != ESP_OK) {
+                snprintf(err, sizeof(err), "Writing the image failed (%s)", esp_err_to_name(e));
+                fatal = true;
+                break;
+            }
+            done += (uint32_t)m;
+            lock();
+            s_status.bytes_done = done;
+            unlock();
+            if (done >= next_log) {
+                ESP_LOGI(TAG, "%" PRIu32 " of %" PRIu32 " bytes (heap %u)", done, total,
+                         (unsigned)esp_get_free_heap_size());
+                next_log += DL_LOG_EVERY;
+            }
+        }
+        close_image(c);
+
+        if (fatal) {
+            break;
+        }
+        if (total > 0 && done >= total) {
+            done_ok = true;
+        } else if (total == 0 && n == 0 && begun) {
+            done_ok = true;   /* no length to check against; the image hash will */
+        } else {
+            snprintf(err, sizeof(err), "Download stopped at %" PRIu32 " of %" PRIu32 " bytes",
+                     done, total);
+        }
     }
 
-    if (e == ESP_OK && !esp_https_ota_is_complete_data_received(h)) {
-        e = ESP_FAIL;
-    }
-    if (e != ESP_OK) {
-        esp_https_ota_abort(h);
-        snprintf(err, sizeof(err), "Download failed (%s)", esp_err_to_name(e));
+    if (!done_ok) {
+        if (begun) {
+            esp_ota_abort(ota);
+        }
         ESP_LOGW(TAG, "%s", err);
         set_state(OTA_STATE_ERROR, err);
         return;
     }
-    e = esp_https_ota_finish(h);
+
+    /* esp_ota_end() checks the image's own SHA-256 and structure. */
+    esp_err_t e = esp_ota_end(ota);
+    if (e == ESP_OK) {
+        e = esp_ota_set_boot_partition(part);
+    }
     if (e != ESP_OK) {
         snprintf(err, sizeof(err), "The image did not verify (%s)", esp_err_to_name(e));
         ESP_LOGW(TAG, "%s", err);
@@ -667,7 +798,7 @@ esp_err_t ota_init(void)
     s_status.state = OTA_STATE_IDLE;
     inspect_boot();
 
-    /* TLS handshakes are stack-hungry; 8 KB is what esp_https_ota asks for. */
+    /* TLS handshakes are stack-hungry; 8 KB is what Espressif's OTA examples use. */
     if (xTaskCreate(ota_task, "ota", 8192, NULL, 3, &s_task) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }

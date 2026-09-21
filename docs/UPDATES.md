@@ -113,7 +113,8 @@ nothing for dongles that already have the bad one.
    available" in the feed and waits for **Install**.
 4. Before writing anything, it checks the image calls itself project `netdash`
    and version `v0.14.2`, so a manifest pointing at the wrong file is refused.
-   The image's own SHA-256 is checked once it is written.
+   If the download is cut off, it resumes from where it stopped, up to six
+   times. The image's own SHA-256 is checked once it is all written.
 5. It restarts into the new image, and an open dashboard page reloads itself
    onto the new version.
 6. The new version is on probation. Once it has run for a minute and got back
