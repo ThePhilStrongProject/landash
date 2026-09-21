@@ -25,7 +25,7 @@ static const char *TAG = "settings";
 #define SETTINGS_NS      "cfg"
 #define SETTINGS_KEY     "blob"
 #define SETTINGS_VER_KEY "ver"
-#define SETTINGS_VERSION 3
+#define SETTINGS_VERSION 4
 
 #define AP_PASS_LEN 8
 
@@ -107,6 +107,8 @@ static void apply_defaults(netdash_settings_t *cfg)
     cfg->portscan_rescan_days = 7;
     str_set(cfg->wan_ping_host, sizeof(cfg->wan_ping_host), "1.1.1.1");
     str_set(cfg->wan_dns_probe, sizeof(cfg->wan_dns_probe), "example.com");
+    str_set(cfg->theme, sizeof(cfg->theme), "dark");
+    str_set(cfg->detail, sizeof(cfg->detail), "comfort");
 }
 
 static void clamp(netdash_settings_t *cfg)
@@ -166,6 +168,15 @@ static void clamp(netdash_settings_t *cfg)
         cfg->portscan_rescan_days = 365;
     }
     cfg->notif_mask &= NETDASH_NOTIF_ALL_MASK;
+
+    cfg->theme[sizeof(cfg->theme) - 1]   = '\0';
+    cfg->detail[sizeof(cfg->detail) - 1] = '\0';
+    if (cfg->theme[0] == '\0') {
+        str_set(cfg->theme, sizeof(cfg->theme), "dark");
+    }
+    if (cfg->detail[0] == '\0') {
+        str_set(cfg->detail, sizeof(cfg->detail), "comfort");
+    }
 
     /* WPA2 needs 8..63 characters; anything shorter would fail to start. */
     if (strlen(cfg->ap_pass) < 8) {
@@ -278,6 +289,8 @@ static esp_err_t load_locked(bool *out_dirty)
                 MIGRATE_FIELD(wan_ping_host);
                 MIGRATE_FIELD(wan_dns_probe);
                 MIGRATE_FIELD(portscan_rescan_days);
+                MIGRATE_FIELD(theme);
+                MIGRATE_FIELD(detail);
 
                 ESP_LOGW(TAG, "migrated settings from v%u (%u bytes) to v%u (%u bytes)",
                          (unsigned)ver, (unsigned)stored,

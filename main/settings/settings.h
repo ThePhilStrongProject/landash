@@ -42,6 +42,13 @@ typedef struct {
     char     wan_ping_host[40]; /* IPv4 literal or name, e.g. "1.1.1.1"     */
     char     wan_dns_probe[48]; /* name resolved to prove DNS works         */
     uint16_t portscan_rescan_days; /* re-probe tier 1 this often, 0 = never */
+    /*
+     * Appended in settings blob version 4. Free-form short strings: the web UI
+     * owns the list of themes and detail levels, and the firmware only bounds
+     * the length, so a new theme is a page change rather than a flash.
+     */
+    char     theme[16];         /* e.g. "dark", "matrix"                    */
+    char     detail[16];        /* e.g. "comfort", "hacker"                 */
 } netdash_settings_t;
 
 /* Loads (or creates) the blob and generates ap_pass on first boot. */

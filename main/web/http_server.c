@@ -1070,6 +1070,8 @@ static cJSON *settings_to_json(const netdash_settings_t *cfg)
     cJSON_AddNumberToObject(o, "wan_interval_s", cfg->wan_interval_s);
     cJSON_AddStringToObject(o, "wan_ping_host", cfg->wan_ping_host);
     cJSON_AddStringToObject(o, "wan_dns_probe", cfg->wan_dns_probe);
+    cJSON_AddStringToObject(o, "theme", cfg->theme);
+    cJSON_AddStringToObject(o, "detail", cfg->detail);
 
     /*
      * Notification toggles go out as an object keyed by type name rather than
@@ -1211,6 +1213,30 @@ static esp_err_t settings_put_handler(httpd_req_t *req)
             return send_json_error(req, "400 Bad Request", "portscan_rate must be 1-200");
         }
         next.portscan_rate = (uint16_t)j->valueint;
+    }
+
+    /*
+     * Length-checked and otherwise taken as given. The page decides what is a
+     * valid theme; anything it does not know falls back to the default when it
+     * renders, which is a better failure than the firmware rejecting a name it
+     * has never heard of.
+     */
+    j = cJSON_GetObjectItemCaseSensitive(json, "theme");
+    if (j != NULL) {
+        if (!cJSON_IsString(j) || strlen(j->valuestring) >= sizeof(next.theme)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "theme name too long");
+        }
+        snprintf(next.theme, sizeof(next.theme), "%s", j->valuestring);
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "detail");
+    if (j != NULL) {
+        if (!cJSON_IsString(j) || strlen(j->valuestring) >= sizeof(next.detail)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "detail name too long");
+        }
+        snprintf(next.detail, sizeof(next.detail), "%s", j->valuestring);
     }
 
     j = cJSON_GetObjectItemCaseSensitive(json, "portscan_rescan_days");

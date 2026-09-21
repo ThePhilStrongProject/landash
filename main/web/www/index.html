@@ -16,6 +16,9 @@
 --warn:#f59e0b; --warn-rgb:245,158,11;
 --surface2:#141d30;
 --mono:ui-monospace,Consolas,"SF Mono",Menlo,monospace;
+--ui-font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+--on-accent:#fff;
+--shadow:rgba(0,0,0,.5);
 --r-sm:5px; --r-md:8px;
 --fs-xs:.72rem; --fs-sm:.8rem; --fs-md:.875rem; --fs-lg:1rem; --fs-xl:1.375rem;
 color-scheme:dark;
@@ -24,7 +27,7 @@ color-scheme:dark;
 /* An element that sets its own display would otherwise ignore [hidden]. */
 [hidden]{display:none !important}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--text);overflow-x:hidden;
-font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+font:15px/1.5 var(--ui-font)}
 /* Column layout so the status bar sits at the foot of the viewport on a
    short page and after the content on a long one. */
 /* dvh tracks the viewport you can actually see; 100vh on mobile Firefox is
@@ -40,7 +43,7 @@ stroke-linecap:round;stroke-linejoin:round;vertical-align:-.125em}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
 clip:rect(0,0,0,0);white-space:nowrap;border:0}
 :focus-visible{outline:2px solid var(--accent-2);outline-offset:2px}
-.banner{background:rgba(var(--danger-rgb),.15);color:#fecaca;border-bottom:1px solid var(--danger);
+.banner{background:rgba(var(--danger-rgb),.15);color:var(--danger);border-bottom:1px solid var(--danger);
 padding:8px 16px;font-size:.85rem;text-align:center}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;
 padding:12px 16px;border-bottom:1px solid var(--border);
@@ -66,11 +69,11 @@ border-radius:var(--r-sm);padding:8px 10px;color:var(--text)}
 .btn{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:var(--r-md);
 padding:8px 14px;font-weight:600;font-size:.85rem;display:inline-flex;align-items:center;gap:6px}
 .btn:hover{border-color:var(--accent-2)}
-.btn-accent{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-accent{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 .btn-accent:hover{background:var(--accent-2);border-color:var(--accent-2)}
-.btn-danger{background:var(--danger);border-color:var(--danger);color:#fff}
-.btn-danger-outline{background:none;border-color:var(--danger);color:#fecaca;transition:background .12s ease,color .12s ease}
-.btn-danger-outline:hover,.btn-danger-outline:focus-visible{background:var(--danger);border-color:var(--danger);color:#fff}
+.btn-danger{background:var(--danger);border-color:var(--danger);color:var(--on-accent)}
+.btn-danger-outline{background:none;border-color:var(--danger);color:var(--danger);transition:background .12s ease,color .12s ease}
+.btn-danger-outline:hover,.btn-danger-outline:focus-visible{background:var(--danger);border-color:var(--danger);color:var(--on-accent)}
 .btn:disabled{opacity:.55;cursor:default}
 .btn.small{padding:4px 9px;font-size:.75rem;border-radius:var(--r-sm)}
 .tablewrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r-md)}
@@ -353,7 +356,7 @@ margin-bottom:20px;overflow:hidden}
 .feedlist li{display:flex;gap:11px;padding:10px 14px;border-top:1px solid var(--border);
 align-items:flex-start}
 .feedlist li:first-child{border-top:0}
-.feedlist li.unread{background:rgba(59,130,246,.07)}
+.feedlist li.unread{background:rgba(var(--accent-rgb),.09)}
 .feedlist li.unread .fd-title{font-weight:600}
 .fd-ico{flex:0 0 auto;width:16px;height:16px;margin-top:2px;color:var(--muted)}
 .fd-ico.warn{color:var(--warn)}
@@ -367,7 +370,7 @@ border-radius:var(--r-sm);line-height:0;opacity:0;transition:opacity .12s ease}
 .feedlist li:hover .fd-x,.feedlist li:focus-within .fd-x{opacity:1}
 .fd-x:hover{color:var(--text);background:var(--surface2)}
 .badgecount{display:inline-flex;align-items:center;justify-content:center;min-width:18px;
-height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;
+height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:var(--on-accent);
 font-size:var(--fs-xs);font-weight:600;font-variant-numeric:tabular-nums}
 
 /* --- WAN pill in the top bar -------------------------------------------- */
@@ -375,9 +378,9 @@ font-size:var(--fs-xs);font-weight:600;font-variant-numeric:tabular-nums}
 color:var(--muted);padding:3px 9px;border:1px solid var(--border);border-radius:999px;
 white-space:nowrap}
 .wanpill .ic{width:13px;height:13px}
-.wanpill.up{color:var(--online);border-color:rgba(34,197,94,.35)}
+.wanpill.up{color:var(--online);border-color:rgba(var(--online-rgb),.35)}
 .wanpill.degraded{color:var(--warn);border-color:rgba(245,158,11,.35)}
-.wanpill.down{color:var(--danger);border-color:rgba(239,68,68,.4)}
+.wanpill.down{color:var(--danger);border-color:rgba(var(--danger-rgb),.4)}
 
 /* --- notes and secrets -------------------------------------------------- */
 .notebox{width:100%;min-height:76px;resize:vertical;font:inherit;font-size:var(--fs-sm);
@@ -397,7 +400,7 @@ border-radius:var(--r-sm);padding:9px 11px;margin:0;flex:1;min-width:0}
 .spark{display:flex;align-items:flex-end;gap:1px;height:30px;padding:3px 0}
 .spark i{flex:1 1 0;min-width:1px;height:100%;border-radius:1px;background:var(--surface2)}
 .spark i.on{background:var(--online)}
-.spark i.off{background:rgba(239,68,68,.55)}
+.spark i.off{background:rgba(var(--danger-rgb),.55)}
 .sparkaxis{display:flex;justify-content:space-between;font-size:var(--fs-xs);
 color:var(--muted);margin-top:4px}
 
@@ -406,7 +409,7 @@ color:var(--muted);margin-top:4px}
 .iconpick button{aspect-ratio:1;display:grid;place-items:center;border:1px solid var(--border);
 border-radius:var(--r-sm);background:var(--surface);color:var(--text);cursor:pointer}
 .iconpick button:hover{border-color:var(--accent)}
-.iconpick button[aria-pressed="true"]{border-color:var(--accent);background:rgba(59,130,246,.14)}
+.iconpick button[aria-pressed="true"]{border-color:var(--accent);background:rgba(var(--accent-rgb),.14)}
 .iconpick .ic{width:19px;height:19px}
 .rowmark{width:13px;height:13px;color:var(--muted);flex:none}
 .upic{object-fit:contain;image-rendering:auto;border-radius:3px}
@@ -422,6 +425,68 @@ border-radius:var(--r-sm);background:var(--surface);color:var(--text);cursor:poi
 .iconmrow .muted{margin-left:auto;font-size:var(--fs-xs)}
 .picksecthead{font-size:var(--fs-xs);color:var(--muted);text-transform:uppercase;
 letter-spacing:.06em;margin:12px 0 0}
+
+
+/* --- themes -------------------------------------------------------------
+   Each block redefines the same tokens the default sets. --on-accent is
+   whatever reads on a solid accent or danger fill, and --shadow lets the
+   light themes drop the heavy black the dark ones want.
+   ---------------------------------------------------------------------- */
+
+[data-theme="light"]{
+--bg:#f5f7fa; --surface:#ffffff; --surface2:#eceff5; --border:#d5dce6;
+--accent:#2563eb; --accent-rgb:37,99,235; --accent-2:#1d4ed8;
+--text:#0f172a; --muted:#5a6a7e;
+--online:#15803d; --online-rgb:21,128,61;
+--new:#0369a1; --new-rgb:3,105,161;
+--danger:#b91c1c; --danger-rgb:185,28,28;
+--warn:#a16207; --warn-rgb:161,98,7;
+--on-accent:#ffffff; --shadow:rgba(15,23,42,.18);
+color-scheme:light;
+}
+
+[data-theme="desert"]{
+--bg:#f2e7d5; --surface:#fbf4e7; --surface2:#e9dcc4; --border:#d3bf9c;
+--accent:#b45309; --accent-rgb:180,83,9; --accent-2:#92400e;
+--text:#2e2317; --muted:#77654c;
+--online:#4d7c0f; --online-rgb:77,124,15;
+--new:#0e7490; --new-rgb:14,116,144;
+--danger:#9f1239; --danger-rgb:159,18,57;
+--warn:#a16207; --warn-rgb:161,98,7;
+--on-accent:#fdf6e8; --shadow:rgba(60,40,20,.22);
+color-scheme:light;
+}
+
+[data-theme="cyberpunk"]{
+--bg:#0a0417; --surface:#160b2e; --surface2:#211043; --border:#402070;
+--accent:#ff2bd6; --accent-rgb:255,43,214; --accent-2:#2bf5ff;
+--text:#f6e9ff; --muted:#ab90d6;
+--online:#39ff88; --online-rgb:57,255,136;
+--new:#2bf5ff; --new-rgb:43,245,255;
+--danger:#ff3b6b; --danger-rgb:255,59,107;
+--warn:#ffd12b; --warn-rgb:255,209,43;
+--on-accent:#12001a; --shadow:rgba(255,43,214,.25);
+color-scheme:dark;
+}
+
+[data-theme="matrix"]{
+--bg:#000300; --surface:#04150b; --surface2:#07230f; --border:#0f3d1e;
+--accent:#22c55e; --accent-rgb:34,197,94; --accent-2:#4ade80;
+--text:#86f5a8; --muted:#3f9e5c;
+--online:#22ff77; --online-rgb:34,255,119;
+--new:#39ff14; --new-rgb:57,255,20;
+--danger:#ff5555; --danger-rgb:255,85,85;
+--warn:#d4ff3f; --warn-rgb:212,255,63;
+--on-accent:#00140a; --shadow:rgba(0,255,100,.18);
+/* The one theme that changes more than colour: it would not be Matrix in a
+   UI typeface. */
+--ui-font:ui-monospace,Consolas,"SF Mono",Menlo,monospace;
+color-scheme:dark;
+}
+
+/* Shadows come from the theme so the light ones are not wearing a dark halo. */
+.feedpanel{box-shadow:0 12px 32px var(--shadow)}
+.popover{box-shadow:0 10px 30px var(--shadow)}
 
 /* --- home page ---------------------------------------------------------- */
 .home{text-align:center;padding:26px 0 30px}
@@ -441,6 +506,36 @@ font-size:var(--fs-xs);text-align:left}
 /* Tucked under the card so the two read as one object. */
 .linkcard-wrap > .lc-cred + .linkedit{margin-top:6px}
 
+
+/* --- dashboard detail ---------------------------------------------------
+   comfort is the baseline the markup is written for. bare and simple remove;
+   hacker adds, and what it adds has to be built rather than revealed, so that
+   part lives in the script.
+   ---------------------------------------------------------------------- */
+
+[data-detail="bare"] .clockdate,
+[data-detail="bare"] #tiles,
+[data-detail="bare"] .lc-host,
+[data-detail="bare"] .lc-note,
+[data-detail="bare"] .lc-cred,
+[data-detail="bare"] .statusbar,
+[data-detail="bare"] .grouphead .rule{display:none}
+/* With the address gone the card has little left to hold it open. */
+[data-detail="bare"] .linkcard{min-height:0;padding:14px}
+[data-detail="bare"] .lc-info{opacity:0}
+[data-detail="bare"] .linkcard-wrap:hover .lc-info,
+[data-detail="bare"] .lc-info:focus-visible{opacity:.55}
+[data-detail="bare"] .home{padding:34px 0 26px}
+
+[data-detail="simple"] #tiles,
+[data-detail="simple"] .lc-note,
+[data-detail="simple"] .lc-cred{display:none}
+
+[data-detail="hacker"] .hackonly{display:block}
+.hackonly{display:none}
+.lc-meta{font-size:var(--fs-xs);color:var(--muted);font-family:var(--mono);
+overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.8}
+
 /* --- notification bell -------------------------------------------------- */
 .bell{position:relative;flex:none;width:34px;height:34px;display:grid;place-items:center;
 background:none;border:1px solid transparent;border-radius:var(--r-sm);color:var(--muted)}
@@ -448,7 +543,7 @@ background:none;border:1px solid transparent;border-radius:var(--r-sm);color:var
 .bell[aria-expanded="true"]{color:var(--text);border-color:var(--border);background:var(--surface)}
 .bell .ic{width:19px;height:19px}
 .belldot{position:absolute;top:3px;right:3px;min-width:15px;height:15px;padding:0 4px;
-border-radius:8px;background:var(--danger);color:#fff;font-size:10px;font-weight:700;
+border-radius:8px;background:var(--danger);color:var(--on-accent);font-size:10px;font-weight:700;
 line-height:15px;text-align:center;font-variant-numeric:tabular-nums;
 box-shadow:0 0 0 2px var(--bg)}
 .feedpanel{position:absolute;right:12px;top:48px;z-index:60;width:min(380px,calc(100vw - 24px));
@@ -506,6 +601,40 @@ font-size:var(--fs-xs);padding:5px 10px;border-radius:var(--r-sm);
 display:inline-flex;align-items:center;gap:6px}
 .ghostbtn:hover,.ghostbtn:focus-visible{color:var(--text);border-color:var(--border)}
 .ghostbtn .ic{width:13px;height:13px}
+
+.themegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.themecard{display:flex;flex-direction:column;gap:0;padding:0;overflow:hidden;
+background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+text-align:left;color:var(--text)}
+.themecard:hover{border-color:var(--accent-2)}
+.themecard[aria-pressed="true"]{border-color:var(--accent);
+box-shadow:0 0 0 1px var(--accent) inset}
+/* The preview is painted with the theme it offers, so the list shows the
+   colours instead of naming them. */
+.swatch{display:flex;align-items:center;gap:6px;padding:14px 12px;
+background:var(--bg);border-bottom:1px solid var(--border)}
+.swatch i{display:block;width:20px;height:20px;border-radius:50%}
+.swatch .s1{background:var(--accent)}
+.swatch .s2{background:var(--accent-2)}
+.swatch .s3{background:var(--online)}
+.swatch .s4{background:var(--surface2);border:1px solid var(--border)}
+.themecard .tname{padding:9px 12px 2px;font-weight:600;font-size:var(--fs-sm)}
+.themecard .tnote{padding:0 12px 11px;color:var(--muted);font-size:var(--fs-xs);line-height:1.45}
+
+.detaillist{display:flex;flex-direction:column;gap:8px}
+.detailrow{display:flex;gap:11px;align-items:flex-start;text-align:left;padding:11px 13px;
+background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+color:var(--text)}
+.detailrow:hover{border-color:var(--accent-2)}
+.detailrow[aria-pressed="true"]{border-color:var(--accent);
+box-shadow:0 0 0 1px var(--accent) inset}
+.detailrow .tick{flex:none;width:16px;height:16px;margin-top:1px;border-radius:50%;
+border:1px solid var(--border);display:grid;place-items:center;color:var(--on-accent)}
+.detailrow[aria-pressed="true"] .tick{background:var(--accent);border-color:var(--accent)}
+.detailrow .tick .ic{width:11px;height:11px;opacity:0}
+.detailrow[aria-pressed="true"] .tick .ic{opacity:1}
+.detailrow .dname{font-weight:600;font-size:var(--fs-sm)}
+.detailrow .dnote{color:var(--muted);font-size:var(--fs-xs);line-height:1.45;margin-top:2px}
 
 /* --- system page -------------------------------------------------------- */
 .syssub{margin:28px 0 4px;font-size:var(--fs-md);font-weight:600}
@@ -647,6 +776,7 @@ aria-label="What changed"><span class="belldot" id="bellDot" hidden></span></but
 <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
 <div class="setwrap">
 <nav class="setnav" role="tablist" aria-label="Settings sections">
+<button role="tab" type="button" id="settab-appearance" class="setnavbtn" aria-selected="false" aria-controls="setpage-appearance" data-setpage="appearance">Appearance</button>
 <button role="tab" type="button" id="settab-network" class="setnavbtn" aria-selected="true" aria-controls="setpage-network" data-setpage="network">Network</button>
 <button role="tab" type="button" id="settab-scanning" class="setnavbtn" aria-selected="false" aria-controls="setpage-scanning" data-setpage="scanning">Scanning &amp; health</button>
 <button role="tab" type="button" id="settab-notifications" class="setnavbtn" aria-selected="false" aria-controls="setpage-notifications" data-setpage="notifications">Notifications</button>
@@ -655,6 +785,20 @@ aria-label="What changed"><span class="belldot" id="bellDot" hidden></span></but
 </nav>
 <div class="setbody">
 <form id="settingsForm">
+<div class="setpage" id="setpage-appearance" role="tabpanel" aria-labelledby="settab-appearance" hidden>
+<div class="settgroup">
+<h3>Theme</h3>
+<p class="hint" style="margin:0 0 12px">Applies straight away and is stored on the dongle,
+so it follows you to whichever browser you open it in.</p>
+<div class="themegrid" id="themeGrid"></div>
+</div>
+<div class="settgroup">
+<h3>Dashboard detail</h3>
+<p class="hint" style="margin:0 0 12px">How much each dashboard tile tells you. Nothing is
+lost at the quieter settings &mdash; notes and credentials are still a click away on the tile.</p>
+<div class="detaillist" id="detailList"></div>
+</div>
+</div>
 <div class="setpage" id="setpage-network" role="tabpanel" aria-labelledby="settab-network">
 <div class="settgroup">
 <h3>Network</h3>
@@ -732,7 +876,7 @@ aria-label="What changed"><span class="belldot" id="bellDot" hidden></span></but
 <option value="2">Common ports + all of 1&ndash;1024</option>
 <option value="3">Everything &mdash; all 65535 ports</option>
 </select>
-<div class="hint" style="color:#fecaca">Tier 3 (all 65535 ports) scans every device at the configured rate and can legitimately take several days to finish.</div>
+<div class="hint" style="color:var(--danger)">Tier 3 (all 65535 ports) scans every device at the configured rate and can legitimately take several days to finish.</div>
 </div>
 </div>
 <div class="settgroup">
@@ -955,6 +1099,8 @@ groups: [],
 maxGroups: 8,
 linksMeta: null,
 notifs: [],
+theme: "dark",
+detail: "comfort",
 icons: [],
 iconsMeta: null,
 notifUnread: 0,
@@ -1133,6 +1279,16 @@ parts.push("<span class=\"sb " + esc(w.state) + "\" title=\"ICMP " +
 icon(w.state === "up" ? "i-globe" : "i-globe-off") + esc(label) + "</span>");
 }
 
+    if (state.detail === "hacker"){
+if (s.heap_free){
+parts.push("<span class=\"sb\">" + icon("i-gauge") + esc(fmtBytes(s.heap_free)) +
+" free</span>");
+}
+if (s.uptime_s){
+parts.push("<span class=\"sb\">" + icon("i-refresh") + esc(fmtUptime(s.uptime_s)) + "</span>");
+}
+}
+
 bar.innerHTML = parts.join("");
 }
 var WAN_TEXT = {up:"Internet up", degraded:"Internet degraded", down:"Internet down",
@@ -1144,12 +1300,63 @@ unknown:"Internet unchecked"};
  * dongle's own idea of the time, and whether NTP has synced, is on System
  * where a discrepancy is diagnostic rather than confusing.
  */
+var THEMES = [
+{id:"dark",      name:"Dark",      note:"The original. Blue on near-black."},
+{id:"light",     name:"Light",     note:"For a bright room or a bright screen."},
+{id:"cyberpunk", name:"Cyberpunk", note:"Magenta and cyan, turned up."},
+{id:"matrix",    name:"Matrix",    note:"Green on black, and monospace throughout."},
+{id:"desert",    name:"Desert",    note:"Warm sand and terracotta."}
+];
+var DETAILS = [
+{id:"bare",    name:"Bare",    note:"The clock and your links. Nothing else."},
+{id:"simple",  name:"Simple",  note:"Adds the date and the address behind each link."},
+{id:"comfort", name:"Comfort", note:"The network summary, notes, credentials and the status bar."},
+{id:"hacker",  name:"Hacker",  note:"Everything: seconds, MACs, service checks, heap and uptime."}
+];
+
+function validTheme(v){
+for (var i = 0; i < THEMES.length; i++){ if (THEMES[i].id === v) return v; }
+return "dark";
+}
+function validDetail(v){
+for (var i = 0; i < DETAILS.length; i++){ if (DETAILS[i].id === v) return v; }
+return "comfort";
+}
+
+/*
+ * The dongle is the source of truth, but it is a round trip away, and opening
+ * in the wrong theme for half a second is worse than remembering the last one.
+ * So localStorage holds a copy purely to paint with until the real answer
+ * arrives.
+ */
+function applyAppearance(theme, detail, remember){
+state.theme  = validTheme(theme);
+state.detail = validDetail(detail);
+document.documentElement.setAttribute("data-theme", state.theme);
+document.documentElement.setAttribute("data-detail", state.detail);
+if (remember){
+try {
+localStorage.setItem("netdash-theme", state.theme);
+localStorage.setItem("netdash-detail", state.detail);
+} catch(e){}
+}
+renderClock();
+state.linksRendered = false;
+if (state.tab === "dashboard") renderDashboard();
+renderStatusBar();
+}
+
 function renderClock(){
 var t = $("clockTime"), d = $("clockDate");
 if (!t) return;
 var now = new Date();
 var h = now.getHours(), m = now.getMinutes();
-t.textContent = (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m;
+var txt = (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m;
+if (state.detail === "hacker"){
+var sec = now.getSeconds();
+txt += ":" + (sec < 10 ? "0" : "") + sec;
+}
+t.textContent = txt;
 if (d){
 try {
 d.textContent = now.toLocaleDateString(undefined,
@@ -2009,7 +2216,16 @@ var body = "<div class=\"lc-top\">" + iconRef(iconRefId, "lc-icon") +
 "<span class=\"lc-label\">" + esc(l.label) + "</span></div>" +
 "<div class=\"lc-host\">" + statusBit + "<span class=\"mono\">" + host + "</span></div>" +
 (l.note ? ("<div class=\"lc-note\" title=\"" + esc(l.note) + "\">" +
-icon("i-note") + esc(l.note) + "</div>") : "");
+icon("i-note") + esc(l.note) + "</div>") : "") +
+/* Hacker only: what the port is, when it was last proved alive, and the MAC
+   the link is really pinned to. Built rather than hidden, so it costs nothing
+   at the other levels. */
+(state.detail === "hacker"
+? ("<div class=\"lc-meta\">" +
+esc((l.service ? l.service : "port " + l.port) +
+(l.service_checked ? " \u00b7 " + relTime(l.service_checked) : "")) +
+"</div><div class=\"lc-meta\">" + esc(l.mac) + "</div>")
+: "");
 var cardTag;
 if (known && !editing){
 cardTag = "<a class=\"" + cls + "\" data-id=\"" + l.id + "\" href=\"" + esc(l.url) +
@@ -2949,6 +3165,8 @@ $("setPortscanRate").value = s.portscan_rate;
 $("setPortscanMaxTier").value = s.portscan_max_tier;
 $("setNtp").value = s.ntp_server || "";
 $("setTz").value = s.tz || "";
+applyAppearance(s.theme, s.detail, true);
+renderAppearance();
 $("setRescanDays").value = s.portscan_rescan_days;
 $("setWanEnabled").checked = !!s.wan_enabled;
 $("setWanInterval").value = s.wan_interval_s;
@@ -2960,6 +3178,48 @@ cb.checked = !!n[cb.dataset.notif];
 });
 }).catch(toastErr);
 }
+function renderAppearance(){
+var tg = $("themeGrid"), dl = $("detailList");
+if (!tg || !dl) return;
+
+tg.innerHTML = THEMES.map(function(t){
+return "<button type=\"button\" class=\"themecard\" data-theme-pick=\"" + t.id +
+"\" data-theme=\"" + t.id + "\" aria-pressed=\"" +
+(state.theme === t.id ? "true" : "false") + "\">" +
+"<span class=\"swatch\"><i class=\"s1\"></i><i class=\"s2\"></i><i class=\"s3\"></i>" +
+"<i class=\"s4\"></i></span>" +
+"<span class=\"tname\">" + esc(t.name) + "</span>" +
+"<span class=\"tnote\">" + esc(t.note) + "</span></button>";
+}).join("");
+
+dl.innerHTML = DETAILS.map(function(d){
+return "<button type=\"button\" class=\"detailrow\" data-detail-pick=\"" + d.id +
+"\" aria-pressed=\"" + (state.detail === d.id ? "true" : "false") + "\">" +
+"<span class=\"tick\">" + icon("i-check") + "</span>" +
+"<span><span class=\"dname\">" + esc(d.name) + "</span>" +
+"<span class=\"dnote\">" + esc(d.note) + "</span></span></button>";
+}).join("");
+
+tg.querySelectorAll("[data-theme-pick]").forEach(function(b){
+b.addEventListener("click", function(){ setAppearance(b.dataset.themePick, null); });
+});
+dl.querySelectorAll("[data-detail-pick]").forEach(function(b){
+b.addEventListener("click", function(){ setAppearance(null, b.dataset.detailPick); });
+});
+}
+
+/*
+ * Applied immediately, then saved. Choosing a look you cannot see until you
+ * press Save is a poor way to choose a look, and there is nothing here to
+ * validate that would justify the extra step.
+ */
+function setAppearance(theme, detail){
+applyAppearance(theme || state.theme, detail || state.detail, true);
+renderAppearance();
+api("PUT","/api/settings",{theme:state.theme, detail:state.detail})
+.catch(function(e){ toast("Saved on this browser only: " + ((e&&e.message)||"failed"), "err"); });
+}
+
 function renderVaultSettings(){
 var v = state.vault || {};
 var blurb = $("vaultBlurb");
@@ -3187,6 +3447,15 @@ var savedTab = "dashboard";
 try { savedTab = localStorage.getItem("netdash-tab") || "dashboard"; } catch(e){}
 if (TABS.indexOf(savedTab) === -1) savedTab = "dashboard";
 selectTab(savedTab, true);
+/* Paint with the remembered look immediately; the dongle's answer follows a
+   moment later and wins. */
+(function(){
+var t = null, d = null;
+try { t = localStorage.getItem("netdash-theme"); d = localStorage.getItem("netdash-detail"); }
+catch(e){}
+applyAppearance(t, d, false);
+})();
+loadSettings();
 renderClock();
 /* The display has minute resolution, but ticking every second keeps it from
    lagging the real minute by up to a whole interval. It is two DOM writes. */
