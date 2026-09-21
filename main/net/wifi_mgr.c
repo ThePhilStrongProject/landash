@@ -328,7 +328,7 @@ static void mdns_start(void)
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "mdns_hostname_set failed: %s", esp_err_to_name(err));
     }
-    err = mdns_instance_name_set("NetDash");
+    err = mdns_instance_name_set("LANDA.SH");
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "mdns_instance_name_set failed: %s", esp_err_to_name(err));
     }
@@ -336,7 +336,7 @@ static void mdns_start(void)
     mdns_txt_item_t txt[] = {
         {"path", "/"},
     };
-    err = mdns_service_add("NetDash", "_http", "_tcp", 80, txt, 1);
+    err = mdns_service_add("LANDA.SH", "_http", "_tcp", 80, txt, 1);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "mdns_service_add failed: %s", esp_err_to_name(err));
     }
@@ -958,7 +958,7 @@ esp_err_t wifi_mgr_init(void)
         ESP_LOGW(TAG, "esp_read_mac failed: %s", esp_err_to_name(err));
         memset(s_base_mac, 0, sizeof(s_base_mac));
     }
-    snprintf(s_ap_ssid, sizeof(s_ap_ssid), "NetDash-%02X%02X", s_base_mac[4], s_base_mac[5]);
+    snprintf(s_ap_ssid, sizeof(s_ap_ssid), "LANDA-%02X%02X", s_base_mac[4], s_base_mac[5]);
 
     s_state_lock = xSemaphoreCreateMutex();
     s_scan_lock  = xSemaphoreCreateMutex();

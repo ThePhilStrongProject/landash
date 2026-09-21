@@ -32,6 +32,7 @@
 #include "notes.h"
 #include "notify.h"
 #include "portscan.h"
+#include "linkcheck.h"
 #include "wan.h"
 #include "scanner.h"
 #include "settings.h"
@@ -82,6 +83,7 @@ void app_main(void)
     ESP_ERROR_CHECK(disc_nbns_init());
     ESP_ERROR_CHECK(portscan_init());
     ESP_ERROR_CHECK(wan_init());
+    ESP_ERROR_CHECK(linkcheck_init());
 
     ESP_LOGI(TAG, "boot complete, free heap %" PRIu32 " bytes", esp_get_free_heap_size());
 

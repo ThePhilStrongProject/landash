@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "linkcheck.h"
 #include "notes.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -391,6 +392,7 @@ esp_err_t links_remove(uint16_t id)
     /* Whatever was written about this link goes with it. */
     link_note_forget(id);
     link_secret_forget(id);
+    linkcheck_forget(id);
     return ESP_OK;
 }
 
@@ -446,6 +448,7 @@ esp_err_t links_reorder(const uint16_t *ids, size_t count)
     for (size_t i = 0; i < n_dropped; i++) {
         link_note_forget(dropped[i]);
         link_secret_forget(dropped[i]);
+        linkcheck_forget(dropped[i]);
     }
     return ESP_OK;
 }

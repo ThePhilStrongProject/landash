@@ -150,6 +150,12 @@ main/
                             timer, and armed only after the first sweep so a
                             fresh flash does not announce the whole network.
 
+  net/linkcheck.c/.h        one TCP connect per dashboard link, once a minute,
+                            so a tile reports whether the service answers
+                            rather than whether the box pings. Links whose
+                            device is already offline are skipped rather than
+                            waited out.
+
   net/wan.c/.h              WAN health: an ICMP echo and a name lookup on an
                             interval, reported separately so "no internet" and
                             "no DNS" can be told apart. Uses esp_ping rather than

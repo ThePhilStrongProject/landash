@@ -35,6 +35,7 @@
 #include "app_events.h"
 #include "classify.h"
 #include "device_db.h"
+#include "linkcheck.h"
 #include "links.h"
 #include "icons.h"
 #include "notes.h"
@@ -1558,6 +1559,16 @@ static cJSON *link_to_json(const netdash_link_t *l)
     cJSON_AddStringToObject(o, "display_name", name);
     cJSON_AddStringToObject(o, "type", netdash_type_name(type));
     cJSON_AddBoolToObject(o, "online", known && netdash_device_online(&dev));
+
+    /*
+     * Whether the service answers, which is a different question from whether
+     * the box replies to a ping: a NAS pings perfectly well with its web UI
+     * dead, and that is the case worth showing.
+     */
+    int64_t                   checked = 0;
+    const netdash_svc_state_t svc_st  = linkcheck_get(l->id, &checked);
+    cJSON_AddStringToObject(o, "service_state", netdash_svc_state_name(svc_st));
+    cJSON_AddNumberToObject(o, "service_checked", (double)checked);
 
     char ip_str[16];
     strcpy(ip_str, "0.0.0.0");

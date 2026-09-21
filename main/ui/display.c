@@ -407,7 +407,7 @@ static void build_page_main(void)
     lv_obj_t *page = page_create();
     s_pages[DISPLAY_PAGE_MAIN] = page;
 
-    lv_obj_t *hdr = make_label(page, &lv_font_montserrat_12, COL_ACCENT, "NETDASH");
+    lv_obj_t *hdr = make_label(page, &lv_font_montserrat_12, COL_ACCENT, "LANDA.SH");
     lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 6, 6);
 
     for (int i = 0; i < 4; i++) {
