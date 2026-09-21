@@ -52,11 +52,12 @@ typedef struct {
     /*
      * Appended in settings blob version 5: updates from GitHub (net/ota.h).
      * The repository itself is deliberately not here - see ota.h for why.
+     * Version 5 also ended in a 128-byte access token, dropped in version 6;
+     * the loader keeps the head of a longer blob, so that tail just falls off.
      */
     bool     ota_enabled;       /* check for new releases periodically      */
     bool     ota_auto;          /* ...and install them without asking       */
     uint16_t ota_interval_h;    /* hours between checks                     */
-    char     ota_token[128];    /* GitHub token for a private repo, or ""   */
 } netdash_settings_t;
 
 /* Loads (or creates) the blob and generates ap_pass on first boot. */

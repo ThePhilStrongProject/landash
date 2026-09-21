@@ -29,8 +29,8 @@ The releases repository is fixed when the firmware is built, not a web
 setting, on purpose. The dashboard has no login, so anyone on your network
 could otherwise point the dongle at their own firmware.
 
-Because it is public, dongles need no token, and nothing expires. Anyone can
-download a built image, but nobody can see the source.
+Because it is public, dongles need no credentials, and there is nothing to
+expire. Anyone can download a built image, but nobody can see the source.
 
 ---
 
@@ -133,32 +133,14 @@ flashed it is presumably working on it. **Install** still works on it by hand.
 
 ---
 
-## A private releases repository
-
-A private releases repository works too, if you would rather binaries were not
-public. The dongles then each need a read-only token:
-
-1. GitHub › **Settings** › **Developer settings** › **Fine-grained tokens** ›
-   **Generate new token**. Set the owner to `ThePhilStrongProject`, choose
-   *Only select repositories* › `landash-releases`, and give it
-   **Contents: Read-only** and nothing else.
-2. On each dongle, go to **Settings › Maintenance › Access token**, paste the
-   token and press **Save token**.
-
-The token is never shown again or returned by the API, and is sent only to
-`raw.githubusercontent.com`. When it expires, updates stop with "GitHub
-refused the access token" until a new one is pasted in. That is why the public
-repository is the default.
-
----
-
 ## When it does not work
 
 **Settings › Maintenance** shows the last error. The likely ones:
 
 | Message | Meaning |
 |---|---|
-| No latest.json found (a private repository needs a token) | Nothing has been pushed yet, or the branch is not `main`, or the repository is private. |
+| No latest.json found in the releases repository | Nothing has been pushed yet, or the branch is not `main`. |
+| GitHub refused the request (is the releases repository public?) | The releases repository has been made private. It has to be public. |
 | latest.json has no usable "version" / "file" | The manifest was edited by hand. Let `tools/release.py` write it. |
 | The image says v0.14.2-dirty, latest.json says v0.14.2 | The build was made before the tag, or with uncommitted changes. |
 | The file is not a netdash image | `file` points at something else. |

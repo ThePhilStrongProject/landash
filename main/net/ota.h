@@ -15,10 +15,7 @@
  * token, by contrast, is safe to accept from the page - the worst a stranger
  * can do with it is point the dongle at a repository it cannot read.
  *
- * A public releases repository needs no token. A private one needs a
- * fine-grained token with read-only access to its contents; it is kept in
- * settings (NVS), never returned by the API, and only ever sent to
- * raw.githubusercontent.com.
+ * The releases repository is public, so nothing needs a token.
  *
  * Rollback: CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE is on, so a freshly
  * installed image boots in a pending state. ota_init() marks it good once it

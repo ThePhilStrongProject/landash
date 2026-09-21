@@ -187,9 +187,7 @@ menu "NetDash"
             installs that image when it is newer. Empty disables updates. Deliberately a build
             setting rather than a web setting: the dashboard has no login, so
             anyone on the LAN could otherwise point it at their own firmware.
-            A private repository also needs a read-only token, which is set
-            from the web page (Settings > Maintenance); a public one needs
-            nothing.
+            It must be public: the dongle sends no credentials.
 
     config NETDASH_OTA_BRANCH
         string "Branch of that repository to read"

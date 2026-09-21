@@ -492,7 +492,6 @@ is stored.
   "ota_enabled": true,
   "ota_auto": true,
   "ota_interval_h": 12,
-  "ota_token_set": false,
   "notifications": {
     "new_device": true,
     "ip_changed": true,
@@ -1070,9 +1069,8 @@ Settings, in `GET/PUT /api/settings`:
 | `ota_enabled` | bool | check for new releases every `ota_interval_h` hours (and two minutes after boot) |
 | `ota_auto` | bool | install a newer release without asking |
 | `ota_interval_h` | number, 1-168 | hours between checks, default 12 |
-| `ota_token` | string or null, write-only | a GitHub token, only for a private releases repository. `""` leaves it unchanged, `null` removes it. Never returned; `ota_token_set` says whether one is stored |
 
-The token is only ever sent to `raw.githubusercontent.com`.
+The releases repository is public, so no credentials are involved.
 
 ### GET /api/ota
 
@@ -1088,8 +1086,7 @@ The token is only ever sent to `raw.githubusercontent.com`.
   "last_check": 1790000000,
   "bytes_done": 0,
   "bytes_total": 1975488,
-  "repo": "ThePhilStrongProject/landash-releases",
-  "token_set": false
+  "repo": "ThePhilStrongProject/landash-releases"
 }
 ```
 
@@ -1105,7 +1102,6 @@ The token is only ever sent to `raw.githubusercontent.com`.
 | `last_check` | number | unix seconds of the last completed check, `0` for never or before NTP |
 | `bytes_done`, `bytes_total` | number | download progress while `downloading` |
 | `repo` | string | where releases come from, `""` when none is built in |
-| `token_set` | bool | whether a token is stored |
 
 ### POST /api/ota/check
 

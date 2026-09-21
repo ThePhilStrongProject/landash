@@ -25,7 +25,7 @@ static const char *TAG = "settings";
 #define SETTINGS_NS      "cfg"
 #define SETTINGS_KEY     "blob"
 #define SETTINGS_VER_KEY "ver"
-#define SETTINGS_VERSION 5
+#define SETTINGS_VERSION 6
 
 #define AP_PASS_LEN 8
 
@@ -180,7 +180,6 @@ static void clamp(netdash_settings_t *cfg)
     if (cfg->detail[0] == '\0') {
         str_set(cfg->detail, sizeof(cfg->detail), "comfort");
     }
-    cfg->ota_token[sizeof(cfg->ota_token) - 1] = '\0';
     if (cfg->ota_interval_h < 1) {
         cfg->ota_interval_h = 1;
     } else if (cfg->ota_interval_h > 168) {
@@ -303,7 +302,6 @@ static esp_err_t load_locked(bool *out_dirty)
                 MIGRATE_FIELD(ota_enabled);
                 MIGRATE_FIELD(ota_auto);
                 MIGRATE_FIELD(ota_interval_h);
-                MIGRATE_FIELD(ota_token);
 
                 /*
                  * notif_mask predates the update notification, so a migrated
@@ -323,6 +321,30 @@ static esp_err_t load_locked(bool *out_dirty)
             }
             free(scratch);
             dirty = true;   /* rewrite in the current layout */
+        } else if (rerr == ESP_OK && stored > sizeof(s_cfg) && stored <= 4096) {
+            /*
+             * A longer layout: written by newer firmware - which is what a
+             * rollback after a failed update leaves behind - or one that has
+             * since dropped a field off the end. Fields only ever append, so
+             * the head is exactly this layout. Keep it rather than throwing
+             * the Wi-Fi password away at the worst possible moment, and
+             * rewrite it so a dropped field does not linger in flash.
+             */
+            uint8_t *scratch = calloc(1, stored);
+            size_t   size    = stored;
+
+            if (scratch != NULL && nvs_get_blob(h, SETTINGS_KEY, scratch, &size) == ESP_OK &&
+                size == stored) {
+                memcpy(&s_cfg, scratch, sizeof(s_cfg));
+                ESP_LOGW(TAG, "settings blob is v%u (%u bytes); kept the first %u bytes as v%u",
+                         (unsigned)ver, (unsigned)stored, (unsigned)sizeof(s_cfg),
+                         (unsigned)SETTINGS_VERSION);
+            } else {
+                ESP_LOGW(TAG, "settings read failed, resetting");
+                apply_defaults(&s_cfg);
+            }
+            free(scratch);
+            dirty = true;
         } else {
             ESP_LOGW(TAG, "stored settings unusable (err=%s size=%u ver=%u), resetting",
                      esp_err_to_name(rerr), (unsigned)stored, (unsigned)ver);

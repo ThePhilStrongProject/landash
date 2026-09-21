@@ -383,8 +383,7 @@ def main():
           repr((status or {}).get("wan"))[:80])
 
     # --- firmware updates ---------------------------------------------------
-    # Read-only apart from the check interval, which is put back. A stored
-    # token is never touched: like the vault, it belongs to whoever set it.
+    # Read-only apart from the check interval, which is put back.
     print("\nfirmware updates")
     st, o, _ = request(base, "GET", "/api/ota")
     o = o if isinstance(o, dict) else {}
@@ -400,9 +399,8 @@ def main():
     st, cfg, _ = request(base, "GET", "/api/settings")
     cfg = cfg if isinstance(cfg, dict) else {}
     check("settings carry the update switches",
-          all(k in cfg for k in ("ota_enabled", "ota_auto", "ota_interval_h", "ota_token_set")),
-          ", ".join(k for k in ("ota_enabled", "ota_auto", "ota_interval_h", "ota_token_set") if k not in cfg))
-    check("settings never return the token", "ota_token" not in cfg)
+          all(k in cfg for k in ("ota_enabled", "ota_auto", "ota_interval_h")),
+          ", ".join(k for k in ("ota_enabled", "ota_auto", "ota_interval_h") if k not in cfg))
     old_interval = cfg.get("ota_interval_h", 12)
     st, _, _ = request(base, "PUT", "/api/settings", {"ota_interval_h": 169}, expect=None)
     check("an out-of-range check interval is refused", st == 400, f"status {st}")

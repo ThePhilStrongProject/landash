@@ -964,15 +964,6 @@ HTTP, so a revealed secret crosses the network in the clear.</p>
 </div>
 <label class="switch" style="margin-top:16px"><input type="checkbox" id="otaEnabled"> Check GitHub for new releases <span id="otaEvery">every 12 hours</span></label>
 <label class="switch"><input type="checkbox" id="otaAuto"> Install them automatically</label>
-<div class="field" style="margin-top:14px;margin-bottom:6px">
-<label for="otaToken">Access token</label>
-<input type="password" id="otaToken" autocomplete="off" spellcheck="false" placeholder="github_pat_&hellip;">
-<p class="hint" id="otaTokenHint" style="margin-top:6px"></p>
-</div>
-<div class="formrow-actions" style="margin-top:0">
-<button type="button" class="btn" id="otaTokenSave">Save token</button>
-<button type="button" class="btn btn-danger-outline" id="otaTokenClear" hidden>Remove token</button>
-</div>
 </div>
 <div class="settgroup">
 <h3>Device list</h3>
@@ -3401,11 +3392,6 @@ $("otaInstallBtn").hidden = !o.available;
 $("otaInstallBtn").disabled = busy;
 $("otaInstallBtn").textContent = "Install " + (o.latest || "");
 
-$("otaTokenHint").textContent = o.token_set
-? "A token is stored on the dongle. It is never shown again: paste a new one to replace it."
-: "Only needed if the repository is private: a fine-grained GitHub token with read-only " +
-"access to its contents. It is stored on the dongle and never shown again.";
-$("otaTokenClear").hidden = !o.token_set;
 }
 
 function loadOta(){
@@ -3450,21 +3436,6 @@ this.checked ? "The dongle will check for updates" : "Update checks turned off")
 $("otaAuto").addEventListener("change", function(){
 saveOta({ota_auto: this.checked},
 this.checked ? "Updates will install themselves" : "Updates will wait for you");
-});
-function saveToken(){
-var t = $("otaToken").value.trim();
-if (!t){ toast("Paste a token first", "err"); return; }
-saveOta({ota_token: t}, "Token saved");
-$("otaToken").value = "";
-}
-$("otaTokenSave").addEventListener("click", saveToken);
-/* This input lives inside the settings form; Enter must not submit that. */
-$("otaToken").addEventListener("keydown", function(e){
-if (e.key === "Enter"){ e.preventDefault(); saveToken(); }
-});
-$("otaTokenClear").addEventListener("click", function(){
-if (!confirm("Remove the stored token? Updates from a private repository will stop.")) return;
-saveOta({ota_token: null}, "Token removed");
 });
 
 /* Which settings page is open is a preference, not state worth a round trip. */

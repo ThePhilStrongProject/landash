@@ -213,38 +213,12 @@ static bool safe_repo_path(const char *p)
     return true;
 }
 
-/*
- * A private releases repository needs a token on every request - the manifest
- * and each attempt at the image. Built once per check or install and kept
- * here, off the stack; only the task touches it.
- */
-static char s_auth[sizeof(((netdash_settings_t *)0)->ota_token) + 8];
-
-static void set_auth(const char *token)
-{
-    if (token != NULL && token[0] != '\0') {
-        snprintf(s_auth, sizeof(s_auth), "token %s", token);
-    } else {
-        s_auth[0] = '\0';
-    }
-}
-
-static esp_err_t add_auth(esp_http_client_handle_t c)
-{
-    if (s_auth[0] != '\0') {
-        esp_http_client_set_header(c, "Authorization", s_auth);
-    }
-    return ESP_OK;
-}
-
 static const char *status_error(int code)
 {
-    const bool have_token = s_auth[0] != '\0';
     switch (code) {
     case 401:
-    case 403: return have_token ? "GitHub refused the access token" : "GitHub refused the request";
-    case 404: return have_token ? "No latest.json found, or the token cannot see the repository"
-                                : "No latest.json found (a private repository needs a token)";
+    case 403: return "GitHub refused the request (is the releases repository public?)";
+    case 404: return "No latest.json found in the releases repository";
     case 429: return "GitHub is rate-limiting requests; it will try again later";
     default:  return "Unexpected answer from GitHub";
     }
@@ -269,7 +243,6 @@ static esp_err_t fetch_manifest(char *version, size_t vcap, char *err, size_t er
         snprintf(err, err_cap, "Out of memory");
         return ESP_ERR_NO_MEM;
     }
-    add_auth(c);
 
     esp_err_t e = esp_http_client_open(c, 0);
     if (e != ESP_OK) {
@@ -381,10 +354,7 @@ static bool nvs_get_str_buf(const char *key, char *out, size_t cap)
 /* Returns true when a newer release is available and s_file_url is set. */
 static bool do_check(void)
 {
-    netdash_settings_t cfg;
-    settings_get(&cfg);
-
-    if (ota_repo()[0] == '\0') {
+        if (ota_repo()[0] == '\0') {
         set_state(OTA_STATE_ERROR, "No update repository is built into this firmware");
         return false;
     }
@@ -394,7 +364,6 @@ static bool do_check(void)
     }
 
     set_state(OTA_STATE_CHECKING, NULL);
-    set_auth(cfg.ota_token);
     char tag[32] = "";
     char err[80] = "";
     const esp_err_t e = fetch_manifest(tag, sizeof(tag), err, sizeof(err));
@@ -451,7 +420,6 @@ static esp_http_client_handle_t open_image_at(uint32_t offset, int *code, int64_
     if (c == NULL) {
         return NULL;
     }
-    add_auth(c);
     if (offset > 0) {
         char range[32];
         snprintf(range, sizeof(range), "bytes=%" PRIu32 "-", offset);
@@ -503,10 +471,6 @@ static bool image_header_ok(const uint8_t *p, size_t n, const char *tag, char *e
 static void do_install(void)
 {
     static uint8_t buf[DL_CHUNK];   /* task-owned, off the stack */
-
-    netdash_settings_t cfg;
-    settings_get(&cfg);
-    set_auth(cfg.ota_token);
 
     char tag[32];
     lock();

@@ -1113,8 +1113,6 @@ static cJSON *settings_to_json(const netdash_settings_t *cfg)
     cJSON_AddBoolToObject(o, "ota_enabled", cfg->ota_enabled);
     cJSON_AddBoolToObject(o, "ota_auto", cfg->ota_auto);
     cJSON_AddNumberToObject(o, "ota_interval_h", cfg->ota_interval_h);
-    /* Like wifi_pass: written, never read back. */
-    cJSON_AddBoolToObject(o, "ota_token_set", cfg->ota_token[0] != '\0');
 
     /*
      * Notification toggles go out as an object keyed by type name rather than
@@ -1307,19 +1305,6 @@ static esp_err_t settings_put_handler(httpd_req_t *req)
             return send_json_error(req, "400 Bad Request", "ota_interval_h must be 1-168");
         }
         next.ota_interval_h = (uint16_t)j->valueint;
-    }
-
-    /* A string sets the token, null clears it, "" leaves it alone. */
-    j = cJSON_GetObjectItemCaseSensitive(json, "ota_token");
-    if (j != NULL) {
-        if (cJSON_IsNull(j)) {
-            next.ota_token[0] = '\0';
-        } else if (!cJSON_IsString(j) || strlen(j->valuestring) >= sizeof(next.ota_token)) {
-            cJSON_Delete(json);
-            return send_json_error(req, "400 Bad Request", "ota_token must be a string up to 127 chars");
-        } else if (j->valuestring[0] != '\0') {
-            snprintf(next.ota_token, sizeof(next.ota_token), "%s", j->valuestring);
-        }
     }
 
     j = cJSON_GetObjectItemCaseSensitive(json, "portscan_rescan_days");
@@ -2720,7 +2705,6 @@ static cJSON *ota_to_json(void)
     cJSON_AddNumberToObject(o, "bytes_done", st.bytes_done);
     cJSON_AddNumberToObject(o, "bytes_total", st.bytes_total);
     cJSON_AddStringToObject(o, "repo", ota_repo());
-    cJSON_AddBoolToObject(o, "token_set", cfg.ota_token[0] != '\0');
     return o;
 }
 
