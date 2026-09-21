@@ -1414,6 +1414,24 @@ return "<div class=\"stat\">" +
 "</div>";
 }).join("");
 }
+/* One line for the System tab; the detail lives on Settings > Maintenance. */
+function otaSummary(){
+var o = state.ota;
+if (!o){
+if (!state.otaLoading){
+state.otaLoading = true;
+loadOta().then(function(){ state.otaLoading = false; });
+}
+return "<span class=\"muted\">checking&hellip;</span>";
+}
+if (o.available) return "<span class=\"mono\">" + esc(o.latest) + "</span> is available " +
+"<span class=\"muted\">(Settings &rsaquo; Maintenance)</span>";
+if (o.state === "up_to_date") return "Up to date <span class=\"muted\">&middot; checked " +
+esc(relTime(o.last_check)) + "</span>";
+if (o.state === "error") return "<span class=\"muted\">" + esc(o.error || "Last check failed") + "</span>";
+return esc(OTA_STATE_TEXT[o.state] || o.state);
+}
+
 function renderSystem(){
 var s = state.status;
 if (!s.fw) return;
@@ -1425,7 +1443,8 @@ var rows = [
 ["IP address", esc(s.ip)],
 ["MAC address", "<span class=\"mono\">" + esc(s.mac) + "</span>"],
 ["Signal", (s.mode==="sta"||s.mode==="apsta") ? (rssiBars(s.rssi)+" "+s.rssi+" dBm") : "—"],
-["Time", s.time_synced ? esc(absTime(s.time)) : "not synced"]
+["Time", s.time_synced ? esc(absTime(s.time)) : "not synced"],
+["Updates", otaSummary()]
 ];
 $("sysInfo").innerHTML = rows.map(function(r){
 return "<dt>" + esc(r[0]) + "</dt><dd>" + r[1] + "</dd>";
@@ -3386,7 +3405,10 @@ $("otaTokenClear").hidden = !o.token_set;
 }
 
 function loadOta(){
-return api("GET","/api/ota").then(function(o){ state.ota = o; renderOta(); }).catch(function(){});
+return api("GET","/api/ota").then(function(o){
+state.ota = o; renderOta();
+if (state.status && state.status.fw) renderSystem();
+}).catch(function(){});
 }
 
 /* Poll only while someone is looking at it. Quick while something is
