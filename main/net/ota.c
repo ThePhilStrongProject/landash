@@ -217,10 +217,10 @@ static const char *status_error(int code)
 {
     switch (code) {
     case 401:
-    case 403: return "GitHub refused the request (is the releases repository public?)";
-    case 404: return "No latest.json found in the releases repository";
-    case 429: return "GitHub is rate-limiting requests; it will try again later";
-    default:  return "Unexpected answer from GitHub";
+    case 403: return "The update server refused the request";
+    case 404: return "No update information on the update server";
+    case 429: return "The update server is busy; it will try again later";
+    default:  return "Unexpected answer from the update server";
     }
 }
 
@@ -246,7 +246,7 @@ static esp_err_t fetch_manifest(char *version, size_t vcap, char *err, size_t er
 
     esp_err_t e = esp_http_client_open(c, 0);
     if (e != ESP_OK) {
-        snprintf(err, err_cap, "Could not reach GitHub (%s)", esp_err_to_name(e));
+        snprintf(err, err_cap, "Could not reach the update server (%s)", esp_err_to_name(e));
         esp_http_client_cleanup(c);
         return e;
     }
@@ -278,7 +278,8 @@ static esp_err_t fetch_manifest(char *version, size_t vcap, char *err, size_t er
     }
     if (n < 0 || more) {
         free(buf);
-        snprintf(err, err_cap, more ? "latest.json is too large" : "Connection dropped reading latest.json");
+        snprintf(err, err_cap, more ? "The update information is too large"
+                                    : "The connection dropped while checking for updates");
         return ESP_FAIL;
     }
     buf[len] = '\0';
@@ -291,14 +292,14 @@ static esp_err_t fetch_manifest(char *version, size_t vcap, char *err, size_t er
     int          ver[3];
     e = ESP_OK;
     if (j == NULL) {
-        snprintf(err, err_cap, "latest.json is not valid JSON");
+        snprintf(err, err_cap, "The update information is not valid");
         e = ESP_FAIL;
     } else if (!cJSON_IsString(jv) || strlen(jv->valuestring) >= vcap ||
                !parse_version(jv->valuestring, ver, NULL)) {
-        snprintf(err, err_cap, "latest.json has no usable \"version\"");
+        snprintf(err, err_cap, "The update information has no usable version");
         e = ESP_FAIL;
     } else if (!cJSON_IsString(jf) || !safe_repo_path(jf->valuestring)) {
-        snprintf(err, err_cap, "latest.json has no usable \"file\"");
+        snprintf(err, err_cap, "The update information names no usable file");
         e = ESP_FAIL;
     } else {
         snprintf(version, vcap, "%s", jv->valuestring);
@@ -355,7 +356,7 @@ static bool nvs_get_str_buf(const char *key, char *out, size_t cap)
 static bool do_check(void)
 {
         if (ota_repo()[0] == '\0') {
-        set_state(OTA_STATE_ERROR, "No update repository is built into this firmware");
+        set_state(OTA_STATE_ERROR, "This firmware was built without automatic updates");
         return false;
     }
     if (!sta_online()) {
@@ -461,7 +462,7 @@ static bool image_header_ok(const uint8_t *p, size_t n, const char *tag, char *e
         return false;
     }
     if (strncmp(desc.version, tag, sizeof(desc.version)) != 0) {
-        snprintf(err, err_cap, "The image says %.20s, latest.json says %.20s", desc.version, tag);
+        snprintf(err, err_cap, "The update says it is %.20s, not %.20s", desc.version, tag);
         return false;
     }
     return true;
@@ -514,7 +515,7 @@ static void do_install(void)
         int64_t                  length = 0;
         esp_http_client_handle_t c      = open_image_at(done, &code, &length);
         if (c == NULL) {
-            snprintf(err, sizeof(err), "Could not reach GitHub");
+            snprintf(err, sizeof(err), "Could not reach the update server");
             continue;
         }
         if (code != 200 && !(done > 0 && code == 206)) {

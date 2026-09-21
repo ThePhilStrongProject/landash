@@ -962,7 +962,7 @@ HTTP, so a revealed secret crosses the network in the clear.</p>
 <button type="button" class="btn" id="otaCheckBtn">Check now</button>
 <button type="button" class="btn btn-accent" id="otaInstallBtn" hidden>Install</button>
 </div>
-<label class="switch" style="margin-top:16px"><input type="checkbox" id="otaEnabled"> Check GitHub for new releases <span id="otaEvery">every 12 hours</span></label>
+<label class="switch" style="margin-top:16px"><input type="checkbox" id="otaEnabled"> Check for updates <span id="otaEvery">every 12 hours</span></label>
 <label class="switch"><input type="checkbox" id="otaAuto"> Install them automatically</label>
 </div>
 <div class="settgroup">
@@ -3343,7 +3343,7 @@ loadDevices();
 });
 
 var OTA_STATE_TEXT = {
-idle:"Not checked yet since the last restart", checking:"Checking GitHub…",
+idle:"Not checked yet since the last restart", checking:"Checking for updates…",
 up_to_date:"Up to date", available:"A newer release is available",
 downloading:"Downloading…", rebooting:"Installed — restarting",
 error:"The last check failed"
@@ -3353,11 +3353,11 @@ function renderOta(){
 var o = state.ota;
 if (!o) return;
 
-$("otaSource").innerHTML = o.repo
-? "Releases come from <span class=\"mono\">github.com/" + esc(o.repo) + "</span>. The " +
-"repository is fixed when the firmware is built, so nobody on your network can point the " +
-"dongle somewhere else."
-: "This firmware was built without an update repository.";
+$("otaSource").textContent = o.repo
+? "The dongle keeps itself up to date. It checks for new firmware in the background, " +
+"installs it and restarts, keeping your settings, devices and dashboard. If a new version " +
+"ever fails to start, it goes straight back to the one it had."
+: "This firmware was built without automatic updates.";
 
 var rows = [["Running", "<span class=\"mono\">" + esc(o.current) + "</span>"]];
 if (o.latest) rows.push(["Latest release", "<span class=\"mono\">" + esc(o.latest) + "</span>"]);

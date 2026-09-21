@@ -135,14 +135,15 @@ flashed it is presumably working on it. **Install** still works on it by hand.
 
 ## When it does not work
 
-**Settings › Maintenance** shows the last error. The likely ones:
+**Settings › Maintenance** shows the last error, in words meant for the
+person looking at the dashboard. What each one means here:
 
 | Message | Meaning |
 |---|---|
-| No latest.json found in the releases repository | Nothing has been pushed yet, or the branch is not `main`. |
-| GitHub refused the request (is the releases repository public?) | The releases repository has been made private. It has to be public. |
-| latest.json has no usable "version" / "file" | The manifest was edited by hand. Let `tools/release.py` write it. |
-| The image says v0.14.2-dirty, latest.json says v0.14.2 | The build was made before the tag, or with uncommitted changes. |
-| The file is not a netdash image | `file` points at something else. |
-| GitHub is rate-limiting requests | It retries at the next interval. |
+| No update information on the update server | `latest.json` is missing: nothing has been pushed yet, or the branch is not `main`. |
+| The update server refused the request | The releases repository has been made private. It has to be public. |
+| The update information has no usable version / names no usable file | `latest.json` was edited by hand. Let `tools/release.py` write it. |
+| The update says it is v0.14.2-dirty, not v0.14.2 | The build was made before the tag, or with uncommitted changes. |
+| The file is not a netdash image | `file` in `latest.json` points at something else. |
+| The update server is busy | GitHub is rate-limiting; it retries at the next interval. |
 | Not connected to Wi-Fi | It retries every five minutes. |
