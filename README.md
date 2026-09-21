@@ -5,7 +5,7 @@ USB dongle.
 
 Plug it into any USB port for power. It joins your Wi-Fi, quietly discovers
 every device on the LAN, works out what each one is, and serves a dark
-single-page dashboard at `http://netdash.local`. The 1.14" LCD shows its own IP
+single-page dashboard at `http://landash.local`. The 1.14" LCD shows its own IP
 so you always know where to find it.
 
 - **Passive by design.** One ICMP echo per host every few minutes at a few
@@ -71,7 +71,7 @@ rollback if the new version fails to start. Publishing is a commit and a push;
 2. Join that network, open the page, go to **Settings**, pick your Wi-Fi from
    the scan list and save.
 3. The dongle reconnects to your LAN and the LCD shows its new IP. The
-   dashboard is then at `http://netdash.local`.
+   dashboard is then at `http://landash.local`.
 
 Clicking the BOOT button cycles the LCD pages. Holding it for 5 seconds wipes
 the Wi-Fi credentials and returns the dongle to setup mode.
@@ -81,7 +81,7 @@ the Wi-Fi credentials and returns the dongle to setup mode.
 Once the dongle is on your LAN:
 
 ```bash
-python tools/smoke_test.py http://netdash.local
+python tools/smoke_test.py http://landash.local
 ```
 
 That exercises every REST endpoint, checks the response shapes against

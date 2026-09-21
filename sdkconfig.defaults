@@ -22,7 +22,7 @@ CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 
 # --- Networking -------------------------------------------------------------
 CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES=y
-CONFIG_LWIP_LOCAL_HOSTNAME="netdash"
+CONFIG_LWIP_LOCAL_HOSTNAME="landash"
 CONFIG_ESP_WIFI_NVS_ENABLED=y
 
 # --- LVGL -------------------------------------------------------------------

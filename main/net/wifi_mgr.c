@@ -313,7 +313,7 @@ static void mdns_start(void)
     if (s_mdns_started) {
         return;
     }
-    const char *host = (s_cfg.hostname[0] != '\0') ? s_cfg.hostname : "netdash";
+    const char *host = (s_cfg.hostname[0] != '\0') ? s_cfg.hostname : CONFIG_NETDASH_HOSTNAME;
 
     esp_err_t err = mdns_init();
     if (err != ESP_OK) {
@@ -349,7 +349,7 @@ static void mdns_refresh(void)
     if (!s_mdns_started) {
         return;
     }
-    const char *host = (s_cfg.hostname[0] != '\0') ? s_cfg.hostname : "netdash";
+    const char *host = (s_cfg.hostname[0] != '\0') ? s_cfg.hostname : CONFIG_NETDASH_HOSTNAME;
     if (strcmp(host, s_mdns_hostname) == 0) {
         return;
     }
@@ -364,7 +364,7 @@ static void mdns_refresh(void)
 
 static void apply_hostname(void)
 {
-    const char *host = (s_cfg.hostname[0] != '\0') ? s_cfg.hostname : "netdash";
+    const char *host = (s_cfg.hostname[0] != '\0') ? s_cfg.hostname : CONFIG_NETDASH_HOSTNAME;
     esp_err_t   err;
 
     if (s_sta_netif != NULL) {
@@ -754,7 +754,7 @@ static void handle_got_ip(void)
     timer_stop(s_retry_timer);
     timer_stop(s_fallback_timer);
 
-    const char *host = (s_cfg.hostname[0] != '\0') ? s_cfg.hostname : "netdash";
+    const char *host = (s_cfg.hostname[0] != '\0') ? s_cfg.hostname : CONFIG_NETDASH_HOSTNAME;
     ESP_LOGI(TAG, "NetDash STA IP: " IPSTR "  http://%s.local", IP2STR(&ip.ip), host);
     ESP_LOGI(TAG, "gateway " IPSTR " netmask " IPSTR, IP2STR(&ip.gw), IP2STR(&ip.netmask));
 

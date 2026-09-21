@@ -27,6 +27,20 @@ int64_t scanner_last_sweep_time(void);
 /* Progress of the running sweep; both zero when idle. Either pointer may be NULL. */
 void scanner_get_progress(uint16_t *done, uint16_t *total);
 
+/*
+ * Largest subnet an active sweep will walk: a /16, 65,533 addresses, which
+ * still fits the 16-bit progress counters. It is slow - over an hour at the
+ * default 16 probes a second - but it is the same gentle pace on any size.
+ */
+#define SCANNER_MIN_PREFIX 16
+
+/*
+ * Why the last active sweep did not run, in words for the dashboard, or NULL
+ * when it did (or passive mode is on, which is not a failure). Points at a
+ * static string.
+ */
+const char *scanner_skip_reason(void);
+
 #ifdef __cplusplus
 }
 #endif

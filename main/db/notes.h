@@ -27,7 +27,7 @@
  *
  * Doing the crypto in the browser instead would fix that, and was the first
  * design tried: WebCrypto is unavailable here because crypto.subtle is gated
- * behind a secure context and http://netdash.local is not one.
+ * behind a secure context and http://landash.local is not one.
  *
  * The vault relocks itself after NETDASH_VAULT_IDLE_S of no use, and on every
  * reboot.

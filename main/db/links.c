@@ -34,29 +34,6 @@ typedef struct __attribute__((packed)) {
     netdash_link_t  items[NETDASH_MAX_LINKS];
 } links_blob_t;
 
-/*
- * The version 1 layout, reproduced byte for byte so a dashboard built before
- * groups and icons existed survives the upgrade. netdash_link_t was not packed
- * then either, so this must not be packed now.
- */
-typedef struct {
-    uint16_t id;
-    uint8_t  mac[6];
-    uint16_t port;
-    uint8_t  scheme;
-    char     label[32];
-} link_v1_t;
-
-typedef struct __attribute__((packed)) {
-    uint8_t   version;
-    uint8_t   count;
-    uint16_t  next_id;
-    link_v1_t items[24];
-} links_blob_v1_t;
-
-_Static_assert(sizeof(link_v1_t) == 44, "v1 link layout changed; migration would misread");
-_Static_assert(sizeof(links_blob_v1_t) == 1060, "v1 blob layout changed");
-
 static netdash_link_t    s_links[NETDASH_MAX_LINKS];
 static size_t            s_count;
 static uint16_t          s_next_id = 1;
@@ -159,41 +136,6 @@ static void reconcile_groups_locked(void)
     }
 }
 
-/* Caller holds the lock. Returns true when a v1 blob was converted. */
-static bool migrate_v1_locked(nvs_handle_t h, size_t stored)
-{
-    if (stored != sizeof(links_blob_v1_t)) {
-        return false;
-    }
-
-    links_blob_v1_t old;
-    size_t          size = sizeof(old);
-    if (nvs_get_blob(h, LINKS_KEY, &old, &size) != ESP_OK || size != sizeof(old) ||
-        old.version != 1) {
-        return false;
-    }
-
-    s_count = old.count > 24 ? 24 : old.count;
-    for (size_t i = 0; i < s_count; i++) {
-        netdash_link_t *l = &s_links[i];
-        memset(l, 0, sizeof(*l));
-        l->id     = old.items[i].id;
-        l->port   = old.items[i].port;
-        l->scheme = old.items[i].scheme;
-        l->group  = 0;           /* everything starts ungrouped */
-        l->icon[0] = '\0';       /* and with the derived icon   */
-        memcpy(l->mac, old.items[i].mac, 6);
-        memcpy(l->label, old.items[i].label, sizeof(l->label) - 1);
-        l->label[sizeof(l->label) - 1] = '\0';
-    }
-    s_next_id       = old.next_id != 0 ? old.next_id : 1;
-    s_group_count   = 0;
-    s_next_group_id = 1;
-
-    ESP_LOGW(TAG, "migrated %u link(s) from the v1 layout", (unsigned)s_count);
-    return true;
-}
-
 esp_err_t links_init(void)
 {
     if (s_lock == NULL) {
@@ -211,14 +153,10 @@ esp_err_t links_init(void)
     memset(s_links, 0, sizeof(s_links));
     memset(s_groups, 0, sizeof(s_groups));
 
-    bool migrated = false;
-
     nvs_handle_t h;
     if (nvs_open(LINKS_NVS_NS, NVS_READONLY, &h) == ESP_OK) {
         size_t stored = 0;
 
-        /* Ask for the size first so a v1 blob can be recognised rather than
-           thrown away along with every link the user had set up. */
         if (nvs_get_blob(h, LINKS_KEY, NULL, &stored) == ESP_OK) {
             if (stored == sizeof(links_blob_t)) {
                 /* 3 KB, wanted only for the length of this read: too big for
@@ -238,8 +176,6 @@ esp_err_t links_init(void)
                     s_next_group_id = blob->next_group_id != 0 ? blob->next_group_id : 1;
                 }
                 free(blob);
-            } else {
-                migrated = migrate_v1_locked(h, stored);
             }
         }
         nvs_close(h);
@@ -255,9 +191,6 @@ esp_err_t links_init(void)
     }
     reconcile_groups_locked();
 
-    if (migrated) {
-        save_locked();
-    }
     const size_t loaded = s_count;
     const size_t groups = s_group_count;
     unlock();

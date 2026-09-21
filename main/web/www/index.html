@@ -596,6 +596,7 @@ margin-right:8px}
 .sb.up{color:var(--online)}
 .sb.degraded{color:var(--warn)}
 .sb.down{color:var(--danger)}
+.sb.bad{color:var(--danger)}
 .sb-bar{width:90px;height:3px;border-radius:2px;background:rgba(var(--accent-rgb),.2);overflow:hidden}
 .sb-bar i{display:block;height:100%;background:var(--accent);border-radius:2px;transition:width .3s}
 
@@ -860,6 +861,7 @@ lost at the quieter settings &mdash; notes and credentials are still a click awa
 <div class="field">
 <label for="setHostsPerSec">Hosts per second</label>
 <input type="number" id="setHostsPerSec" min="1" max="64">
+<p class="hint" id="sweepEstimate" style="margin-top:6px"></p>
 </div>
 <div class="checkfield">
 <input type="checkbox" id="setPassive"><label for="setPassive" style="margin:0">Passive only (no active sweeps)</label>
@@ -1238,7 +1240,7 @@ if (state.status && state.status.fw && s.fw && s.fw !== state.status.fw){
 location.reload();
 return;
 }
-state.status = s; markPollOk(); renderStatus(); renderTiles(); renderSystem();
+state.status = s; markPollOk(); renderStatus(); renderTiles(); renderSystem(); renderSweepEstimate();
 }).catch(function(e){ markPollFail(); });
 }
 function renderStatus(){
@@ -1263,8 +1265,12 @@ var s = state.status || {};
 var parts = [];
 
 if (s.hostname || s.ip){
-parts.push("<span class=\"sb\">" + icon("i-router") + esc((s.hostname || "netdash") +
-(s.ip ? " · " + s.ip : "")) + "</span>");
+/* The prefix rides along with the address: "192.168.16.4/20" says which
+   network this is without a separate item. */
+var pfx = s.subnet ? s.subnet.split("/")[1] : "";
+parts.push("<span class=\"sb\" title=\"" + esc(s.subnet ? "Network " + s.subnet : "") + "\">" +
+icon("i-router") + esc((s.hostname || "landash") +
+(s.ip ? " · " + s.ip + (pfx ? "/" + pfx : "") : "")) + "</span>");
 }
 
 if (s.mode === "sta" || s.mode === "apsta"){
@@ -1287,6 +1293,9 @@ var word = PORTSCAN_TIER_WORD[p.tier] || ("tier " + p.tier);
 var idx = Math.min((p.device_index || 0) + 1, p.device_count || 1);
 parts.push("<span class=\"sb\">" + icon("i-search") + "Port scan: " + esc(word) +
 ", device " + idx + "/" + esc(p.device_count || 0) + "</span>");
+} else if (s.scan_skipped){
+parts.push("<span class=\"sb bad\" title=\"" + esc(s.scan_skipped) + "\">" + icon("i-radar") +
+"Not sweeping</span>");
 } else if (s.last_sweep){
 parts.push("<span class=\"sb\">" + icon("i-radar") + "Swept " + esc(relTime(s.last_sweep)) +
 "</span>");
@@ -1405,6 +1414,35 @@ return "<div class=\"stat\">" +
 "</div>";
 }).join("");
 }
+/* "192.168.16.0/20 · 4,093 addresses, swept in about 4 min", or why not. */
+function sweepDuration(hosts, rate){
+var secs = Math.round(hosts / Math.max(1, rate || 1));
+if (secs < 90) return secs + " s";
+if (secs < 5400) return Math.round(secs / 60) + " min";
+return (secs / 3600).toFixed(1).replace(/\.0$/, "") + " h";
+}
+function subnetSummary(s){
+if (!s.subnet) return "<span class=\"muted\">not on a network</span>";
+var out = "<span class=\"mono\">" + esc(s.subnet) + "</span>";
+if (s.sweep_hosts){
+var rate = (state.settings && state.settings.hosts_per_sec) || 16;
+out += " <span class=\"muted\">&middot; " + Number(s.sweep_hosts).toLocaleString() +
+" addresses, swept in about " + sweepDuration(s.sweep_hosts, rate) + "</span>";
+}
+if (s.scan_skipped) out += "<div class=\"muted\" style=\"font-size:.78rem\">" + esc(s.scan_skipped) + "</div>";
+return out;
+}
+function renderSweepEstimate(){
+var el = $("sweepEstimate"), s = state.status || {};
+if (!el) return;
+if (!s.subnet){ el.textContent = ""; return; }
+var rate = Number($("setHostsPerSec").value) || 16;
+el.textContent = s.sweep_hosts
+? "This network is " + s.subnet + ": " + Number(s.sweep_hosts).toLocaleString() +
+" addresses, so a sweep takes about " + sweepDuration(s.sweep_hosts, rate) + " at this rate."
+: (s.scan_skipped || ("This network is " + s.subnet + "."));
+}
+
 /* One line for the System tab; the detail lives on Settings > Maintenance. */
 function otaSummary(){
 var o = state.ota;
@@ -1432,6 +1470,7 @@ var rows = [
 ["Free heap", fmtBytes(s.heap_free) + " <span class=\"muted\">(min " + fmtBytes(s.heap_min_free) + ")</span>"],
 ["Mode", esc((s.mode||"").toUpperCase())],
 ["IP address", esc(s.ip)],
+["Network", subnetSummary(s)],
 ["MAC address", "<span class=\"mono\">" + esc(s.mac) + "</span>"],
 ["Signal", (s.mode==="sta"||s.mode==="apsta") ? (rssiBars(s.rssi)+" "+s.rssi+" dBm") : "—"],
 ["Time", s.time_synced ? esc(absTime(s.time)) : "not synced"],
@@ -3215,6 +3254,8 @@ $("setHostname").value = s.hostname || "";
 $("setApPass").value = s.ap_pass || "";
 $("setScanInterval").value = s.scan_interval_min;
 $("setHostsPerSec").value = s.hosts_per_sec;
+state.settings = s;
+renderSweepEstimate();
 $("setPassive").checked = !!s.passive_only;
 $("setPortscanEnabled").checked = !!s.portscan_enabled;
 $("setPortscanRate").value = s.portscan_rate;
@@ -3463,6 +3504,7 @@ if (!$("setpage-" + want)) want = "network";
 selectSetPage(want);
 })();
 
+$("setHostsPerSec").addEventListener("input", renderSweepEstimate);
 document.querySelectorAll(".presets [data-tz]").forEach(function(b){
 b.addEventListener("click", function(){ $("setTz").value = b.dataset.tz; });
 });

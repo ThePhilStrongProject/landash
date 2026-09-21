@@ -63,8 +63,12 @@ static const char *TAG = "scanner";
 #define SCAN_ICMP_PAYLOAD    8
 #define SCAN_ICMP_LEN        (8 + SCAN_ICMP_PAYLOAD)
 
-/* Shortest prefix we are willing to walk (/22 == 1022 hosts). */
-#define SCAN_MIN_PREFIX      22
+/*
+ * Shortest prefix we will walk. This used to be /22 (1,022 hosts), and a /20
+ * was skipped every time with nothing but a console warning to say so - a
+ * tester's network simply stopped being scanned. See SCANNER_MIN_PREFIX.
+ */
+#define SCAN_MIN_PREFIX      SCANNER_MIN_PREFIX
 
 /* Settle time between "got IP" and the first sweep. */
 #define SCAN_SETTLE_MS       10000
@@ -106,6 +110,7 @@ static volatile bool     s_running;
 static volatile uint16_t s_progress_done;
 static volatile uint16_t s_progress_total;
 static int64_t           s_last_sweep;        /* guarded by s_mux            */
+static const char *volatile s_skip_reason;    /* why the last sweep did not run */
 static portMUX_TYPE      s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 /*
@@ -673,16 +678,19 @@ static void sweep(const netdash_settings_t *cfg)
 
     if (active) {
         if (prefix < SCAN_MIN_PREFIX) {
-            ESP_LOGW(TAG, "subnet /%u is too large to sweep politely (minimum /%u)",
+            ESP_LOGW(TAG, "subnet /%u is too large to sweep (minimum /%u)",
                      (unsigned)prefix, (unsigned)SCAN_MIN_PREFIX);
+            s_skip_reason = "The network is larger than a /16, too large to sweep";
             post_scan_event(NETDASH_EVENT_SCAN_DONE, 0, 0);
             return;
         }
         if (prefix > 30) {
             ESP_LOGW(TAG, "subnet /%u has no probeable hosts", (unsigned)prefix);
+            s_skip_reason = "The network has no other addresses to sweep";
             post_scan_event(NETDASH_EVENT_SCAN_DONE, 0, 0);
             return;
         }
+        s_skip_reason = NULL;
         /* Every host except the network address, the broadcast and ourselves. */
         total = (uint16_t)((1u << (32 - prefix)) - 3);
     }
@@ -1010,6 +1018,11 @@ int64_t scanner_last_sweep_time(void)
     int64_t ts = s_last_sweep;
     taskEXIT_CRITICAL(&s_mux);
     return ts;
+}
+
+const char *scanner_skip_reason(void)
+{
+    return s_skip_reason;
 }
 
 void scanner_get_progress(uint16_t *done, uint16_t *total)

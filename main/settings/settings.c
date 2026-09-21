@@ -283,34 +283,13 @@ static esp_err_t load_locked(bool *out_dirty)
                 /*
                  * The old layout may have ended in a padding byte, which the
                  * copy above would have dropped onto the first appended field.
-                 * Re-apply the defaults for everything added after v1 so the
-                 * new fields never inherit a stale pad byte.
+                 * Re-apply the default of every field added after the v6
+                 * baseline here, one MIGRATE_FIELD() each, so none of them
+                 * inherits a stale pad byte. There are none yet.
                  */
                 netdash_settings_t fresh;
                 apply_defaults(&fresh);
-                MIGRATE_FIELD(portscan_enabled);
-                MIGRATE_FIELD(portscan_rate);
-                MIGRATE_FIELD(portscan_max_tier);
-                MIGRATE_FIELD(notif_mask);
-                MIGRATE_FIELD(wan_enabled);
-                MIGRATE_FIELD(wan_interval_s);
-                MIGRATE_FIELD(wan_ping_host);
-                MIGRATE_FIELD(wan_dns_probe);
-                MIGRATE_FIELD(portscan_rescan_days);
-                MIGRATE_FIELD(theme);
-                MIGRATE_FIELD(detail);
-                MIGRATE_FIELD(ota_enabled);
-                MIGRATE_FIELD(ota_auto);
-                MIGRATE_FIELD(ota_interval_h);
-
-                /*
-                 * notif_mask predates the update notification, so a migrated
-                 * mask has its bit clear - which would read as the user having
-                 * turned it off. Nobody has had the chance to yet.
-                 */
-                if (ver < 5) {
-                    s_cfg.notif_mask |= NETDASH_NOTIF_BIT(NETDASH_NOTIF_UPDATE);
-                }
+                (void)fresh;
 
                 ESP_LOGW(TAG, "migrated settings from v%u (%u bytes) to v%u (%u bytes)",
                          (unsigned)ver, (unsigned)stored,

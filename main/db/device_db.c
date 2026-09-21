@@ -514,16 +514,6 @@ bool device_db_get_history(const uint8_t mac[6], uint8_t *out, size_t cap, uint1
 #define DEV_NVS_NS       "dev"
 #define DEV_BLOB_VERSION 2
 
-/* Version 1 had no hw_mac: the key was always the hardware MAC. */
-typedef struct __attribute__((packed)) {
-    uint8_t  version;
-    char     nickname[32];
-    uint8_t  type_override;
-    uint8_t  flags;
-    int64_t  first_seen;
-    uint32_t last_ip;
-} dev_blob_v1_t;
-
 typedef struct __attribute__((packed)) {
     uint8_t  version;
     char     nickname[32];
@@ -534,7 +524,16 @@ typedef struct __attribute__((packed)) {
     uint8_t  hw_mac[6];
 } dev_blob_t;
 
-_Static_assert(sizeof(dev_blob_v1_t) == 47, "v1 device blob layout is persisted, never change it");
+/*
+ * The version 1 record: the same without hw_mac, since the key was always the
+ * hardware MAC. Every dongle runs firmware that writes version 2, but a record
+ * is only rewritten when something about its device changes, so version 1
+ * records are still sitting in flash - a dongle that went from v0.10.0
+ * straight to v0.14.4 kept most of them. device_db_init() converts any it
+ * finds, so a later release can drop this once every dongle has booted it.
+ */
+#define DEV_BLOB_V1_SIZE 47
+
 _Static_assert(sizeof(dev_blob_t) == 53, "device blob layout is persisted");
 
 static void mac_to_key(const uint8_t mac[6], char key[13])
@@ -642,6 +641,10 @@ static void mark_persisted(const uint8_t mac[6])
 
 static SemaphoreHandle_t s_events_lock;
 
+/* Table positions of the version 1 records device_db_init() found. */
+static uint8_t s_convert[NETDASH_MAX_DEVICES];
+static size_t  s_convert_count;
+
 esp_err_t device_db_init(void)
 {
     if (s_lock == NULL) {
@@ -688,12 +691,16 @@ esp_err_t device_db_init(void)
                 dev_blob_t blob;
                 size_t     sz = sizeof(blob);
                 bool       ok = nvs_get_blob(h, info.key, &blob, &sz) == ESP_OK;
-                if (ok && sz == sizeof(dev_blob_v1_t) && blob.version == 1) {
-                    memcpy(blob.hw_mac, mac, 6);   /* v1: the key was the MAC */
-                } else if (!ok || sz != sizeof(blob) || blob.version != DEV_BLOB_VERSION) {
+                bool       v1 = ok && sz == DEV_BLOB_V1_SIZE && blob.version == 1;
+                if (v1) {
+                    memcpy(blob.hw_mac, mac, 6);
+                } else if (ok && (sz != sizeof(blob) || blob.version != DEV_BLOB_VERSION)) {
                     ok = false;
                 }
                 if (ok) {
+                    if (v1 && s_convert_count < NETDASH_MAX_DEVICES) {
+                        s_convert[s_convert_count++] = (uint8_t)s_count;
+                    }
                     netdash_device_t *d = &s_devices[s_count];
                     memset(d, 0, sizeof(*d));
                     memcpy(d->mac, mac, 6);
@@ -729,7 +736,26 @@ esp_err_t device_db_init(void)
         nvs_close(h);
     }
     size_t loaded = s_count;
+
+    /* Rewrite version 1 records as version 2, off the lock: it is flash I/O,
+       and nothing else can be touching the table this early anyway. */
+    const size_t convert = s_convert_count;
     device_db_unlock();
+
+    size_t converted = 0;
+    for (size_t i = 0; i < convert; i++) {
+        netdash_device_t snap;
+        device_db_lock();
+        snap = s_devices[s_convert[i]];
+        device_db_unlock();
+        if (nvs_write_user_fields(&snap) == ESP_OK) {
+            converted++;
+        }
+    }
+    if (convert > 0) {
+        ESP_LOGW(TAG, "converted %u of %u old-format device record(s)", (unsigned)converted,
+                 (unsigned)convert);
+    }
 
     ESP_LOGI(TAG, "loaded %u persisted device(s), capacity %u",
              (unsigned)loaded, (unsigned)NETDASH_MAX_DEVICES);

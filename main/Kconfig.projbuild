@@ -140,7 +140,7 @@ menu "NetDash"
 
     config NETDASH_HOSTNAME
         string "Default hostname / mDNS name"
-        default "netdash"
+        default "landash"
         help
             Factory default only; the running value comes from settings (NVS).
 

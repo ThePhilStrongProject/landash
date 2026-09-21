@@ -317,6 +317,43 @@ static const char *mode_name(wifi_mgr_mode_t mode)
 /* Defined with the rest of the WAN endpoints, far below. */
 static cJSON *wan_json(void);
 
+/*
+ * The network in CIDR form and how many addresses one sweep probes, so the
+ * dashboard can say what it is scanning and roughly how long that takes. A
+ * tester moved from a /23 to a /20 and could not tell the dongle had stopped.
+ */
+static void add_subnet_json(cJSON *root)
+{
+    esp_netif_ip_info_t info;
+    const bool on_lan = wifi_mgr_get_ip_info(&info) == ESP_OK && wifi_mgr_get_gateway() != 0;
+    uint32_t   mask   = on_lan ? ntohl(info.netmask.addr) : 0;
+    uint32_t   net    = on_lan ? ntohl(info.ip.addr) & mask : 0;
+    unsigned   prefix = 0;
+    for (uint32_t m = mask; m & 0x80000000u; m <<= 1) {
+        prefix++;
+    }
+
+    if (on_lan && prefix > 0) {
+        char subnet[48];   /* 19 is enough; the compiler cannot tell */
+        snprintf(subnet, sizeof(subnet), "%u.%u.%u.%u/%u", (unsigned)(net >> 24),
+                 (unsigned)((net >> 16) & 0xff), (unsigned)((net >> 8) & 0xff),
+                 (unsigned)(net & 0xff), prefix);
+        cJSON_AddStringToObject(root, "subnet", subnet);
+    } else {
+        cJSON_AddStringToObject(root, "subnet", "");
+    }
+    /* Every address but the network, the broadcast and the dongle itself. */
+    const bool sweepable = on_lan && prefix >= SCANNER_MIN_PREFIX && prefix <= 30;
+    cJSON_AddNumberToObject(root, "sweep_hosts", sweepable ? (double)((1u << (32 - prefix)) - 3) : 0);
+
+    const char *why = scanner_skip_reason();
+    if (why != NULL) {
+        cJSON_AddStringToObject(root, "scan_skipped", why);
+    } else {
+        cJSON_AddNullToObject(root, "scan_skipped");
+    }
+}
+
 static esp_err_t status_handler(httpd_req_t *req)
 {
     wifi_mgr_mode_t mode = wifi_mgr_get_mode();
@@ -388,6 +425,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "scan_done", scan_done);
     cJSON_AddNumberToObject(root, "scan_total", scan_total);
     cJSON_AddNumberToObject(root, "last_sweep", (double)scanner_last_sweep_time());
+    add_subnet_json(root);
     cJSON_AddNumberToObject(root, "devices_total", (double)total);
     cJSON_AddNumberToObject(root, "devices_online", (double)online);
     cJSON_AddNumberToObject(root, "devices_new_24h", (double)new_24h);

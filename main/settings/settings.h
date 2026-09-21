@@ -26,16 +26,16 @@ typedef struct {
     char     tz[48];            /* POSIX TZ string                          */
     char     ntp_server[64];
     /*
-     * Appended in settings blob version 2. New fields are only ever added at
-     * the end, so load_locked() can migrate an older blob by copying it over
-     * the defaults and leaving the tail at its default value.
+     * Settings blob version 6 is the baseline every dongle has. New fields are
+     * only ever added at the end - and listed with MIGRATE_FIELD() in
+     * load_locked() - so a shorter, older blob is copied over the defaults
+     * with the new tail left at its default, and a longer, newer one (after a
+     * rollback) keeps its head. Never reorder, resize or remove a field.
      */
     bool     portscan_enabled;
     uint16_t portscan_rate;     /* probes per second, whole device sweep    */
     uint8_t  portscan_max_tier; /* 1 common, 2 well-known, 3 every port     */
-    /*
-     * Appended in settings blob version 3.
-     */
+
     uint16_t notif_mask;        /* 1 bit per netdash_notif_type_t, 1 = on   */
     bool     wan_enabled;
     uint16_t wan_interval_s;    /* seconds between WAN health checks        */
@@ -43,17 +43,15 @@ typedef struct {
     char     wan_dns_probe[48]; /* name resolved to prove DNS works         */
     uint16_t portscan_rescan_days; /* re-probe tier 1 this often, 0 = never */
     /*
-     * Appended in settings blob version 4. Free-form short strings: the web UI
-     * owns the list of themes and detail levels, and the firmware only bounds
-     * the length, so a new theme is a page change rather than a flash.
+     * Free-form short strings: the web UI owns the list of themes and detail
+     * levels, and the firmware only bounds the length, so a new theme is a
+     * page change rather than a flash.
      */
     char     theme[16];         /* e.g. "dark", "matrix"                    */
     char     detail[16];        /* e.g. "comfort", "hacker"                 */
     /*
-     * Appended in settings blob version 5: updates from GitHub (net/ota.h).
-     * The repository itself is deliberately not here - see ota.h for why.
-     * Version 5 also ended in a 128-byte access token, dropped in version 6;
-     * the loader keeps the head of a longer blob, so that tail just falls off.
+     * Firmware updates (net/ota.h). The repository itself is deliberately not
+     * here - see ota.h for why.
      */
     bool     ota_enabled;       /* check for new releases periodically      */
     bool     ota_auto;          /* ...and install them without asking       */

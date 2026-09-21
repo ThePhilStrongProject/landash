@@ -3,7 +3,7 @@
 Version 1. This contract is fixed in WP0 so the firmware (WP6) and the web UI
 (WP7) can be built in parallel. Changing it means changing this file first.
 
-- Base URL: `http://netdash.local` (STA) or `http://192.168.4.1` (AP mode).
+- Base URL: `http://landash.local` (STA) or `http://192.168.4.1` (AP mode).
 - All request and response bodies are `application/json; charset=utf-8`.
 - No authentication in v1. The dongle is LAN-only.
 - All timestamps are **unix seconds (UTC)** as JSON numbers. `0` means "not
@@ -72,7 +72,7 @@ Everything the header and the System tab need, in one poll.
   "mode": "sta",
   "ssid": "MyHomeWiFi",
   "rssi": -54,
-  "hostname": "netdash",
+  "hostname": "landash",
   "uptime_s": 34512,
   "heap_free": 142336,
   "heap_min_free": 118204,
@@ -84,6 +84,9 @@ Everything the header and the System tab need, in one poll.
   "scan_done": 0,
   "scan_total": 0,
   "last_sweep": 1789520102,
+  "subnet": "192.168.1.0/24",
+  "sweep_hosts": 253,
+  "scan_skipped": null,
   "devices_total": 27,
   "devices_online": 21,
   "devices_new_24h": 1,
@@ -106,6 +109,9 @@ Everything the header and the System tab need, in one poll.
 | `scanning` | bool | a sweep is in progress |
 | `scan_done`, `scan_total` | number | host progress, both `0` when idle |
 | `last_sweep` | number | unix seconds of the last completed sweep, `0` if none |
+| `subnet` | string | the connected network in CIDR form, `""` when not on a LAN |
+| `sweep_hosts` | number | addresses one active sweep probes; `0` when the network cannot be swept. Divide by `hosts_per_sec` for the sweep time |
+| `scan_skipped` | string or null | why the last active sweep did not run, in words for the page; `null` when it ran. Networks larger than a /16 are not swept |
 | `ap_ssid`, `ap_pass` | string | only present when `mode` is `"ap"` or `"apsta"` |
 
 ---
@@ -577,7 +583,7 @@ the change needs a reconnect:
 
 `reconnecting` is `true` when the SSID or password changed; the dongle applies
 them a second after replying, so the client loses the connection and should
-reconnect to the new IP (or to `http://netdash.local`).
+reconnect to the new IP (or to `http://landash.local`).
 
 400 on any value outside its range.
 
@@ -890,7 +896,7 @@ and out of a physical flash dump, which yields only hardened ciphertext.
 passphrase and any secret you reveal cross the LAN in the clear. Doing the
 crypto in the browser instead would fix that and was the first design tried;
 `crypto.subtle` is unavailable because it is gated behind a secure context and
-`http://netdash.local` is not one.
+`http://landash.local` is not one.
 
 The vault relocks itself after 15 minutes idle and on every reboot.
 
