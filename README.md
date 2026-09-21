@@ -1,97 +1,148 @@
-# NetDash
+# LANDA.SH
 
-A home-network dashboard that runs entirely on a **Waveshare ESP32-C6-GEEK**
-USB dongle.
+**A home-network dashboard that lives on a USB stick.**
 
-Plug it into any USB port for power. It joins your Wi-Fi, quietly discovers
-every device on the LAN, works out what each one is, and serves a dark
-single-page dashboard at `http://landash.local`. The 1.14" LCD shows its own IP
-so you always know where to find it.
+LANDA.SH turns a [Waveshare ESP32-C6-GEEK](https://www.waveshare.com/wiki/ESP32-C6-GEEK)
+(a small USB dongle with a screen) into a quiet window onto your home network.
+Plug it into any USB port for power and it joins your Wi-Fi, finds every
+device on your network, works out what each one is, and serves a dashboard you
+open in any browser. Everything runs on the dongle: no cloud, no account, no
+app.
 
-- **Passive by design.** One ICMP echo per host every few minutes at a few
-  hosts per second, plus mDNS / SSDP / NetBIOS / reverse-DNS listening. Nothing
-  a router logs as a scan.
-- **Names things.** Vendor from the IEEE OUI table, hostname from mDNS,
-  the router's DHCP leases, or NetBIOS; and a nickname you set yourself, which
-  survives reboots.
-- **No cloud, no app.** Everything is on the dongle.
+## What it does
 
-Status: feature-complete and running on hardware. The firmware boots, brings up
-the LCD, starts the setup access point, serves the dashboard and starts the
-scanner and discovery tasks. The step that still needs a human is the one only
-you can do: joining the setup access point and entering your Wi-Fi password.
-The LAN-side behaviour (discovery, naming, classification) gets its first real
-exercise after that.
+- **A start page for your home.** Pin the things you use every day, like your
+  router, NAS or Home Assistant, as tiles in named groups, with your own icons.
+  A dot on each tile shows whether that service is actually answering, not
+  just whether the box is switched on.
+- **Every device, found for you.** Everything on your network appears on its
+  own, with its maker, its name where it announces one, and a guess at what it
+  is. Give devices names you'll recognise. Each one keeps a 24-hour
+  availability history, notes, and a list of the ports it has open.
+- **Only what matters.** A notification bell for new devices, address changes,
+  newly opened ports and internet outages, each switchable on or off.
+- **Internet health.** Separate checks for "is there a route out" and "is DNS
+  working", on the dashboard and the dongle's screen.
+- **A credential vault** for the logins to your services, locked with a
+  passphrase that is never stored.
+- **Quietly polite.** One gentle sweep of the network every few minutes, at a
+  steady pace a router will not mistake for an attack, plus listening for the
+  names devices announce about themselves. It also works slowly through the
+  ports each device has open, which security software on some devices may
+  notice; that can be limited or switched off in Settings.
+- **Keeps itself up to date** over the air, rolling back on its own if a new
+  version ever fails to start.
+- **Yours to arrange:** five themes, four levels of detail, and a welcome tour
+  on first use.
 
-See `docs/API.md` for the REST contract and `CLAUDE.md` for the module map and
-conventions.
+## What you need
+
+- A Waveshare **ESP32-C6-GEEK**. Several revisions exist with different screen
+  wiring; see [Hardware](#hardware).
+- A computer with **ESP-IDF v5.5** to build and flash it once over USB.
+- A 2.4 GHz Wi-Fi network. The ESP32-C6 does not do 5 GHz.
+
+## Getting started
+
+### 1. Build and flash
+
+Install [ESP-IDF v5.5](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32c6/get-started/),
+open its terminal (or source `export.sh` / `export.ps1`), then:
+
+```bash
+git clone <this repository> landash
+cd landash
+idf.py set-target esp32c6
+idf.py build
+idf.py -p <port> flash       # e.g. COM4 on Windows, /dev/ttyACM0 on Linux
+```
+
+The first build downloads its components (LVGL, mDNS and a button driver), so
+it needs the internet and takes a few minutes.
+
+### 2. Connect it to your Wi-Fi
+
+1. With no Wi-Fi saved, the dongle starts its own setup network. Its screen
+   shows the network name (`LANDA-XXXX`), the password and the address
+   `http://192.168.4.1`.
+2. Join that network with a phone or laptop and open the address. A card
+   takes you straight to choosing your Wi-Fi.
+3. The dongle joins your network and its screen shows its new address.
+   Reconnect to your home Wi-Fi and open that address, or
+   `http://landash.local`.
+
+A welcome tour shows you round the first time.
+
+The **BOOT** button cycles the screen's pages. Holding it for five seconds
+forgets the Wi-Fi details and returns the dongle to setup mode.
+
+### 3. Updates
+
+From then on the dongle checks for new firmware twice a day and installs it by
+itself. You can turn that off, or have it wait for you, under
+**Settings › Maintenance**.
+
+> **If you build your own firmware**, point it at your own releases: set
+> *NetDash › GitHub repository updates come from* in `idf.py menuconfig`
+> (`CONFIG_NETDASH_OTA_REPO`). By default a dongle installs the maintainer's
+> releases, which would replace your changes. [docs/UPDATES.md](docs/UPDATES.md)
+> explains how releases are published.
+
+## Security: read this before trusting it with anything
+
+LANDA.SH is designed for a home network you trust.
+
+- **The dashboard has no login.** Anyone who can reach it on your network can
+  use it, including changing its settings.
+- **It is plain HTTP.** A browser cannot trust a certificate for a device on a
+  home network without warnings, so the dashboard does not use one.
+- **The credential vault** encrypts your logins on the dongle with a key
+  derived from your passphrase, and the key is never stored. But the
+  passphrase, and a login when you view it, cross your network unencrypted. It
+  protects against someone who steals the dongle, not against someone
+  watching your network.
+
+[SECURITY.md](SECURITY.md) has the full picture and how to report a problem.
 
 ## Hardware
 
-Waveshare ESP32-C6-GEEK: ESP32-C6, 16 MB flash, 1.14" ST7789 240x135 IPS LCD,
-BOOT button, USB-A plug. Nothing else is needed.
+| | |
+|---|---|
+| Board | Waveshare ESP32-C6-GEEK: ESP32-C6, 16 MB flash, no PSRAM |
+| Screen | 1.14" ST7789 IPS, 240 × 135 |
+| Default screen pins | SCLK 1, MOSI 2, DC 3, RST 4, CS 5, backlight 6 |
+| Button | BOOT (GPIO 9) |
 
-## Build and flash
+If the screen stays blank or shows garbage, your board is a different revision:
+choose *Custom pins* under **NetDash** in `idf.py menuconfig` and set the pins
+there. The screen's orientation and colour options are in the same menu.
 
-Requires ESP-IDF v5.5.
+The dongle can remember 128 devices. Every device's details are held in its
+512 KB of RAM, and 128 is what fits alongside everything else.
 
-```powershell
-# The IDF virtualenv is Python 3.11. Put it ahead of any newer python on PATH
-# first, or export.ps1 cannot find its environment.
-$env:PATH = "C:\Users\PhilStrong\.espressif\tools\idf-python\3.11.2;" + $env:PATH
-. C:\Users\PhilStrong\esp\v5.5\esp-idf\export.ps1
-idf.py set-target esp32c6        # once
-idf.py build
-idf.py -p COM4 flash monitor     # Ctrl+] exits the monitor
-```
+## For developers
 
-```bash
-# Linux / macOS
-. ~/esp/v5.5/esp-idf/export.sh
-idf.py set-target esp32c6
-idf.py build
-idf.py -p /dev/ttyACM0 flash monitor
-```
+- [docs/API.md](docs/API.md): the REST API the dashboard is built on. Every
+  feature goes through it, so it is also the way to script the dongle.
+- [CLAUDE.md](CLAUDE.md): the developer's guide. It has the module map, the
+  coding conventions, the version-numbering scheme, and the hard-won traps
+  worth reading before changing the scanner, the HTTP server or updates. It
+  is written for AI coding agents and people alike.
+- [CONTRIBUTING.md](CONTRIBUTING.md): how to build, test and propose a change.
+- `tools/mock_api.py` serves the real dashboard against a fake network, for
+  working on the web interface without hardware:
+  `python tools/mock_api.py`, then open `http://127.0.0.1:8080`.
+- `tools/smoke_test.py http://landash.local` exercises every endpoint of a
+  live dongle and checks the responses against the API documentation.
 
-Board pins, scan rate and the default hostname live under **NetDash** in
-`idf.py menuconfig`.
+## Acknowledgements
 
-## Updates
+Built on [ESP-IDF](https://github.com/espressif/esp-idf) and
+[LVGL](https://lvgl.io). Manufacturer names come from the IEEE's public
+registry of MAC address blocks. [THIRD_PARTY.md](THIRD_PARTY.md) lists every
+component and its licence.
 
-Once one build with update support is on the dongle (over USB, as above), later
-versions arrive by themselves: twice a day it reads `latest.json` from the
-public releases repository and installs anything newer, with an automatic
-rollback if the new version fails to start. Publishing is a commit and a push;
-**docs/UPDATES.md** has the details.
+## Licence
 
-## First run
-
-1. With no saved credentials the dongle starts a softAP. The LCD shows the
-   SSID (`NetDash-XXXX`), the password, and `http://192.168.4.1`.
-2. Join that network, open the page, go to **Settings**, pick your Wi-Fi from
-   the scan list and save.
-3. The dongle reconnects to your LAN and the LCD shows its new IP. The
-   dashboard is then at `http://landash.local`.
-
-Clicking the BOOT button cycles the LCD pages. Holding it for 5 seconds wipes
-the Wi-Fi credentials and returns the dongle to setup mode.
-
-## Checking it works
-
-Once the dongle is on your LAN:
-
-```bash
-python tools/smoke_test.py http://landash.local
-```
-
-That exercises every REST endpoint, checks the response shapes against
-`docs/API.md` and round-trips a nickname. It changes nothing permanent: the
-reboot and factory-reset endpoints are only probed with an invalid body, to
-confirm they refuse it.
-
-To work on the dashboard without touching hardware, run the mock API. It serves
-the real `index.html` against a fake version of a home network:
-
-```bash
-python tools/mock_api.py     # http://127.0.0.1:8080
-```
+Not yet chosen. Until a licence is added, all rights are reserved by the
+author.

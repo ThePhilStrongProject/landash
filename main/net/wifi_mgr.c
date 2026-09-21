@@ -12,7 +12,7 @@
  *                    Still down after that -> APSTA: the setup AP comes up and
  *                    STA keeps retrying every 120 s. Once STA gets an IP the AP
  *                    is torn down 60 s later.
- *   no creds      -> AP only, "NetDash-XXXX" / settings.ap_pass on 192.168.4.1.
+ *   no creds      -> AP only, "LANDA-XXXX" / settings.ap_pass on 192.168.4.1.
  *
  * After the STA gets an IP, SNTP and the mDNS advertisement are started.
  */

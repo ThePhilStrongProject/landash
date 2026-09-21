@@ -53,35 +53,63 @@ Sources are globbed by `main/CMakeLists.txt`, so **never add files to a SRCS
 list** — just create the `.c` under `main/` and run `idf.py reconfigure` if the
 build does not pick it up.
 
-## Firmware version
+## Version numbering
 
-`PROJECT_VER` is deliberately **not** set, so ESP-IDF derives the version from
-git at build time with `git describe --always --tags --dirty`. That value is
-baked into the app descriptor and is what `GET /api/status` returns as `fw`
-and the System tab shows. (`idf` is a different field: the SDK version, which
-only changes when the toolchain does.)
+Every release is `vMAJOR.MINOR.PATCH`, marked by an annotated git tag on the
+commit it was built from. Dongles compare the three numbers to decide whether
+a release is newer (`net/ota.c`), so the format is load-bearing: no suffixes,
+no leading zeros, always the `v`.
 
-Releases are marked with an annotated tag, so a build reports:
+**Which number to bump** - pick the highest that applies:
 
-| Repo state | `fw` reads |
-|---|---|
-| exactly on a tag, clean tree | `v0.4.0` |
-| three commits past a tag | `v0.4.0-3-g0fd17ce` |
-| uncommitted changes present | the above plus `-dirty` |
+| Bump | When | Examples |
+|---|---|---|
+| MAJOR | A change a dongle cannot take over the air, or that breaks what users or other tools rely on. Needs a USB reflash, or loses or reinterprets stored data. | a new partition table, a bootloader change, dropping a REST endpoint or field, a settings layout that is not append-only |
+| MINOR | Something a user would call new, or a change to what is stored or served that older firmware would not understand. Always over the air. | a new feature or page, a new settings field, a new NVS blob version, a new REST endpoint or field |
+| PATCH | Fixes and polish with no new stored data and no API change. | a bug fix, clearer wording, a layout tweak, a performance fix |
 
-Releases for over-the-air updates follow the same rule, and
-`tools/release.py` enforces it: see docs/UPDATES.md.
+- **Before 1.0** the same rules apply one place down in spirit, but not in
+  numbers: MAJOR stays 0, and a MAJOR-class change bumps MINOR and says so
+  loudly in the tag message. 1.0 is the first release the maintainer is
+  willing to support for other people.
+- Bumping MINOR resets PATCH to 0; bumping MAJOR resets both.
+- The 0.14.x series broke the MINOR rule (new features and a new settings
+  field shipped as patches). It stands as history; from 0.15.0 on, follow the
+  table.
 
-**Commit (and tag) before building the image you intend to keep.** Building
+**A tag is the release.** `tools/release.py` refuses to publish unless HEAD is
+exactly on a tag and the built image carries that same version, and the tag
+message becomes the release's public changelog entry in the releases
+repository - so write it for someone who owns a dongle, not for someone
+reading the source. Once a tag has been pushed, never move or reuse it: a
+fixed release is a new PATCH. An unpushed tag may be moved (`git tag -d`, then
+tag again) when a fix is found before publishing.
+
+**How the version gets into the firmware.** `PROJECT_VER` is deliberately not
+set, so ESP-IDF derives it at build time with
+`git describe --always --tags --dirty`. That string is baked into the app
+descriptor, returned as `fw` by `GET /api/status`, and shown on the System tab.
+(`idf` is a different field: the SDK version.)
+
+| Repo state | `fw` reads | Updated over the air? |
+|---|---|---|
+| exactly on a tag, clean tree | `v0.15.0` | yes, when a newer release appears |
+| three commits past a tag | `v0.15.0-3-g0fd17ce` | yes; counts as `v0.15.0` |
+| uncommitted changes | the above plus `-dirty` | no - a development build is left alone |
+| no tag reachable | a bare commit hash | no |
+
+**Commit and tag before building the image you intend to keep.** Building
 first stamps the binary with the *previous* commit plus `-dirty`, which is how
-a device ended up reporting `a53e2ce-dirty` while HEAD was two commits further
-on. For throwaway test flashes during development `-dirty` is expected and
-fine.
+a device once reported `a53e2ce-dirty` while HEAD was two commits further on.
+For throwaway test flashes `-dirty` is expected and fine.
 
 ```bash
-git tag -a v0.5.0 -m "What changed"
-idf.py build && idf.py -p COM4 flash
+git tag -a v0.15.0 -m "What changed, for someone who owns a dongle"
+idf.py build
+python tools/release.py        # checks, then commits into ../landash-releases
 ```
+
+docs/UPDATES.md has the whole publishing procedure.
 
 ## Module map
 

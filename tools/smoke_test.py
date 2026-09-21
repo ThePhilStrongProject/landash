@@ -11,7 +11,7 @@ the vault section is skipped entirely when a vault already exists, because
 exercising it means destroying it at the end.
 
 Usage:
-    python tools/smoke_test.py                       # http://netdash.local
+    python tools/smoke_test.py                       # http://landash.local
     python tools/smoke_test.py http://192.168.1.58
 """
 
@@ -134,7 +134,7 @@ DEVICE_FIELDS = [
 
 
 def main():
-    base = (sys.argv[1] if len(sys.argv) > 1 else "http://netdash.local").rstrip("/")
+    base = (sys.argv[1] if len(sys.argv) > 1 else "http://landash.local").rstrip("/")
     print(f"NetDash smoke test against {base}\n")
 
     # --- the web UI itself -------------------------------------------------

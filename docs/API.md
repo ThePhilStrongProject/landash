@@ -663,8 +663,8 @@ optionally filed under a group heading.
     "icon": "",
     "service": "home-assistant",
     "label": "Home Assistant",
-    "ip": "192.168.50.203",
-    "url": "http://192.168.50.203:8123",
+    "ip": "192.168.1.203",
+    "url": "http://192.168.1.203:8123",
     "display_name": "homeassistant",
     "type": "hub",
     "online": true
@@ -1159,10 +1159,10 @@ entries of it stranded in the ring.
       "ts": 1789860444,
       "type": "ip_changed",
       "read": false,
-      "text": "Was 192.168.50.31",
+      "text": "Was 192.168.1.31",
       "mac": "bc:24:11:3b:e5:96",
       "device": "truenas",
-      "ip": "192.168.50.40"
+      "ip": "192.168.1.40"
     }
   ],
   "unread": 3,
