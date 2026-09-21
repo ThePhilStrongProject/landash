@@ -3296,7 +3296,9 @@ return "<li>" + icon(EV_ICON[ev.type]||EV_ICON.info, "ev-ico ev-" + esc(ev.type|
 "<div class=\"ev-meta\">" + esc(ev.ip||"") + (ev.ip?" · ":"") + "<span title=\"" + esc(absTime(ev.ts)) + "\">" + esc(relTime(ev.ts)) + "</span></div></span></li>";
 }).join("");
 }
-function loadSettings(){
+/* firstLoad: pass a failure on to the caller, which retries, instead of
+   toasting it - a dropped request at start-up is not worth alarming anyone. */
+function loadSettings(firstLoad){
 return api("GET","/api/settings").then(function(s){
 $("setSsid").value = s.wifi_ssid || "";
 $("setWifiPass").placeholder = s.wifi_configured ? "Leave blank to keep current" : "No password set";
@@ -3331,7 +3333,10 @@ var n = s.notifications || {};
 document.querySelectorAll("[data-notif]").forEach(function(cb){
 cb.checked = !!n[cb.dataset.notif];
 });
-}).catch(toastErr);
+}).catch(function(e){
+if (firstLoad) throw e;
+toastErr(e);
+});
 }
 function renderAppearance(){
 var tg = $("themeGrid"), dl = $("detailList");
@@ -3962,7 +3967,15 @@ try { t = localStorage.getItem("netdash-theme"); d = localStorage.getItem("netda
 catch(e){}
 applyAppearance(t, d, false);
 })();
-loadSettings();
+/* The theme, the detail level and the welcome tour all hang off this first
+   read. A dongle busy with a port scan sometimes drops a request, so keep
+   asking for a while rather than leave the page unthemed and the tour unshown
+   until the next reload. */
+(function firstSettings(tries){
+loadSettings(true).catch(function(){
+if (tries > 1) setTimeout(function(){ firstSettings(tries - 1); }, 2000);
+});
+})(8);
 renderClock();
 /* The display has minute resolution, but ticking every second keeps it from
    lagging the real minute by up to a whole interval. It is two DOM writes. */
