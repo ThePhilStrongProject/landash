@@ -149,7 +149,8 @@ main/
                             NVS namespace "links". A link stores a MAC and a
                             port, never an IP, so it follows the device through
                             a DHCP change; http_server resolves the address on
-                            every read. One versioned blob, with a v1 migration.
+                            every read. One versioned blob (v2; the v1 migration
+                            was removed in v0.14.5).
 
   db/icons.c/.h             uploaded dashboard icons in the "storage" SPIFFS
                             partition, one small PNG per file. The browser
