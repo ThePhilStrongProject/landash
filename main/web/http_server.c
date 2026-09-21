@@ -1427,6 +1427,25 @@ static esp_err_t reboot_handler(httpd_req_t *req)
     return err;
 }
 
+/*
+ * Every NVS namespace the firmware owns. A factory reset clears all of them;
+ * missing one leaves data behind that the user believes they have destroyed,
+ * which is how the vault survived a reset for several versions.
+ */
+static const char *const k_nvs_namespaces[] = {
+    "cfg",    /* settings                     */
+    "dev",    /* device table user fields     */
+    "ports",  /* port scan results            */
+    "links",  /* dashboard links and groups   */
+    "notif",  /* notification feed            */
+    "note",   /* notes on devices             */
+    "lnote",  /* notes on links               */
+    "sec",    /* secrets on devices           */
+    "lsec",   /* credentials on links         */
+    "vault",  /* vault salt and verifier      */
+    "icons",  /* uploaded icon id counter     */
+};
+
 static void erase_nvs_namespace(const char *ns)
 {
     nvs_handle_t h;
@@ -1461,9 +1480,16 @@ static esp_err_t factory_reset_handler(httpd_req_t *req)
     }
 
     esp_err_t err = send_ok(req);
+
     settings_clear_wifi();
-    erase_nvs_namespace("dev");
-    erase_nvs_namespace("cfg");
+    for (size_t i = 0; i < sizeof(k_nvs_namespaces) / sizeof(k_nvs_namespaces[0]); i++) {
+        erase_nvs_namespace(k_nvs_namespaces[i]);
+    }
+    /* The uploaded icons are files, not NVS keys. */
+    icons_factory_reset();
+
+    ESP_LOGW(TAG, "factory reset: %u namespace(s) erased and storage formatted",
+             (unsigned)(sizeof(k_nvs_namespaces) / sizeof(k_nvs_namespaces[0])));
     schedule_restart(500000);
     return err;
 }

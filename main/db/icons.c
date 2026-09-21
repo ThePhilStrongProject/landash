@@ -394,6 +394,28 @@ FILE *icons_open(uint16_t id, size_t *out_bytes)
     return f;
 }
 
+esp_err_t icons_factory_reset(void)
+{
+    lock();
+    if (!s_mounted) {
+        unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_count = 0;
+    memset(s_icons, 0, sizeof(s_icons));
+    unlock();
+
+    /* Format rather than unlink each file: this runs moments before a restart
+       and a fresh filesystem is the point. */
+    const esp_err_t err = esp_spiffs_format(ICON_PART);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "could not format storage: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGW(TAG, "storage formatted, all uploaded icons destroyed");
+    }
+    return err;
+}
+
 void icons_usage(size_t *out_used, size_t *out_total)
 {
     size_t total = 0, used = 0;

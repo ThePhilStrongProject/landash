@@ -79,6 +79,13 @@ FILE *icons_open(uint16_t id, size_t *out_bytes);
 /* Bytes used by icons, and the usable size of the partition. */
 void icons_usage(size_t *out_used, size_t *out_total);
 
+/*
+ * Reformats the storage partition, destroying every uploaded icon. For the
+ * factory reset only: an icon is a file rather than an NVS key, so erasing
+ * the namespaces alone would leave the images behind.
+ */
+esp_err_t icons_factory_reset(void);
+
 #ifdef __cplusplus
 }
 #endif

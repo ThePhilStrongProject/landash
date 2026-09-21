@@ -160,10 +160,18 @@ min-height:30px;border-bottom:1px solid var(--border)}
 font-variant-numeric:tabular-nums}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:16px;max-width:560px}
 
-/* Columns sized so a field and its hint stay readable; the browser fits as
-   many as the window allows and the sections keep their own heights. */
-.settgrid{display:grid;gap:14px;align-items:start;
-grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+/* A column of headings with the pages beside it: eight sections in one
+   scroll was a scroll, not a settings page. */
+.setwrap{display:grid;grid-template-columns:210px 1fr;gap:26px;align-items:start}
+.setnav{display:flex;flex-direction:column;gap:2px;position:sticky;top:16px}
+.setnavbtn{text-align:left;background:none;border:1px solid transparent;
+border-radius:var(--r-sm);color:var(--muted);font-weight:600;font-size:var(--fs-sm);
+padding:9px 12px}
+.setnavbtn:hover{color:var(--text)}
+.setnavbtn[aria-selected="true"]{background:var(--surface);border-color:var(--border);
+color:var(--text)}
+.setbody{min-width:0}
+.setpage{display:flex;flex-direction:column;gap:14px;max-width:620px}
 .settgroup{background:var(--surface);border:1px solid var(--border);
 border-radius:var(--r-md);padding:16px 18px 18px;margin:0}
 .settgroup h3{margin:0 0 14px;padding:0 0 10px;border-bottom:1px solid var(--border);
@@ -175,6 +183,11 @@ color:var(--muted)}
 justify-content:flex-end;margin-top:16px;padding:12px 0;
 background:linear-gradient(to top,var(--bg) 62%,transparent);
 border-top:1px solid var(--border)}
+@media (max-width:820px){
+.setwrap{grid-template-columns:1fr;gap:14px}
+.setnav{flex-direction:row;overflow-x:auto;position:static;padding-bottom:2px}
+.setnavbtn{white-space:nowrap}
+}
 @media (max-width:700px){.savebar{justify-content:stretch}.savebar .btn{flex:1 1 auto}}
 .field{margin-bottom:14px}
 .field label{display:block;font-size:.82rem;color:var(--muted);margin-bottom:4px}
@@ -600,7 +613,17 @@ aria-label="What changed"><span class="belldot" id="bellDot" hidden></span></but
 <p class="empty" id="devEmpty" hidden>No devices match.</p>
 </section>
 <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
-<form class="settgrid" id="settingsForm">
+<div class="setwrap">
+<nav class="setnav" role="tablist" aria-label="Settings sections">
+<button role="tab" type="button" id="settab-network" class="setnavbtn" aria-selected="true" aria-controls="setpage-network" data-setpage="network">Network</button>
+<button role="tab" type="button" id="settab-scanning" class="setnavbtn" aria-selected="false" aria-controls="setpage-scanning" data-setpage="scanning">Scanning &amp; health</button>
+<button role="tab" type="button" id="settab-notifications" class="setnavbtn" aria-selected="false" aria-controls="setpage-notifications" data-setpage="notifications">Notifications</button>
+<button role="tab" type="button" id="settab-vault" class="setnavbtn" aria-selected="false" aria-controls="setpage-vault" data-setpage="vault">Credential vault</button>
+<button role="tab" type="button" id="settab-maintenance" class="setnavbtn" aria-selected="false" aria-controls="setpage-maintenance" data-setpage="maintenance">Maintenance</button>
+</nav>
+<div class="setbody">
+<form id="settingsForm">
+<div class="setpage" id="setpage-network" role="tabpanel" aria-labelledby="settab-network">
 <div class="settgroup">
 <h3>Network</h3>
 <div class="field">
@@ -627,6 +650,26 @@ aria-label="What changed"><span class="belldot" id="bellDot" hidden></span></but
 <input type="password" id="setApPass" minlength="8" maxlength="63">
 </div>
 </div>
+<div class="settgroup">
+<h3>Time</h3>
+<div class="field">
+<label for="setNtp">NTP server</label>
+<input type="text" id="setNtp" maxlength="63">
+</div>
+<div class="field">
+<label for="setTz">Timezone (POSIX TZ string)</label>
+<input type="text" id="setTz" maxlength="47">
+<div class="hint">e.g. <code>GMT0BST,M3.5.0/1,M10.5.0</code> &mdash; std offset, DST rule.</div>
+<div class="presets">
+<button type="button" class="btn small" data-tz="UTC0">UTC</button>
+<button type="button" class="btn small" data-tz="GMT0BST,M3.5.0/1,M10.5.0">UK</button>
+<button type="button" class="btn small" data-tz="CET-1CEST,M3.5.0,M10.5.0/3">CET</button>
+<button type="button" class="btn small" data-tz="EST5EDT,M3.2.0,M11.1.0">US Eastern</button>
+</div>
+</div>
+</div>
+</div>
+<div class="setpage" id="setpage-scanning" role="tabpanel" aria-labelledby="settab-scanning" hidden>
 <div class="settgroup">
 <h3>Discovery</h3>
 <div class="field">
@@ -661,25 +704,6 @@ aria-label="What changed"><span class="belldot" id="bellDot" hidden></span></but
 </div>
 </div>
 <div class="settgroup">
-<h3>Notifications</h3>
-<p class="hint" style="margin:0 0 10px">What earns a place in the "What changed" feed on
-the Dashboard. Arrivals and departures are off by default: phones and laptops sleep all
-day, and a feed that cries wolf is one nobody reads.</p>
-<label class="switch"><input type="checkbox" data-notif="new_device"> A device appears that has never been seen here</label>
-<label class="switch"><input type="checkbox" data-notif="ip_changed"> A device's IP address changes</label>
-<label class="switch"><input type="checkbox" data-notif="new_port"> A device opens a port it was not listening on before</label>
-<label class="switch"><input type="checkbox" data-notif="device_gone"> A device stops answering</label>
-<label class="switch"><input type="checkbox" data-notif="device_back"> A device that was gone comes back</label>
-<label class="switch"><input type="checkbox" data-notif="wan_down"> The internet connection breaks</label>
-<label class="switch"><input type="checkbox" data-notif="wan_up"> The internet connection recovers</label>
-<div class="field" style="margin-top:14px">
-<label for="setRescanDays">Re-probe common ports every (days)</label>
-<input type="number" id="setRescanDays" min="0" max="365">
-<div class="hint">Finding a port open that was not before is the point of this. 0 turns
-re-probing off, which also turns off the "new open port" notification in practice.</div>
-</div>
-</div>
-<div class="settgroup">
 <h3>Internet health</h3>
 <label class="switch"><input type="checkbox" id="setWanEnabled"> Check that the internet is reachable</label>
 <div class="field">
@@ -698,6 +722,29 @@ re-probing off, which also turns off the "new open port" notification in practic
 down" can be told apart. Answers may be served from the resolver cache for their TTL.</div>
 </div>
 </div>
+</div>
+<div class="setpage" id="setpage-notifications" role="tabpanel" aria-labelledby="settab-notifications" hidden>
+<div class="settgroup">
+<h3>Notifications</h3>
+<p class="hint" style="margin:0 0 10px">What earns a place in the "What changed" feed on
+the Dashboard. Arrivals and departures are off by default: phones and laptops sleep all
+day, and a feed that cries wolf is one nobody reads.</p>
+<label class="switch"><input type="checkbox" data-notif="new_device"> A device appears that has never been seen here</label>
+<label class="switch"><input type="checkbox" data-notif="ip_changed"> A device's IP address changes</label>
+<label class="switch"><input type="checkbox" data-notif="new_port"> A device opens a port it was not listening on before</label>
+<label class="switch"><input type="checkbox" data-notif="device_gone"> A device stops answering</label>
+<label class="switch"><input type="checkbox" data-notif="device_back"> A device that was gone comes back</label>
+<label class="switch"><input type="checkbox" data-notif="wan_down"> The internet connection breaks</label>
+<label class="switch"><input type="checkbox" data-notif="wan_up"> The internet connection recovers</label>
+<div class="field" style="margin-top:14px">
+<label for="setRescanDays">Re-probe common ports every (days)</label>
+<input type="number" id="setRescanDays" min="0" max="365">
+<div class="hint">Finding a port open that was not before is the point of this. 0 turns
+re-probing off, which also turns off the "new open port" notification in practice.</div>
+</div>
+</div>
+</div>
+<div class="setpage" id="setpage-vault" role="tabpanel" aria-labelledby="settab-vault" hidden>
 <div class="settgroup">
 <h3>Secret vault</h3>
 <p class="hint" style="margin:0 0 10px" id="vaultBlurb">&nbsp;</p>
@@ -722,38 +769,39 @@ only PBKDF2-hardened ciphertext. It does <strong>not</strong> protect against so
 watching LAN traffic while the vault is unlocked &mdash; the dashboard is served over plain
 HTTP, so a revealed secret crosses the network in the clear.</p>
 </div>
+</div>
+<div class="setpage" id="setpage-maintenance" role="tabpanel" aria-labelledby="settab-maintenance" hidden>
 <div class="settgroup">
-<h3>Time</h3>
-<div class="field">
-<label for="setNtp">NTP server</label>
-<input type="text" id="setNtp" maxlength="63">
-</div>
-<div class="field">
-<label for="setTz">Timezone (POSIX TZ string)</label>
-<input type="text" id="setTz" maxlength="47">
-<div class="hint">e.g. <code>GMT0BST,M3.5.0/1,M10.5.0</code> &mdash; std offset, DST rule.</div>
-<div class="presets">
-<button type="button" class="btn small" data-tz="UTC0">UTC</button>
-<button type="button" class="btn small" data-tz="GMT0BST,M3.5.0/1,M10.5.0">UK</button>
-<button type="button" class="btn small" data-tz="CET-1CEST,M3.5.0,M10.5.0/3">CET</button>
-<button type="button" class="btn small" data-tz="EST5EDT,M3.2.0,M11.1.0">US Eastern</button>
-</div>
-</div>
-</div>
-</form>
-<div class="savebar">
-<button type="submit" form="settingsForm" class="btn btn-accent">Save settings</button>
+<h3>Device list</h3>
+<p class="hint" style="margin:0 0 12px">A JSON copy of every device the dongle knows, with
+the nicknames, types and notes you have given them. Importing merges into what is
+already there rather than replacing it, so it is safe to restore onto a running dongle.</p>
+<div class="formrow-actions" style="margin-top:0">
 <button type="button" class="btn" id="exportBtn">Export devices</button>
 <button type="button" class="btn" id="importBtn">Import devices</button>
 <input type="file" id="importFile" accept="application/json,.json" hidden>
 </div>
-</section>
-<section id="panel-system" role="tabpanel" aria-labelledby="tab-system" hidden>
-<dl class="sysinfo" id="sysInfo"></dl>
-<div class="formrow-actions">
+</div>
+<div class="settgroup">
+<h3>Restart and reset</h3>
+<p class="hint" style="margin:0 0 12px">A reboot keeps everything. A factory reset clears the
+Wi-Fi credentials, the device list, the dashboard and the vault, and brings the dongle back
+up as an access point &mdash; uploaded icons included. There is no undo.</p>
+<div class="formrow-actions" style="margin-top:0">
 <button type="button" class="btn btn-danger-outline" id="rebootBtn">Reboot</button>
 <button type="button" class="btn btn-danger-outline" id="factoryBtn">Factory reset&hellip;</button>
 </div>
+</div>
+</div>
+</form>
+<div class="savebar" id="saveBar">
+<button type="submit" form="settingsForm" class="btn btn-accent">Save settings</button>
+</div>
+</div>
+</div>
+</section>
+<section id="panel-system" role="tabpanel" aria-labelledby="tab-system" hidden>
+<dl class="sysinfo" id="sysInfo"></dl>
 <h3 class="syssub">Event log</h3>
 <p class="hint" style="margin:0 0 10px">Everything the dongle has seen, newest first. The
 short list of things worth acting on is behind the bell.</p>
@@ -2920,6 +2968,30 @@ toast("Vault destroyed","ok");
 loadDevices();
 }).catch(toastErr);
 });
+
+/* Which settings page is open is a preference, not state worth a round trip. */
+function selectSetPage(key){
+document.querySelectorAll("[data-setpage]").forEach(function(b){
+var on = b.dataset.setpage === key;
+b.setAttribute("aria-selected", on ? "true" : "false");
+var pane = $("setpage-" + b.dataset.setpage);
+if (pane) pane.hidden = !on;
+});
+/* Maintenance has no fields, so a Save button there is a control that does
+   nothing you asked for. */
+var sb = $("saveBar");
+if (sb) sb.hidden = (key === "maintenance");
+try { localStorage.setItem("netdash-setpage", key); } catch(e){}
+}
+document.querySelectorAll("[data-setpage]").forEach(function(b){
+b.addEventListener("click", function(){ selectSetPage(b.dataset.setpage); });
+});
+(function(){
+var want = "network";   /* five pages now, maintenance last */
+try { want = localStorage.getItem("netdash-setpage") || "network"; } catch(e){}
+if (!$("setpage-" + want)) want = "network";
+selectSetPage(want);
+})();
 
 document.querySelectorAll(".presets [data-tz]").forEach(function(b){
 b.addEventListener("click", function(){ $("setTz").value = b.dataset.tz; });
