@@ -49,6 +49,14 @@ typedef struct {
      */
     char     theme[16];         /* e.g. "dark", "matrix"                    */
     char     detail[16];        /* e.g. "comfort", "hacker"                 */
+    /*
+     * Appended in settings blob version 5: updates from GitHub (net/ota.h).
+     * The repository itself is deliberately not here - see ota.h for why.
+     */
+    bool     ota_enabled;       /* check for new releases periodically      */
+    bool     ota_auto;          /* ...and install them without asking       */
+    uint16_t ota_interval_h;    /* hours between checks                     */
+    char     ota_token[128];    /* GitHub token for a private repo, or ""   */
 } netdash_settings_t;
 
 /* Loads (or creates) the blob and generates ap_pass on first boot. */

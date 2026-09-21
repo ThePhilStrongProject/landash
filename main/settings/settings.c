@@ -25,7 +25,7 @@ static const char *TAG = "settings";
 #define SETTINGS_NS      "cfg"
 #define SETTINGS_KEY     "blob"
 #define SETTINGS_VER_KEY "ver"
-#define SETTINGS_VERSION 4
+#define SETTINGS_VERSION 5
 
 #define AP_PASS_LEN 8
 
@@ -109,6 +109,9 @@ static void apply_defaults(netdash_settings_t *cfg)
     str_set(cfg->wan_dns_probe, sizeof(cfg->wan_dns_probe), "example.com");
     str_set(cfg->theme, sizeof(cfg->theme), "dark");
     str_set(cfg->detail, sizeof(cfg->detail), "comfort");
+    cfg->ota_enabled    = true;
+    cfg->ota_auto       = true;
+    cfg->ota_interval_h = 12;
 }
 
 static void clamp(netdash_settings_t *cfg)
@@ -176,6 +179,12 @@ static void clamp(netdash_settings_t *cfg)
     }
     if (cfg->detail[0] == '\0') {
         str_set(cfg->detail, sizeof(cfg->detail), "comfort");
+    }
+    cfg->ota_token[sizeof(cfg->ota_token) - 1] = '\0';
+    if (cfg->ota_interval_h < 1) {
+        cfg->ota_interval_h = 1;
+    } else if (cfg->ota_interval_h > 168) {
+        cfg->ota_interval_h = 168;
     }
 
     /* WPA2 needs 8..63 characters; anything shorter would fail to start. */
@@ -291,6 +300,19 @@ static esp_err_t load_locked(bool *out_dirty)
                 MIGRATE_FIELD(portscan_rescan_days);
                 MIGRATE_FIELD(theme);
                 MIGRATE_FIELD(detail);
+                MIGRATE_FIELD(ota_enabled);
+                MIGRATE_FIELD(ota_auto);
+                MIGRATE_FIELD(ota_interval_h);
+                MIGRATE_FIELD(ota_token);
+
+                /*
+                 * notif_mask predates the update notification, so a migrated
+                 * mask has its bit clear - which would read as the user having
+                 * turned it off. Nobody has had the chance to yet.
+                 */
+                if (ver < 5) {
+                    s_cfg.notif_mask |= NETDASH_NOTIF_BIT(NETDASH_NOTIF_UPDATE);
+                }
 
                 ESP_LOGW(TAG, "migrated settings from v%u (%u bytes) to v%u (%u bytes)",
                          (unsigned)ver, (unsigned)stored,

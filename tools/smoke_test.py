@@ -382,6 +382,38 @@ def main():
     check("status embeds the wan verdict", isinstance((status or {}).get("wan"), dict),
           repr((status or {}).get("wan"))[:80])
 
+    # --- firmware updates ---------------------------------------------------
+    # Read-only apart from the check interval, which is put back. A stored
+    # token is never touched: like the vault, it belongs to whoever set it.
+    print("\nfirmware updates")
+    st, o, _ = request(base, "GET", "/api/ota")
+    o = o if isinstance(o, dict) else {}
+    check("ota endpoint answers", st == 200 and "state" in o, f"status {st}")
+    check("ota state is a known one",
+          o.get("state") in ("idle", "checking", "up_to_date", "available",
+                             "downloading", "rebooting", "error"), repr(o.get("state")))
+    check("ota reports the running version as status does",
+          o.get("current") == (status or {}).get("fw"),
+          f"{o.get('current')!r} vs {(status or {}).get('fw')!r}")
+    check("ota names the repository it trusts", isinstance(o.get("repo"), str) and "/" in o.get("repo", ""),
+          repr(o.get("repo")))
+    st, cfg, _ = request(base, "GET", "/api/settings")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    check("settings carry the update switches",
+          all(k in cfg for k in ("ota_enabled", "ota_auto", "ota_interval_h", "ota_token_set")),
+          ", ".join(k for k in ("ota_enabled", "ota_auto", "ota_interval_h", "ota_token_set") if k not in cfg))
+    check("settings never return the token", "ota_token" not in cfg)
+    old_interval = cfg.get("ota_interval_h", 12)
+    st, _, _ = request(base, "PUT", "/api/settings", {"ota_interval_h": 169}, expect=None)
+    check("an out-of-range check interval is refused", st == 400, f"status {st}")
+    st, _, _ = request(base, "PUT", "/api/settings", {"ota_interval_h": 24})
+    st2, cfg2, _ = request(base, "GET", "/api/settings")
+    check("the check interval round-trips", (cfg2 or {}).get("ota_interval_h") == 24,
+          repr((cfg2 or {}).get("ota_interval_h")))
+    request(base, "PUT", "/api/settings", {"ota_interval_h": old_interval})
+    st, _, _ = request(base, "POST", "/api/ota/check", expect=None)
+    check("a check can be requested", st == 202, f"status {st}")
+
     # --- notification feed --------------------------------------------------
     print("\nnotifications")
     st, n, _ = request(base, "GET", "/api/notifications")

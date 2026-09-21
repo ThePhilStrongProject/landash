@@ -56,6 +56,14 @@ idf.py -p /dev/ttyACM0 flash monitor
 Board pins, scan rate and the default hostname live under **NetDash** in
 `idf.py menuconfig`.
 
+## Updates
+
+Once one build with update support is on the dongle (over USB, as above), later
+versions arrive by themselves: it checks the GitHub repository's latest release
+twice a day and installs anything newer, with an automatic rollback if the new
+version fails to start. **docs/UPDATES.md** covers setting up the repository,
+the read-only token a private one needs, and publishing a release.
+
 ## First run
 
 1. With no saved credentials the dongle starts a softAP. The LCD shows the

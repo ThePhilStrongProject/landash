@@ -37,6 +37,8 @@ idf_component_register(
         spiffs
         app_update
         esp_app_format
+        # Firmware updates from GitHub releases, in net/ota.c.
+        esp_https_ota
         espressif__mdns
         lvgl__lvgl
         espressif__esp_lvgl_port

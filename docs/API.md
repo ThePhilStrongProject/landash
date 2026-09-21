@@ -489,6 +489,10 @@ is stored.
   "wan_interval_s": 60,
   "wan_ping_host": "1.1.1.1",
   "wan_dns_probe": "example.com",
+  "ota_enabled": true,
+  "ota_auto": true,
+  "ota_interval_h": 12,
+  "ota_token_set": false,
   "notifications": {
     "new_device": true,
     "ip_changed": true,
@@ -496,7 +500,8 @@ is stored.
     "device_gone": false,
     "device_back": false,
     "wan_down": true,
-    "wan_up": true
+    "wan_up": true,
+    "update": true
   }
 }
 ```
@@ -1026,6 +1031,89 @@ The same object is embedded in `GET /api/status` as `wan`.
 Runs a check on the next tick instead of waiting out the interval.
 `{ "ok": true }`.
 
+## Firmware updates
+
+The dongle updates itself from the releases of one GitHub repository, fixed at
+build time (`CONFIG_NETDASH_OTA_REPO`, default `ThePhilStrongProject/landash`).
+It asks `GET /repos/{repo}/releases/latest` - so drafts and pre-releases are
+never installed - takes the asset named `netdash.bin` (`CONFIG_NETDASH_OTA_ASSET`),
+and installs it when its tag is a newer version than the running firmware.
+docs/UPDATES.md is the guide to publishing one.
+
+Why the repository is not a setting: this API has no authentication, so
+anything it can change, anyone on the LAN can change. A writable repository
+field would let any of them install their own firmware.
+
+Before an image is written, the dongle checks that it names itself as project
+`netdash` and as the release's tag. A new image boots on probation and is
+kept only once it has been up for a minute and, if Wi-Fi is configured, has
+got back online within ten; otherwise the bootloader returns to the previous
+version, and that version is then never installed automatically again.
+
+Versions compare numerically on `vMAJOR.MINOR.PATCH`; a build a few commits
+past a tag counts as that tag. A build with uncommitted changes (`-dirty`) or
+without a version tag behind it is a development build and is never replaced
+automatically - `auto_blocked` says so - though `POST /api/ota/install` still
+installs over it.
+
+Settings, in `GET/PUT /api/settings`:
+
+| Member | Type | Meaning |
+|---|---|---|
+| `ota_enabled` | bool | check for new releases every `ota_interval_h` hours (and two minutes after boot) |
+| `ota_auto` | bool | install a newer release without asking |
+| `ota_interval_h` | number, 1-168 | hours between checks, default 12 |
+| `ota_token` | string or null, write-only | a GitHub token for a private repository. `""` leaves it unchanged, `null` removes it. Never returned; `ota_token_set` says whether one is stored |
+
+The token is only ever sent to `api.github.com`. The asset download redirects to
+a short-lived signed URL on another host, and that request is made without it.
+
+### GET /api/ota
+
+```json
+{
+  "state": "available",
+  "current": "v0.13.0",
+  "latest": "v0.13.1",
+  "available": true,
+  "auto_blocked": false,
+  "error": null,
+  "rolled_back": null,
+  "last_check": 1790000000,
+  "bytes_done": 0,
+  "bytes_total": 1975488,
+  "repo": "ThePhilStrongProject/landash",
+  "token_set": true
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `state` | string | `idle` (not checked since boot), `checking`, `up_to_date`, `available`, `downloading`, `rebooting`, `error` |
+| `current` | string | the running version, as `GET /api/status` reports `fw` |
+| `latest` | string or null | the newest release's tag, once a check has succeeded |
+| `available` | bool | `latest` is newer than `current` and has the asset |
+| `auto_blocked` | bool | available, but will not install itself: a development build, or `latest` was rolled back here before |
+| `error` | string or null | why the last check or install failed |
+| `rolled_back` | string or null | a version that failed to start and was rolled back |
+| `last_check` | number | unix seconds of the last completed check, `0` for never or before NTP |
+| `bytes_done`, `bytes_total` | number | download progress while `downloading` |
+| `repo` | string | where releases come from, `""` when none is built in |
+| `token_set` | bool | whether a token is stored |
+
+### POST /api/ota/check
+
+Checks GitHub now. Returns `202` with the object above straight away; poll
+`GET /api/ota` for the result.
+
+### POST /api/ota/install
+
+Checks, then downloads and installs the latest release if it is newer, even
+when `auto_blocked`. `202` with the object above; the dongle restarts about two
+seconds after `state` becomes `rebooting`. `409` while a download is running.
+
+---
+
 ## The notification feed
 
 Deliberately not the events log. `/api/events` is a raw trace of everything
@@ -1072,7 +1160,12 @@ device renamed since the notification landed reads by its new name. `mac` and
 `ip` are `null` when the notification is not about a device.
 
 `type` is one of `new_device`, `ip_changed`, `new_port`, `device_gone`,
-`device_back`, `wan_down`, `wan_up`.
+`device_back`, `wan_down`, `wan_up`, `update`.
+
+`update` covers three things: a newer release was found and is waiting for you
+(only when automatic install is off, or blocked - see below), the dongle has
+just come back up on a new version, and a new version failed to start and was
+rolled back. The first carries no device, so `mac` and `ip` are `null`.
 
 `ip_changed` is posted once the old address has been silent for six minutes -
 typically six to eleven minutes after the move, not when it happens. That delay

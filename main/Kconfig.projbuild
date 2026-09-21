@@ -176,4 +176,25 @@ menu "NetDash"
         help
             Costs two bytes per port per device in RAM.
 
+    comment "Firmware updates"
+
+    config NETDASH_OTA_REPO
+        string "GitHub repository updates come from (owner/name)"
+        default "ThePhilStrongProject/landash"
+        help
+            The dongle installs the firmware attached to the latest release of
+            this repository. Empty disables updates. Deliberately a build
+            setting rather than a web setting: the dashboard has no login, so
+            anyone on the LAN could otherwise point it at their own firmware.
+            A private repository also needs a read-only token, which is set
+            from the web page (Settings > Maintenance).
+
+    config NETDASH_OTA_ASSET
+        string "Release asset holding the firmware"
+        default "netdash.bin"
+        help
+            File name of the app image attached to each release: the
+            build/netdash.bin that idf.py build produces. tools/release.py
+            uploads it under this name.
+
 endmenu

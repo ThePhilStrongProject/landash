@@ -28,6 +28,7 @@
 #include "display.h"
 #include "http_server.h"
 #include "links.h"
+#include "ota.h"
 #include "icons.h"
 #include "notes.h"
 #include "notify.h"
@@ -84,6 +85,7 @@ void app_main(void)
     ESP_ERROR_CHECK(portscan_init());
     ESP_ERROR_CHECK(wan_init());
     ESP_ERROR_CHECK(linkcheck_init());
+    ESP_ERROR_CHECK(ota_init());
 
     ESP_LOGI(TAG, "boot complete, free heap %" PRIu32 " bytes", esp_get_free_heap_size());
 

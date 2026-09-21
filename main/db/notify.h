@@ -34,6 +34,7 @@ typedef enum {
     NETDASH_NOTIF_DEVICE_BACK,
     NETDASH_NOTIF_WAN_DOWN,
     NETDASH_NOTIF_WAN_UP,
+    NETDASH_NOTIF_UPDATE,       /* firmware update found, installed, rolled back */
     NETDASH_NOTIF_COUNT
 } netdash_notif_type_t;
 

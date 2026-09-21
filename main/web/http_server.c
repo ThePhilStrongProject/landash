@@ -41,6 +41,7 @@
 #include "icons.h"
 #include "notes.h"
 #include "notify.h"
+#include "ota.h"
 #include "portscan.h"
 #include "scanner.h"
 #include "settings.h"
@@ -1109,6 +1110,11 @@ static cJSON *settings_to_json(const netdash_settings_t *cfg)
     cJSON_AddStringToObject(o, "wan_dns_probe", cfg->wan_dns_probe);
     cJSON_AddStringToObject(o, "theme", cfg->theme);
     cJSON_AddStringToObject(o, "detail", cfg->detail);
+    cJSON_AddBoolToObject(o, "ota_enabled", cfg->ota_enabled);
+    cJSON_AddBoolToObject(o, "ota_auto", cfg->ota_auto);
+    cJSON_AddNumberToObject(o, "ota_interval_h", cfg->ota_interval_h);
+    /* Like wifi_pass: written, never read back. */
+    cJSON_AddBoolToObject(o, "ota_token_set", cfg->ota_token[0] != '\0');
 
     /*
      * Notification toggles go out as an object keyed by type name rather than
@@ -1274,6 +1280,46 @@ static esp_err_t settings_put_handler(httpd_req_t *req)
             return send_json_error(req, "400 Bad Request", "detail name too long");
         }
         snprintf(next.detail, sizeof(next.detail), "%s", j->valuestring);
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "ota_enabled");
+    if (j != NULL) {
+        if (!cJSON_IsBool(j)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "ota_enabled must be a boolean");
+        }
+        next.ota_enabled = cJSON_IsTrue(j);
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "ota_auto");
+    if (j != NULL) {
+        if (!cJSON_IsBool(j)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "ota_auto must be a boolean");
+        }
+        next.ota_auto = cJSON_IsTrue(j);
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "ota_interval_h");
+    if (j != NULL) {
+        if (!cJSON_IsNumber(j) || j->valueint < 1 || j->valueint > 168) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "ota_interval_h must be 1-168");
+        }
+        next.ota_interval_h = (uint16_t)j->valueint;
+    }
+
+    /* A string sets the token, null clears it, "" leaves it alone. */
+    j = cJSON_GetObjectItemCaseSensitive(json, "ota_token");
+    if (j != NULL) {
+        if (cJSON_IsNull(j)) {
+            next.ota_token[0] = '\0';
+        } else if (!cJSON_IsString(j) || strlen(j->valuestring) >= sizeof(next.ota_token)) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "ota_token must be a string up to 127 chars");
+        } else if (j->valuestring[0] != '\0') {
+            snprintf(next.ota_token, sizeof(next.ota_token), "%s", j->valuestring);
+        }
     }
 
     j = cJSON_GetObjectItemCaseSensitive(json, "portscan_rescan_days");
@@ -1501,6 +1547,7 @@ static const char *const k_nvs_namespaces[] = {
     "dev",    /* device table user fields     */
     "ports",  /* port scan results            */
     "links",  /* dashboard links and groups   */
+    "ota",    /* update bookkeeping           */
     "notif",  /* notification feed            */
     "note",   /* notes on devices             */
     "lnote",  /* notes on links               */
@@ -2639,6 +2686,70 @@ static esp_err_t wan_check_handler(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------------- */
+/* GET /api/ota, POST /api/ota/check, POST /api/ota/install                  */
+/* ------------------------------------------------------------------------- */
+
+static cJSON *ota_to_json(void)
+{
+    ota_status_t st;
+    ota_get_status(&st);
+    netdash_settings_t cfg;
+    settings_get(&cfg);
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "state", ota_state_name(st.state));
+    cJSON_AddStringToObject(o, "current", st.current);
+    if (st.latest[0] != '\0') {
+        cJSON_AddStringToObject(o, "latest", st.latest);
+    } else {
+        cJSON_AddNullToObject(o, "latest");
+    }
+    cJSON_AddBoolToObject(o, "available", st.state == OTA_STATE_AVAILABLE);
+    cJSON_AddBoolToObject(o, "auto_blocked", st.auto_blocked);
+    if (st.error[0] != '\0') {
+        cJSON_AddStringToObject(o, "error", st.error);
+    } else {
+        cJSON_AddNullToObject(o, "error");
+    }
+    if (st.rolled_back[0] != '\0') {
+        cJSON_AddStringToObject(o, "rolled_back", st.rolled_back);
+    } else {
+        cJSON_AddNullToObject(o, "rolled_back");
+    }
+    cJSON_AddNumberToObject(o, "last_check", (double)st.last_check);
+    cJSON_AddNumberToObject(o, "bytes_done", st.bytes_done);
+    cJSON_AddNumberToObject(o, "bytes_total", st.bytes_total);
+    cJSON_AddStringToObject(o, "repo", ota_repo());
+    cJSON_AddBoolToObject(o, "token_set", cfg.ota_token[0] != '\0');
+    return o;
+}
+
+static esp_err_t ota_get_handler(httpd_req_t *req)
+{
+    return send_json(req, "200 OK", ota_to_json());
+}
+
+static esp_err_t ota_check_handler(httpd_req_t *req)
+{
+    if (ota_check_now() != ESP_OK) {
+        return send_json_error(req, "503 Service Unavailable", "updates are not running");
+    }
+    return send_json(req, "202 Accepted", ota_to_json());
+}
+
+static esp_err_t ota_install_handler(httpd_req_t *req)
+{
+    esp_err_t err = ota_install_now();
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_json_error(req, "409 Conflict", "an update is already in progress");
+    }
+    if (err != ESP_OK) {
+        return send_json_error(req, "503 Service Unavailable", "updates are not running");
+    }
+    return send_json(req, "202 Accepted", ota_to_json());
+}
+
+/* ------------------------------------------------------------------------- */
 /* Per-device routing                                                        */
 /* ------------------------------------------------------------------------- */
 
@@ -3059,6 +3170,9 @@ static const httpd_uri_t s_uri_handlers[] = {
     {.uri = "/api/icons/*",              .method = HTTP_DELETE, .handler = icons_delete_handler},
     {.uri = "/api/wan",                  .method = HTTP_GET,    .handler = wan_get_handler},
     {.uri = "/api/wan/check",            .method = HTTP_POST,   .handler = wan_check_handler},
+    {.uri = "/api/ota",                  .method = HTTP_GET,    .handler = ota_get_handler},
+    {.uri = "/api/ota/check",            .method = HTTP_POST,   .handler = ota_check_handler},
+    {.uri = "/api/ota/install",          .method = HTTP_POST,   .handler = ota_install_handler},
     {.uri = "/api/vault",                .method = HTTP_GET,    .handler = vault_get_handler},
     {.uri = "/api/vault",                .method = HTTP_PUT,    .handler = vault_put_handler},
     {.uri = "/api/vault",                .method = HTTP_DELETE, .handler = vault_delete_handler},

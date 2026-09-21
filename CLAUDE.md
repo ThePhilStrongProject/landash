@@ -69,6 +69,9 @@ Releases are marked with an annotated tag, so a build reports:
 | three commits past a tag | `v0.4.0-3-g0fd17ce` |
 | uncommitted changes present | the above plus `-dirty` |
 
+Releases for over-the-air updates follow the same rule, and
+`tools/release.py` enforces it: see docs/UPDATES.md.
+
 **Commit (and tag) before building the image you intend to keep.** Building
 first stamps the binary with the *previous* commit plus `-dirty`, which is how
 a device ended up reporting `a53e2ce-dirty` while HEAD was two commits further
@@ -161,6 +164,16 @@ main/
                             "no DNS" can be told apart. Uses esp_ping rather than
                             a second raw socket of our own.
 
+  net/ota.c/.h              updates from the latest GitHub release of the repo
+                            baked in by CONFIG_NETDASH_OTA_REPO (never a web
+                            setting: the API has no auth). Streams the release
+                            JSON through a tiny tokenizer instead of cJSON,
+                            resolves the asset redirect by hand so the token
+                            never leaves api.github.com, checks the image names
+                            itself as project netdash and as the tag, and
+                            confirms or rolls back a new image after boot.
+                            docs/UPDATES.md is the publishing guide.
+
   net/portscan.c/.h         tiered background TCP connect scan. Each device
                             advances through its own tiers in order (common ->
                             1-1024 -> 1025-65535) with the global tier as a
@@ -179,6 +192,9 @@ main/
 docs/API.md                 the REST contract. Firmware and UI both follow it;
                             change this file before changing either side.
 tools/gen_oui.py            IEEE oui.csv -> oui_table.inc (--curated | --full).
+tools/release.py            checks build/netdash.bin is exactly the tag HEAD is
+                            on, stages it in dist/, and with --publish creates
+                            the GitHub release.
 partitions.csv              nvs 64K, otadata 8K, phy 4K, ota_0 3M, ota_1 3M,
                             storage 1M. "storage" is a SPIFFS volume mounted
                             at /ic by db/icons.c; it is formatted on first use,
@@ -252,6 +268,36 @@ dispatched by hand from one wildcard handler per method
 in `http_server.h`; routes past the limit fail to register and look exactly
 like a routing bug at runtime. There is now a `_Static_assert` against the size
 of the route table, so raise the constant when the build tells you to.
+
+## Three traps in OTA
+
+**`esp_http_client_get_url()` drops the query string.** It rebuilds the URL
+from scheme, host, port and path. GitHub's asset download redirects to a signed
+URL whose signature *is* the query string, so following the redirect with
+`esp_http_client_set_redirection()` + `get_url()` produced an unsigned URL and a
+baffling `Server error (618)`. `ota.c` captures the `Location` header from
+`HTTP_EVENT_ON_HEADER` instead.
+
+**An update never replaces the bootloader.** Rollback
+(`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`) lives in the bootloader, so the first
+image with it must go on over USB. Anything else that changes the bootloader
+has the same property: it reaches only boards that are reflashed by cable.
+
+**Heap during TLS.** A GitHub handshake took free heap from ~90 KB to ~35 KB
+with static mbedTLS buffers. `CONFIG_MBEDTLS_DYNAMIC_BUFFER` and its two
+`FREE_*` companions bring the low point to ~55 KB. Do not turn them off, and
+do not buffer the release JSON (17 KB for esptool's) - stream it.
+
+To exercise the whole path without a release of our own, build into a
+separate directory against a public repo and a fake low version, and watch the
+console: it finds the release, follows the redirect, starts the download and
+then refuses the image because it is not an app:
+
+```powershell
+# build_otatest/sdkconfig: a copy of sdkconfig with CONFIG_NETDASH_OTA_REPO=
+# "espressif/esptool" and CONFIG_NETDASH_OTA_ASSET= one of its zip assets.
+idf.py -B build_otatest "-DSDKCONFIG=build_otatest/sdkconfig" "-DPROJECT_VER=v0.0.1" build
+```
 
 ## The esp_ping session lifetime trap
 

@@ -43,3 +43,17 @@ CONFIG_LV_MEM_SIZE=24576
 # The port scanner runs a small batch of concurrent TCP connects, which the
 # default budget of 10 cannot cover once the web server has taken its share.
 CONFIG_LWIP_MAX_SOCKETS=16
+
+# --- Firmware updates -------------------------------------------------------
+# A freshly installed image boots on probation and the bootloader rolls it back
+# if it is not confirmed good (net/ota.c). This changes the BOOTLOADER, which
+# an OTA update never replaces: the first image with it has to go on over USB.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# The update check and download are the only TLS this firmware does, and a
+# handshake with GitHub took free heap from ~90 KB down to ~35 KB with static
+# buffers. Dynamic buffers allocate records to size and free the config and CA
+# chain once the handshake is over.
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CA_CERT=y

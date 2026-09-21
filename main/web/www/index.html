@@ -275,6 +275,10 @@ border-radius:var(--r-sm);padding:4px 9px;font-size:.82rem;color:var(--text)}
 .portchip.link .ic{width:.85em;height:.85em}
 .meter{height:6px;border-radius:3px;background:rgba(var(--accent-rgb),.18);overflow:hidden;margin:8px 0 4px}
 .meterfill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s}
+.otastatus{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:var(--fs-sm);align-items:baseline}
+.otastatus dt{color:var(--muted)}
+.otastatus dd{margin:0}
+.otastatus .otanote{grid-column:1 / -1;color:var(--muted);font-size:var(--fs-xs);line-height:1.5;margin-top:4px}
 .detailactions{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
 .livedot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);
 animation:pulse 1.4s ease-in-out infinite;margin-left:5px}
@@ -913,6 +917,7 @@ day, and a feed that cries wolf is one nobody reads.</p>
 <label class="switch"><input type="checkbox" data-notif="device_back"> A device that was gone comes back</label>
 <label class="switch"><input type="checkbox" data-notif="wan_down"> The internet connection breaks</label>
 <label class="switch"><input type="checkbox" data-notif="wan_up"> The internet connection recovers</label>
+<label class="switch"><input type="checkbox" data-notif="update"> A firmware update is found, installed or rolled back</label>
 <div class="field" style="margin-top:14px">
 <label for="setRescanDays">Re-probe common ports every (days)</label>
 <input type="number" id="setRescanDays" min="0" max="365">
@@ -948,6 +953,27 @@ HTTP, so a revealed secret crosses the network in the clear.</p>
 </div>
 </div>
 <div class="setpage" id="setpage-maintenance" role="tabpanel" aria-labelledby="settab-maintenance" hidden>
+<div class="settgroup">
+<h3>Firmware updates</h3>
+<p class="hint" id="otaSource" style="margin:0 0 12px"></p>
+<div class="otastatus" id="otaStatus" aria-live="polite"></div>
+<div class="meter" id="otaMeter" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><div class="meterfill" id="otaMeterFill" style="width:0%"></div></div>
+<div class="formrow-actions" style="margin-top:10px">
+<button type="button" class="btn" id="otaCheckBtn">Check now</button>
+<button type="button" class="btn btn-accent" id="otaInstallBtn" hidden>Install</button>
+</div>
+<label class="switch" style="margin-top:16px"><input type="checkbox" id="otaEnabled"> Check GitHub for new releases every 12 hours</label>
+<label class="switch"><input type="checkbox" id="otaAuto"> Install them automatically</label>
+<div class="field" style="margin-top:14px;margin-bottom:6px">
+<label for="otaToken">Access token</label>
+<input type="password" id="otaToken" autocomplete="off" spellcheck="false" placeholder="github_pat_&hellip;">
+<p class="hint" id="otaTokenHint" style="margin-top:6px"></p>
+</div>
+<div class="formrow-actions" style="margin-top:0">
+<button type="button" class="btn" id="otaTokenSave">Save token</button>
+<button type="button" class="btn btn-danger-outline" id="otaTokenClear" hidden>Remove token</button>
+</div>
+</div>
 <div class="settgroup">
 <h3>Device list</h3>
 <p class="hint" style="margin:0 0 12px">A JSON copy of every device the dongle knows, with
@@ -1215,6 +1241,12 @@ if (tab === "settings"){ loadSettings(); loadVault().then(renderVaultSettings).c
 TABS.forEach(function(t){ $("tab-"+t).addEventListener("click", function(){ selectTab(t); }); });
 function loadStatus(){
 return api("GET","/api/status").then(function(s){
+/* The firmware changed underneath us - an update just landed. This page
+   belongs to the old one, so fetch the new one. */
+if (state.status && state.status.fw && s.fw && s.fw !== state.status.fw){
+location.reload();
+return;
+}
 state.status = s; markPollOk(); renderStatus(); renderTiles(); renderSystem();
 }).catch(function(e){ markPollFail(); });
 }
@@ -3032,18 +3064,18 @@ $("linkEditBtn").addEventListener("click", function(){ setEditMode(false); });
 var NOTIF_ICON = {
 new_device:"i-plus", ip_changed:"i-swap", new_port:"i-key",
 device_gone:"i-offline", device_back:"i-online",
-wan_down:"i-globe-off", wan_up:"i-globe"
+wan_down:"i-globe-off", wan_up:"i-globe", update:"i-download"
 };
 /* Tone, not decoration: colour is reserved for the ones that mean something
    is wrong, so a feed of routine arrivals stays quiet. */
 var NOTIF_TONE = {
 new_device:"", ip_changed:"warn", new_port:"warn",
-device_gone:"warn", device_back:"good", wan_down:"bad", wan_up:"good"
+device_gone:"warn", device_back:"good", wan_down:"bad", wan_up:"good", update:""
 };
 var NOTIF_WHAT = {
 new_device:"New device", ip_changed:"Address changed", new_port:"New open port",
 device_gone:"Went offline", device_back:"Back online",
-wan_down:"Internet problem", wan_up:"Internet restored"
+wan_down:"Internet problem", wan_up:"Internet restored", update:"Firmware"
 };
 
 function loadNotifs(){
@@ -3182,6 +3214,9 @@ $("setTz").value = s.tz || "";
 applyAppearance(s.theme, s.detail, true);
 renderAppearance();
 $("setRescanDays").value = s.portscan_rescan_days;
+$("otaEnabled").checked = !!s.ota_enabled;
+$("otaAuto").checked = !!s.ota_auto;
+$("otaAuto").disabled = !s.ota_enabled;
 $("setWanEnabled").checked = !!s.wan_enabled;
 $("setWanInterval").value = s.wan_interval_s;
 $("setWanPing").value = s.wan_ping_host || "";
@@ -3293,6 +3328,119 @@ loadDevices();
 }).catch(toastErr);
 });
 
+var OTA_STATE_TEXT = {
+idle:"Not checked yet since the last restart", checking:"Checking GitHub…",
+up_to_date:"Up to date", available:"A newer release is available",
+downloading:"Downloading…", rebooting:"Installed — restarting",
+error:"The last check failed"
+};
+
+function renderOta(){
+var o = state.ota;
+if (!o) return;
+
+$("otaSource").innerHTML = o.repo
+? "Releases come from <span class=\"mono\">github.com/" + esc(o.repo) + "</span>. The " +
+"repository is fixed when the firmware is built, so nobody on your network can point the " +
+"dongle somewhere else."
+: "This firmware was built without an update repository.";
+
+var rows = [["Running", "<span class=\"mono\">" + esc(o.current) + "</span>"]];
+if (o.latest) rows.push(["Latest release", "<span class=\"mono\">" + esc(o.latest) + "</span>"]);
+var st = (o.state === "error" && o.error) ? o.error : (OTA_STATE_TEXT[o.state] || o.state);
+if (o.last_check && o.state !== "checking" && o.state !== "downloading") {
+st += " · checked " + relTime(o.last_check);
+}
+rows.push(["Status", esc(st)]);
+var html = rows.map(function(r){ return "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>"; }).join("");
+if (o.available && o.auto_blocked){
+html += "<p class=\"otanote\">Not installed automatically: " +
+(o.rolled_back && o.rolled_back === o.latest
+? "this release failed to start here once and was rolled back."
+: "this dongle is running a development build, and whoever flashed it by hand is " +
+"presumably working on it.") + " Install it by hand if you are sure.</p>";
+} else if (o.rolled_back){
+html += "<p class=\"otanote\"><span class=\"mono\">" + esc(o.rolled_back) + "</span> failed to " +
+"start and the dongle went back to the version before it.</p>";
+}
+$("otaStatus").innerHTML = "<dl class=\"otastatus\" style=\"margin:0\">" + html + "</dl>";
+
+var dl = o.state === "downloading";
+$("otaMeter").hidden = !dl;
+if (dl){
+var pct = o.bytes_total ? Math.min(100, Math.round(o.bytes_done * 100 / o.bytes_total)) : 0;
+$("otaMeterFill").style.width = pct + "%";
+$("otaMeter").setAttribute("aria-valuenow", pct);
+}
+var busy = dl || o.state === "checking" || o.state === "rebooting";
+$("otaCheckBtn").disabled = busy;
+$("otaInstallBtn").hidden = !o.available;
+$("otaInstallBtn").disabled = busy;
+$("otaInstallBtn").textContent = "Install " + (o.latest || "");
+
+$("otaTokenHint").textContent = o.token_set
+? "A token is stored on the dongle. It is never shown again: paste a new one to replace it."
+: "Only needed if the repository is private: a fine-grained GitHub token with read-only " +
+"access to its contents. It is stored on the dongle and never shown again.";
+$("otaTokenClear").hidden = !o.token_set;
+}
+
+function loadOta(){
+return api("GET","/api/ota").then(function(o){ state.ota = o; renderOta(); }).catch(function(){});
+}
+
+/* Poll only while someone is looking at it. Quick while something is
+   happening, since a download takes a minute and a progress bar that moves
+   every ten seconds is not one. */
+setInterval(function(){
+if (state.tab !== "settings" || $("setpage-maintenance").hidden) return;
+var o = state.ota;
+var active = o && (o.state === "checking" || o.state === "downloading" || o.state === "rebooting");
+state.otaTick = (state.otaTick || 0) + 1;
+if (active || state.otaTick % 5 === 0) loadOta();
+}, 2000);
+
+$("otaCheckBtn").addEventListener("click", function(){
+api("POST","/api/ota/check").then(function(o){ state.ota = o; renderOta(); }).catch(toastErr);
+});
+$("otaInstallBtn").addEventListener("click", function(){
+var v = state.ota && state.ota.latest ? state.ota.latest : "the latest release";
+if (!confirm("Install " + v + " now? The dongle downloads it, restarts into it, and this " +
+"page reloads by itself. It takes a minute or two.")) return;
+api("POST","/api/ota/install").then(function(o){ state.ota = o; renderOta(); }).catch(toastErr);
+});
+
+function saveOta(body, done){
+api("PUT","/api/settings", body).then(function(){
+toast(done, "ok");
+loadOta();
+}).catch(toastErr);
+}
+$("otaEnabled").addEventListener("change", function(){
+$("otaAuto").disabled = !this.checked;
+saveOta({ota_enabled: this.checked},
+this.checked ? "The dongle will check for updates" : "Update checks turned off");
+});
+$("otaAuto").addEventListener("change", function(){
+saveOta({ota_auto: this.checked},
+this.checked ? "Updates will install themselves" : "Updates will wait for you");
+});
+function saveToken(){
+var t = $("otaToken").value.trim();
+if (!t){ toast("Paste a token first", "err"); return; }
+saveOta({ota_token: t}, "Token saved");
+$("otaToken").value = "";
+}
+$("otaTokenSave").addEventListener("click", saveToken);
+/* This input lives inside the settings form; Enter must not submit that. */
+$("otaToken").addEventListener("keydown", function(e){
+if (e.key === "Enter"){ e.preventDefault(); saveToken(); }
+});
+$("otaTokenClear").addEventListener("click", function(){
+if (!confirm("Remove the stored token? Updates from a private repository will stop.")) return;
+saveOta({ota_token: null}, "Token removed");
+});
+
 /* Which settings page is open is a preference, not state worth a round trip. */
 function selectSetPage(key){
 document.querySelectorAll("[data-setpage]").forEach(function(b){
@@ -3305,6 +3453,7 @@ if (pane) pane.hidden = !on;
    nothing you asked for. */
 var sb = $("saveBar");
 if (sb) sb.hidden = (key === "maintenance");
+if (key === "maintenance") loadOta();
 try { localStorage.setItem("netdash-setpage", key); } catch(e){}
 }
 document.querySelectorAll("[data-setpage]").forEach(function(b){

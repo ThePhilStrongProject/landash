@@ -321,6 +321,7 @@ const char *netdash_notif_type_name(netdash_notif_type_t type)
     case NETDASH_NOTIF_DEVICE_BACK: return "device_back";
     case NETDASH_NOTIF_WAN_DOWN:    return "wan_down";
     case NETDASH_NOTIF_WAN_UP:      return "wan_up";
+    case NETDASH_NOTIF_UPDATE:      return "update";
     default:                        return "unknown";
     }
 }
