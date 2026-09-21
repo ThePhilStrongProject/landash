@@ -23,7 +23,7 @@ commit; the push is yours, because that is the moment it goes live.
 |---|---|
 | Source code | `ThePhilStrongProject/landash`, private |
 | Releases | `ThePhilStrongProject/landash-releases`, public, branch `main` |
-| Set by | `CONFIG_NETDASH_OTA_REPO` and `CONFIG_NETDASH_OTA_BRANCH`, under **NetDash** in `idf.py menuconfig` |
+| Set by | `CONFIG_NETDASH_OTA_REPO` and `CONFIG_NETDASH_OTA_BRANCH`, under **LANDA.SH** in `idf.py menuconfig` |
 
 The releases repository is fixed when the firmware is built, not a web
 setting, on purpose. The dashboard has no login, so anyone on your network

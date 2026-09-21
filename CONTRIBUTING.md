@@ -26,7 +26,7 @@ idf.py build
 idf.py -p <port> flash monitor
 ```
 
-Options live under **NetDash** in `idf.py menuconfig`. Before flashing a
+Options live under **LANDA.SH** in `idf.py menuconfig`. Before flashing a
 build of your own, set `CONFIG_NETDASH_OTA_REPO` to a releases repository you
 control, or empty to disable updates. Otherwise the dongle will replace your
 build with the maintainer's next release.

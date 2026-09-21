@@ -27,9 +27,9 @@ app.
   passphrase that is never stored.
 - **Quietly polite.** One gentle sweep of the network every few minutes, at a
   steady pace a router will not mistake for an attack, plus listening for the
-  names devices announce about themselves. It also works slowly through the
-  ports each device has open, which security software on some devices may
-  notice; that can be limited or switched off in Settings.
+  names devices announce about themselves. It also checks, slowly, which
+  common services each device offers. You choose how far that goes when you
+  first set it up, from off to every port.
 - **Keeps itself up to date** over the air, rolling back on its own if a new
   version ever fails to start.
 - **Yours to arrange:** five themes, four levels of detail, and a welcome tour
@@ -83,7 +83,7 @@ itself. You can turn that off, or have it wait for you, under
 **Settings › Maintenance**.
 
 > **If you build your own firmware**, point it at your own releases: set
-> *NetDash › GitHub repository updates come from* in `idf.py menuconfig`
+> *LANDA.SH › GitHub repository updates come from* in `idf.py menuconfig`
 > (`CONFIG_NETDASH_OTA_REPO`). By default a dongle installs the maintainer's
 > releases, which would replace your changes. [docs/UPDATES.md](docs/UPDATES.md)
 > explains how releases are published.
@@ -114,7 +114,7 @@ LANDA.SH is designed for a home network you trust.
 | Button | BOOT (GPIO 9) |
 
 If the screen stays blank or shows garbage, your board is a different revision:
-choose *Custom pins* under **NetDash** in `idf.py menuconfig` and set the pins
+choose *Custom pins* under **LANDA.SH** in `idf.py menuconfig` and set the pins
 there. The screen's orientation and colour options are in the same menu.
 
 The dongle can remember 128 devices. Every device's details are held in its

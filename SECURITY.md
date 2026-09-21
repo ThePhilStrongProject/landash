@@ -76,11 +76,12 @@ So that nothing it does surprises you, or your security software:
   every few minutes, and a read of the resulting ARP table.
 - **Names:** mDNS queries, an SSDP search, NetBIOS name queries, and reverse
   DNS lookups against your router.
-- **Port scan:** TCP connection attempts to each device, working slowly
-  through common ports first, then 1-1024, then all 65,535, at 10 attempts a
-  second by default. This is the part most likely to be flagged by an
-  intrusion detection system. It can be limited to common ports, slowed down,
-  or switched off under **Settings › Scanning & health**.
+- **Port scan:** TCP connection attempts to each device, at 10 a second by
+  default. You choose how far it goes during setup: off, about 120 common
+  services (the default), every port from 1 to 1024, or all 65,535. The
+  deeper settings are the part most likely to be flagged by an intrusion
+  detection system. Change it any time under **Settings › Scanning &
+  health**.
 - **Service checks:** one TCP connection per dashboard link, once a minute.
 - **Internet health:** a ping to 1.1.1.1 and a DNS lookup of `example.com`,
   once a minute by default. Both are configurable.

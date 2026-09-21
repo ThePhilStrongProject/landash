@@ -406,6 +406,10 @@ static bool do_check(void)
 #define DL_RETRY_DELAY_MS 3000
 #define DL_LOG_EVERY      (256 * 1024)
 
+/* What image_header_ok() needs to see before it can judge the image. */
+#define IMG_HEAD_LEN (sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + \
+                      sizeof(esp_app_desc_t))
+
 /* Opens the image at offset. Returns NULL when it could not connect at all. */
 static esp_http_client_handle_t open_image_at(uint32_t offset, int *code, int64_t *length)
 {
@@ -472,6 +476,14 @@ static bool image_header_ok(const uint8_t *p, size_t n, const char *tag, char *e
 static void do_install(void)
 {
     static uint8_t buf[DL_CHUNK];   /* task-owned, off the stack */
+    /*
+     * The image header is collected here until it is complete, however the
+     * first bytes arrive. A read that times out part-way returns what it has,
+     * and judging a short first read would call a good image bad - and that
+     * verdict is fatal, so no retry would ever get past it.
+     */
+    static uint8_t head[IMG_HEAD_LEN];
+    size_t         head_len = 0;
 
     char tag[32];
     lock();
@@ -547,17 +559,32 @@ static void do_install(void)
                 }
             }
             if (!begun) {
-                if (!image_header_ok(p, m, tag, err, sizeof(err))) {
+                const size_t take = m < IMG_HEAD_LEN - head_len ? m : IMG_HEAD_LEN - head_len;
+                memcpy(head + head_len, p, take);
+                head_len += take;
+                p += take;
+                m -= take;
+                done += (uint32_t)take;   /* held here, so a resume starts after it */
+                if (head_len < IMG_HEAD_LEN) {
+                    continue;
+                }
+                if (!image_header_ok(head, head_len, tag, err, sizeof(err))) {
                     fatal = true;
                     break;
                 }
                 esp_err_t e = esp_ota_begin(part, OTA_WITH_SEQUENTIAL_WRITES, &ota);
+                if (e == ESP_OK) {
+                    begun = true;
+                    e = esp_ota_write(ota, head, head_len);
+                }
                 if (e != ESP_OK) {
                     snprintf(err, sizeof(err), "Could not start writing (%s)", esp_err_to_name(e));
                     fatal = true;
                     break;
                 }
-                begun = true;
+                if (m == 0) {
+                    continue;
+                }
             }
             esp_err_t e = esp_ota_write(ota, p, m);
             if (e != ESP_OK) {
@@ -590,6 +617,10 @@ static void do_install(void)
         }
     }
 
+    if (done_ok && !begun) {
+        snprintf(err, sizeof(err), "The file is not a firmware image");   /* shorter than a header */
+        done_ok = false;
+    }
     if (!done_ok) {
         if (begun) {
             esp_ota_abort(ota);

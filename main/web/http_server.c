@@ -731,7 +731,7 @@ static esp_err_t devices_export_handler(httpd_req_t *req)
     }
     httpd_resp_set_status(req, "200 OK");
     httpd_resp_set_type(req, "application/json; charset=utf-8");
-    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"netdash-devices.json\"");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"landash-devices.json\"");
     esp_err_t err = httpd_resp_send(req, text, strlen(text));
     cJSON_free(text);
     return err;
@@ -1152,6 +1152,7 @@ static cJSON *settings_to_json(const netdash_settings_t *cfg)
     cJSON_AddBoolToObject(o, "ota_auto", cfg->ota_auto);
     cJSON_AddNumberToObject(o, "ota_interval_h", cfg->ota_interval_h);
     cJSON_AddBoolToObject(o, "tour_seen", cfg->tour_seen);
+    cJSON_AddNumberToObject(o, "tour_rev", cfg->tour_rev);
 
     /*
      * Notification toggles go out as an object keyed by type name rather than
@@ -1344,6 +1345,15 @@ static esp_err_t settings_put_handler(httpd_req_t *req)
             return send_json_error(req, "400 Bad Request", "tour_seen must be a boolean");
         }
         next.tour_seen = cJSON_IsTrue(j);
+    }
+
+    j = cJSON_GetObjectItemCaseSensitive(json, "tour_rev");
+    if (j != NULL) {
+        if (!cJSON_IsNumber(j) || j->valueint < 0 || j->valueint > 255) {
+            cJSON_Delete(json);
+            return send_json_error(req, "400 Bad Request", "tour_rev must be 0-255");
+        }
+        next.tour_rev = (uint8_t)j->valueint;
     }
 
     j = cJSON_GetObjectItemCaseSensitive(json, "ota_interval_h");

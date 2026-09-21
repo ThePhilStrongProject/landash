@@ -1,4 +1,4 @@
-# NetDash REST API
+# LANDA.SH REST API
 
 Version 1. This contract is fixed in WP0 so the firmware (WP6) and the web UI
 (WP7) can be built in parallel. Changing it means changing this file first.
@@ -90,7 +90,7 @@ Everything the header and the System tab need, in one poll.
   "devices_total": 27,
   "devices_online": 21,
   "devices_new_24h": 1,
-  "ap_ssid": "NetDash-A4F3",
+  "ap_ssid": "LANDA-A4F3",
   "ap_pass": "kq7mn3rt"
 }
 ```
@@ -300,7 +300,7 @@ The full table plus a header, for backing up nicknames.
 }
 ```
 
-`Content-Disposition: attachment; filename="netdash-devices.json"`.
+`Content-Disposition: attachment; filename="landash-devices.json"`.
 
 ---
 
@@ -499,6 +499,7 @@ is stored.
   "ota_auto": true,
   "ota_interval_h": 12,
   "tour_seen": true,
+  "tour_rev": 2,
   "notifications": {
     "new_device": true,
     "ip_changed": true,
@@ -1082,6 +1083,12 @@ on this dongle. It is `false` on a new or factory-reset dongle and on one that
 has just updated from a version without it, so every user sees the tour once;
 the page sets it with `PUT /api/settings`. It lives on the dongle rather than
 in the browser so that finishing the tour on one device finishes it for all.
+
+`tour_rev` (number, 0-255) is the revision of the tour the dongle has been
+through. When a release adds cards to the tour, it raises the page's revision;
+a dongle whose `tour_seen` is true but whose `tour_rev` is lower is shown only
+the new cards, once, and the page then sets `tour_rev`. `0` on a dongle that
+has not been through a tour since this field was added.
 
 The releases repository is public, so no credentials are involved.
 

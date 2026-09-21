@@ -62,6 +62,13 @@ typedef struct {
      * once. The page sets it when the tour is finished or skipped.
      */
     bool     tour_seen;
+    /*
+     * Added in version 8. The revision of the tour this dongle has been
+     * through. When the page's tour gains cards, a dongle that saw an older
+     * revision is shown only the new ones, once. 0 on a dongle updating from
+     * version 7 or earlier.
+     */
+    uint8_t  tour_rev;
 } netdash_settings_t;
 
 /* Loads (or creates) the blob and generates ap_pass on first boot. */

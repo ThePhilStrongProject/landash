@@ -28,6 +28,7 @@ downloaded (`managed_components/`) and in the ESP-IDF source tree.
 | Data | Source | Used for |
 |---|---|---|
 | MAC address block assignments (`main/net/oui_table.inc`) | The IEEE Registration Authority's public MA-L listing, processed by `tools/gen_oui.py` | Naming the maker of each device |
+| Time zone rules (`TZ_POSIX` in `main/web/www/index.html`) | [posix_tz_db](https://github.com/nayarsystems/posix_tz_db) (MIT), from the IANA time zone database; quoted zone names replaced with plain placeholders | Setting the dongle's clock from the browser's time zone |
 
 ## Services contacted at run time
 

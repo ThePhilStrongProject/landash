@@ -25,7 +25,7 @@ static const char *TAG = "settings";
 #define SETTINGS_NS      "cfg"
 #define SETTINGS_KEY     "blob"
 #define SETTINGS_VER_KEY "ver"
-#define SETTINGS_VERSION 7
+#define SETTINGS_VERSION 8
 
 #define AP_PASS_LEN 8
 
@@ -291,6 +291,7 @@ static esp_err_t load_locked(bool *out_dirty)
                 netdash_settings_t fresh;
                 apply_defaults(&fresh);
                 MIGRATE_FIELD(tour_seen);   /* v7 */
+                MIGRATE_FIELD(tour_rev);    /* v8 */
 
                 ESP_LOGW(TAG, "migrated settings from v%u (%u bytes) to v%u (%u bytes)",
                          (unsigned)ver, (unsigned)stored,

@@ -1,6 +1,13 @@
-# NetDash — agent guide
+# LANDA.SH — agent guide
 
 ## What this is
+
+The product is **LANDA.SH**. Many internal names predate the rename and keep
+the old name on purpose - the `netdash` project and image name, `NETDASH_*`
+Kconfig symbols and `netdash_*` C identifiers, the `netdash-*` browser
+storage keys. Renaming those would break updates, stored settings or
+people's saved preferences for no visible gain. Anything a user or a reader
+of the docs sees says LANDA.SH.
 
 Firmware for a **Waveshare ESP32-C6-GEEK** USB dongle that acts as a passive
 home-network dashboard:
@@ -42,7 +49,7 @@ $env:PATH = "C:\Users\PhilStrong\.espressif\tools\idf-python\3.11.2;" + $env:PAT
 idf.py set-target esp32c6        # once, or after deleting sdkconfig
 idf.py build
 idf.py -p COM4 flash monitor     # Ctrl+] exits the monitor
-idf.py menuconfig                # NetDash options live under "NetDash"
+idf.py menuconfig                # project options live under "LANDA.SH"
 ```
 
 `idf.py fullclean` if the component manager or the partition table gets

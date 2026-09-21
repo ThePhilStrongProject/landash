@@ -1,4 +1,4 @@
-menu "NetDash"
+menu "LANDA.SH"
 
     comment "Board / display wiring"
 
@@ -163,7 +163,7 @@ menu "NetDash"
     config NETDASH_PORTSCAN_MAX_TIER
         int "Highest port scan tier (1 common, 2 well-known, 3 all)"
         range 1 3
-        default 3
+        default 1
         help
             Factory default only. Tier 1 probes a curated list of common
             ports, tier 2 covers 1-1024, tier 3 covers 1025-65535. Each tier

@@ -868,10 +868,12 @@ lost at the quieter settings &mdash; notes and credentials are still a click awa
 <input type="text" id="setNtp" maxlength="63">
 </div>
 <div class="field">
-<label for="setTz">Timezone (POSIX TZ string)</label>
+<label for="setTz">Time zone</label>
 <input type="text" id="setTz" maxlength="47">
-<div class="hint">e.g. <code>GMT0BST,M3.5.0/1,M10.5.0</code> &mdash; std offset, DST rule.</div>
+<div class="hint">A POSIX rule, e.g. <code>GMT0BST,M3.5.0/1,M10.5.0</code>. The button below fills it in
+for you.</div>
 <div class="presets">
+<button type="button" class="btn small" id="tzDetectBtn" hidden></button>
 <button type="button" class="btn small" data-tz="UTC0">UTC</button>
 <button type="button" class="btn small" data-tz="GMT0BST,M3.5.0/1,M10.5.0">UK</button>
 <button type="button" class="btn small" data-tz="CET-1CEST,M3.5.0,M10.5.0/3">CET</button>
@@ -912,7 +914,8 @@ lost at the quieter settings &mdash; notes and credentials are still a click awa
 <option value="2">Common ports + all of 1&ndash;1024</option>
 <option value="3">Everything &mdash; all 65535 ports</option>
 </select>
-<div class="hint" style="color:var(--danger)">Tier 3 (all 65535 ports) scans every device at the configured rate and can legitimately take several days to finish.</div>
+<div class="hint" id="tier3Warn" style="color:var(--danger)" hidden>Every port on every device takes
+days to finish, and security software on your devices may notice it.</div>
 </div>
 </div>
 <div class="settgroup">
@@ -3300,6 +3303,25 @@ return "<li>" + icon(EV_ICON[ev.type]||EV_ICON.info, "ev-ico ev-" + esc(ev.type|
 "<div class=\"ev-meta\">" + esc(ev.ip||"") + (ev.ip?" · ":"") + "<span title=\"" + esc(absTime(ev.ts)) + "\">" + esc(relTime(ev.ts)) + "</span></div></span></li>";
 }).join("");
 }
+var TZ_POSIX = {"Africa/Abidjan":"GMT0","Africa/Accra":"GMT0","Africa/Addis_Ababa":"EAT-3","Africa/Algiers":"CET-1","Africa/Asmara":"EAT-3","Africa/Bamako":"GMT0","Africa/Bangui":"WAT-1","Africa/Banjul":"GMT0","Africa/Bissau":"GMT0","Africa/Blantyre":"CAT-2","Africa/Brazzaville":"WAT-1","Africa/Bujumbura":"CAT-2","Africa/Cairo":"EET-2EEST,M4.5.5/0,M10.5.4/24","Africa/Casablanca":"LTA-1","Africa/Ceuta":"CET-1CEST,M3.5.0,M10.5.0/3","Africa/Conakry":"GMT0","Africa/Dakar":"GMT0","Africa/Dar_es_Salaam":"EAT-3","Africa/Djibouti":"EAT-3","Africa/Douala":"WAT-1","Africa/El_Aaiun":"LTA-1","Africa/Freetown":"GMT0","Africa/Gaborone":"CAT-2","Africa/Harare":"CAT-2","Africa/Johannesburg":"SAST-2","Africa/Juba":"CAT-2","Africa/Kampala":"EAT-3","Africa/Khartoum":"CAT-2","Africa/Kigali":"CAT-2","Africa/Kinshasa":"WAT-1","Africa/Lagos":"WAT-1","Africa/Libreville":"WAT-1","Africa/Lome":"GMT0","Africa/Luanda":"WAT-1","Africa/Lubumbashi":"CAT-2","Africa/Lusaka":"CAT-2","Africa/Malabo":"WAT-1","Africa/Maputo":"CAT-2","Africa/Maseru":"SAST-2","Africa/Mbabane":"SAST-2","Africa/Mogadishu":"EAT-3","Africa/Monrovia":"GMT0","Africa/Nairobi":"EAT-3","Africa/Ndjamena":"WAT-1","Africa/Niamey":"WAT-1","Africa/Nouakchott":"GMT0","Africa/Ouagadougou":"GMT0","Africa/Porto-Novo":"WAT-1","Africa/Sao_Tome":"GMT0","Africa/Tripoli":"EET-2","Africa/Tunis":"CET-1","Africa/Windhoek":"CAT-2","America/Adak":"HST10HDT,M3.2.0,M11.1.0","America/Anchorage":"AKST9AKDT,M3.2.0,M11.1.0","America/Anguilla":"AST4","America/Antigua":"AST4","America/Araguaina":"LTA3","America/Argentina/Buenos_Aires":"LTA3","America/Argentina/Catamarca":"LTA3","America/Argentina/Cordoba":"LTA3","America/Argentina/Jujuy":"LTA3","America/Argentina/La_Rioja":"LTA3","America/Argentina/Mendoza":"LTA3","America/Argentina/Rio_Gallegos":"LTA3","America/Argentina/Salta":"LTA3","America/Argentina/San_Juan":"LTA3","America/Argentina/San_Luis":"LTA3","America/Argentina/Tucuman":"LTA3","America/Argentina/Ushuaia":"LTA3","America/Aruba":"AST4","America/Asuncion":"LTA3","America/Atikokan":"EST5","America/Bahia":"LTA3","America/Bahia_Banderas":"CST6","America/Barbados":"AST4","America/Belem":"LTA3","America/Belize":"CST6","America/Blanc-Sablon":"AST4","America/Boa_Vista":"LTA4","America/Bogota":"LTA5","America/Boise":"MST7MDT,M3.2.0,M11.1.0","America/Cambridge_Bay":"MST7MDT,M3.2.0,M11.1.0","America/Campo_Grande":"LTA4","America/Cancun":"EST5","America/Caracas":"LTA4","America/Cayenne":"LTA3","America/Cayman":"EST5","America/Chicago":"CST6CDT,M3.2.0,M11.1.0","America/Chihuahua":"CST6","America/Costa_Rica":"CST6","America/Creston":"MST7","America/Cuiaba":"LTA4","America/Curacao":"AST4","America/Danmarkshavn":"GMT0","America/Dawson":"MST7","America/Dawson_Creek":"MST7","America/Denver":"MST7MDT,M3.2.0,M11.1.0","America/Detroit":"EST5EDT,M3.2.0,M11.1.0","America/Dominica":"AST4","America/Edmonton":"MST7MDT,M3.2.0,M11.1.0","America/Eirunepe":"LTA5","America/El_Salvador":"CST6","America/Fort_Nelson":"MST7","America/Fortaleza":"LTA3","America/Glace_Bay":"AST4ADT,M3.2.0,M11.1.0","America/Godthab":"LTA2LTB,M3.5.0/-1,M10.5.0/0","America/Goose_Bay":"AST4ADT,M3.2.0,M11.1.0","America/Grand_Turk":"EST5EDT,M3.2.0,M11.1.0","America/Grenada":"AST4","America/Guadeloupe":"AST4","America/Guatemala":"CST6","America/Guayaquil":"LTA5","America/Guyana":"LTA4","America/Halifax":"AST4ADT,M3.2.0,M11.1.0","America/Havana":"CST5CDT,M3.2.0/0,M11.1.0/1","America/Hermosillo":"MST7","America/Indiana/Indianapolis":"EST5EDT,M3.2.0,M11.1.0","America/Indiana/Knox":"CST6CDT,M3.2.0,M11.1.0","America/Indiana/Marengo":"EST5EDT,M3.2.0,M11.1.0","America/Indiana/Petersburg":"EST5EDT,M3.2.0,M11.1.0","America/Indiana/Tell_City":"CST6CDT,M3.2.0,M11.1.0","America/Indiana/Vevay":"EST5EDT,M3.2.0,M11.1.0","America/Indiana/Vincennes":"EST5EDT,M3.2.0,M11.1.0","America/Indiana/Winamac":"EST5EDT,M3.2.0,M11.1.0","America/Inuvik":"MST7MDT,M3.2.0,M11.1.0","America/Iqaluit":"EST5EDT,M3.2.0,M11.1.0","America/Jamaica":"EST5","America/Juneau":"AKST9AKDT,M3.2.0,M11.1.0","America/Kentucky/Louisville":"EST5EDT,M3.2.0,M11.1.0","America/Kentucky/Monticello":"EST5EDT,M3.2.0,M11.1.0","America/Kralendijk":"AST4","America/La_Paz":"LTA4","America/Lima":"LTA5","America/Los_Angeles":"PST8PDT,M3.2.0,M11.1.0","America/Lower_Princes":"AST4","America/Maceio":"LTA3","America/Managua":"CST6","America/Manaus":"LTA4","America/Marigot":"AST4","America/Martinique":"AST4","America/Matamoros":"CST6CDT,M3.2.0,M11.1.0","America/Mazatlan":"MST7","America/Menominee":"CST6CDT,M3.2.0,M11.1.0","America/Merida":"CST6","America/Metlakatla":"AKST9AKDT,M3.2.0,M11.1.0","America/Mexico_City":"CST6","America/Miquelon":"LTA3LTB,M3.2.0,M11.1.0","America/Moncton":"AST4ADT,M3.2.0,M11.1.0","America/Monterrey":"CST6","America/Montevideo":"LTA3","America/Montreal":"EST5EDT,M3.2.0,M11.1.0","America/Montserrat":"AST4","America/Nassau":"EST5EDT,M3.2.0,M11.1.0","America/New_York":"EST5EDT,M3.2.0,M11.1.0","America/Nipigon":"EST5EDT,M3.2.0,M11.1.0","America/Nome":"AKST9AKDT,M3.2.0,M11.1.0","America/Noronha":"LTA2","America/North_Dakota/Beulah":"CST6CDT,M3.2.0,M11.1.0","America/North_Dakota/Center":"CST6CDT,M3.2.0,M11.1.0","America/North_Dakota/New_Salem":"CST6CDT,M3.2.0,M11.1.0","America/Nuuk":"LTA2LTB,M3.5.0/-1,M10.5.0/0","America/Ojinaga":"CST6CDT,M3.2.0,M11.1.0","America/Panama":"EST5","America/Pangnirtung":"EST5EDT,M3.2.0,M11.1.0","America/Paramaribo":"LTA3","America/Phoenix":"MST7","America/Port-au-Prince":"EST5EDT,M3.2.0,M11.1.0","America/Port_of_Spain":"AST4","America/Porto_Velho":"LTA4","America/Puerto_Rico":"AST4","America/Punta_Arenas":"LTA3","America/Rainy_River":"CST6CDT,M3.2.0,M11.1.0","America/Rankin_Inlet":"CST6CDT,M3.2.0,M11.1.0","America/Recife":"LTA3","America/Regina":"CST6","America/Resolute":"CST6CDT,M3.2.0,M11.1.0","America/Rio_Branco":"LTA5","America/Santarem":"LTA3","America/Santiago":"LTA4LTB,M9.1.6/24,M4.1.6/24","America/Santo_Domingo":"AST4","America/Sao_Paulo":"LTA3","America/Scoresbysund":"LTA2LTB,M3.5.0/-1,M10.5.0/0","America/Sitka":"AKST9AKDT,M3.2.0,M11.1.0","America/St_Barthelemy":"AST4","America/St_Johns":"NST3:30NDT,M3.2.0,M11.1.0","America/St_Kitts":"AST4","America/St_Lucia":"AST4","America/St_Thomas":"AST4","America/St_Vincent":"AST4","America/Swift_Current":"CST6","America/Tegucigalpa":"CST6","America/Thule":"AST4ADT,M3.2.0,M11.1.0","America/Thunder_Bay":"EST5EDT,M3.2.0,M11.1.0","America/Tijuana":"PST8PDT,M3.2.0,M11.1.0","America/Toronto":"EST5EDT,M3.2.0,M11.1.0","America/Tortola":"AST4","America/Vancouver":"PST8PDT,M3.2.0,M11.1.0","America/Whitehorse":"MST7","America/Winnipeg":"CST6CDT,M3.2.0,M11.1.0","America/Yakutat":"AKST9AKDT,M3.2.0,M11.1.0","America/Yellowknife":"MST7MDT,M3.2.0,M11.1.0","Antarctica/Casey":"LTA-8","Antarctica/Davis":"LTA-7","Antarctica/DumontDUrville":"LTA-10","Antarctica/Macquarie":"AEST-10AEDT,M10.1.0,M4.1.0/3","Antarctica/Mawson":"LTA-5","Antarctica/McMurdo":"NZST-12NZDT,M9.5.0,M4.1.0/3","Antarctica/Palmer":"LTA3","Antarctica/Rothera":"LTA3","Antarctica/Syowa":"LTA-3","Antarctica/Troll":"LTA0LTB-2,M3.5.0/1,M10.5.0/3","Antarctica/Vostok":"LTA-5","Arctic/Longyearbyen":"CET-1CEST,M3.5.0,M10.5.0/3","Asia/Aden":"LTA-3","Asia/Almaty":"LTA-5","Asia/Amman":"LTA-3","Asia/Anadyr":"LTA-12","Asia/Aqtau":"LTA-5","Asia/Aqtobe":"LTA-5","Asia/Ashgabat":"LTA-5","Asia/Atyrau":"LTA-5","Asia/Baghdad":"LTA-3","Asia/Bahrain":"LTA-3","Asia/Baku":"LTA-4","Asia/Bangkok":"LTA-7","Asia/Barnaul":"LTA-7","Asia/Beirut":"EET-2EEST,M3.5.0/0,M10.5.0/0","Asia/Bishkek":"LTA-6","Asia/Brunei":"LTA-8","Asia/Chita":"LTA-9","Asia/Choibalsan":"LTA-8","Asia/Colombo":"LTA-5:30","Asia/Damascus":"LTA-3","Asia/Dhaka":"LTA-6","Asia/Dili":"LTA-9","Asia/Dubai":"LTA-4","Asia/Dushanbe":"LTA-5","Asia/Famagusta":"EET-2EEST,M3.5.0/3,M10.5.0/4","Asia/Gaza":"EET-2EEST,M3.4.4/50,M10.4.4/50","Asia/Hebron":"EET-2EEST,M3.4.4/50,M10.4.4/50","Asia/Ho_Chi_Minh":"LTA-7","Asia/Hong_Kong":"HKT-8","Asia/Hovd":"LTA-7","Asia/Irkutsk":"LTA-8","Asia/Jakarta":"WIB-7","Asia/Jayapura":"WIT-9","Asia/Jerusalem":"IST-2IDT,M3.4.4/26,M10.5.0","Asia/Kabul":"LTA-4:30","Asia/Kamchatka":"LTA-12","Asia/Karachi":"PKT-5","Asia/Kathmandu":"LTA-5:45","Asia/Khandyga":"LTA-9","Asia/Kolkata":"IST-5:30","Asia/Krasnoyarsk":"LTA-7","Asia/Kuala_Lumpur":"LTA-8","Asia/Kuching":"LTA-8","Asia/Kuwait":"LTA-3","Asia/Macau":"CST-8","Asia/Magadan":"LTA-11","Asia/Makassar":"WITA-8","Asia/Manila":"PST-8","Asia/Muscat":"LTA-4","Asia/Nicosia":"EET-2EEST,M3.5.0/3,M10.5.0/4","Asia/Novokuznetsk":"LTA-7","Asia/Novosibirsk":"LTA-7","Asia/Omsk":"LTA-6","Asia/Oral":"LTA-5","Asia/Phnom_Penh":"LTA-7","Asia/Pontianak":"WIB-7","Asia/Pyongyang":"KST-9","Asia/Qatar":"LTA-3","Asia/Qyzylorda":"LTA-5","Asia/Riyadh":"LTA-3","Asia/Sakhalin":"LTA-11","Asia/Samarkand":"LTA-5","Asia/Seoul":"KST-9","Asia/Shanghai":"CST-8","Asia/Singapore":"LTA-8","Asia/Srednekolymsk":"LTA-11","Asia/Taipei":"CST-8","Asia/Tashkent":"LTA-5","Asia/Tbilisi":"LTA-4","Asia/Tehran":"LTA-3:30","Asia/Thimphu":"LTA-6","Asia/Tokyo":"JST-9","Asia/Tomsk":"LTA-7","Asia/Ulaanbaatar":"LTA-8","Asia/Urumqi":"LTA-6","Asia/Ust-Nera":"LTA-10","Asia/Vientiane":"LTA-7","Asia/Vladivostok":"LTA-10","Asia/Yakutsk":"LTA-9","Asia/Yangon":"LTA-6:30","Asia/Yekaterinburg":"LTA-5","Asia/Yerevan":"LTA-4","Atlantic/Azores":"LTA1LTB,M3.5.0/0,M10.5.0/1","Atlantic/Bermuda":"AST4ADT,M3.2.0,M11.1.0","Atlantic/Canary":"WET0WEST,M3.5.0/1,M10.5.0","Atlantic/Cape_Verde":"LTA1","Atlantic/Faroe":"WET0WEST,M3.5.0/1,M10.5.0","Atlantic/Madeira":"WET0WEST,M3.5.0/1,M10.5.0","Atlantic/Reykjavik":"GMT0","Atlantic/South_Georgia":"LTA2","Atlantic/St_Helena":"GMT0","Atlantic/Stanley":"LTA3","Australia/Adelaide":"ACST-9:30ACDT,M10.1.0,M4.1.0/3","Australia/Brisbane":"AEST-10","Australia/Broken_Hill":"ACST-9:30ACDT,M10.1.0,M4.1.0/3","Australia/Currie":"AEST-10AEDT,M10.1.0,M4.1.0/3","Australia/Darwin":"ACST-9:30","Australia/Eucla":"LTA-8:45","Australia/Hobart":"AEST-10AEDT,M10.1.0,M4.1.0/3","Australia/Lindeman":"AEST-10","Australia/Lord_Howe":"LTA-10:30LTB-11,M10.1.0,M4.1.0","Australia/Melbourne":"AEST-10AEDT,M10.1.0,M4.1.0/3","Australia/Perth":"AWST-8","Australia/Sydney":"AEST-10AEDT,M10.1.0,M4.1.0/3","Etc/GMT":"GMT0","Etc/GMT+0":"GMT0","Etc/GMT+1":"LTA1","Etc/GMT+10":"LTA10","Etc/GMT+11":"LTA11","Etc/GMT+12":"LTA12","Etc/GMT+2":"LTA2","Etc/GMT+3":"LTA3","Etc/GMT+4":"LTA4","Etc/GMT+5":"LTA5","Etc/GMT+6":"LTA6","Etc/GMT+7":"LTA7","Etc/GMT+8":"LTA8","Etc/GMT+9":"LTA9","Etc/GMT-0":"GMT0","Etc/GMT-1":"LTA-1","Etc/GMT-10":"LTA-10","Etc/GMT-11":"LTA-11","Etc/GMT-12":"LTA-12","Etc/GMT-13":"LTA-13","Etc/GMT-14":"LTA-14","Etc/GMT-2":"LTA-2","Etc/GMT-3":"LTA-3","Etc/GMT-4":"LTA-4","Etc/GMT-5":"LTA-5","Etc/GMT-6":"LTA-6","Etc/GMT-7":"LTA-7","Etc/GMT-8":"LTA-8","Etc/GMT-9":"LTA-9","Etc/GMT0":"GMT0","Etc/Greenwich":"GMT0","Etc/UCT":"UTC0","Etc/UTC":"UTC0","Etc/Universal":"UTC0","Etc/Zulu":"UTC0","Europe/Amsterdam":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Andorra":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Astrakhan":"LTA-4","Europe/Athens":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Belgrade":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Berlin":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Bratislava":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Brussels":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Bucharest":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Budapest":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Busingen":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Chisinau":"EET-2EEST,M3.5.0,M10.5.0/3","Europe/Copenhagen":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Dublin":"IST-1GMT0,M10.5.0,M3.5.0/1","Europe/Gibraltar":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Guernsey":"GMT0BST,M3.5.0/1,M10.5.0","Europe/Helsinki":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Isle_of_Man":"GMT0BST,M3.5.0/1,M10.5.0","Europe/Istanbul":"LTA-3","Europe/Jersey":"GMT0BST,M3.5.0/1,M10.5.0","Europe/Kaliningrad":"EET-2","Europe/Kiev":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Kirov":"MSK-3","Europe/Lisbon":"WET0WEST,M3.5.0/1,M10.5.0","Europe/Ljubljana":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/London":"GMT0BST,M3.5.0/1,M10.5.0","Europe/Luxembourg":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Madrid":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Malta":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Mariehamn":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Minsk":"LTA-3","Europe/Monaco":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Moscow":"MSK-3","Europe/Oslo":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Paris":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Podgorica":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Prague":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Riga":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Rome":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Samara":"LTA-4","Europe/San_Marino":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Sarajevo":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Saratov":"LTA-4","Europe/Simferopol":"MSK-3","Europe/Skopje":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Sofia":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Stockholm":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Tallinn":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Tirane":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Ulyanovsk":"LTA-4","Europe/Uzhgorod":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Vaduz":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Vatican":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Vienna":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Vilnius":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Volgograd":"MSK-3","Europe/Warsaw":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Zagreb":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Zaporozhye":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Zurich":"CET-1CEST,M3.5.0,M10.5.0/3","Indian/Antananarivo":"EAT-3","Indian/Chagos":"LTA-6","Indian/Christmas":"LTA-7","Indian/Cocos":"LTA-6:30","Indian/Comoro":"EAT-3","Indian/Kerguelen":"LTA-5","Indian/Mahe":"LTA-4","Indian/Maldives":"LTA-5","Indian/Mauritius":"LTA-4","Indian/Mayotte":"EAT-3","Indian/Reunion":"LTA-4","Pacific/Apia":"LTA-13","Pacific/Auckland":"NZST-12NZDT,M9.5.0,M4.1.0/3","Pacific/Bougainville":"LTA-11","Pacific/Chatham":"LTA-12:45LTB,M9.5.0/2:45,M4.1.0/3:45","Pacific/Chuuk":"LTA-10","Pacific/Easter":"LTA6LTB,M9.1.6/22,M4.1.6/22","Pacific/Efate":"LTA-11","Pacific/Enderbury":"LTA-13","Pacific/Fakaofo":"LTA-13","Pacific/Fiji":"LTA-12","Pacific/Funafuti":"LTA-12","Pacific/Galapagos":"LTA6","Pacific/Gambier":"LTA9","Pacific/Guadalcanal":"LTA-11","Pacific/Guam":"ChST-10","Pacific/Honolulu":"HST10","Pacific/Kiritimati":"LTA-14","Pacific/Kosrae":"LTA-11","Pacific/Kwajalein":"LTA-12","Pacific/Majuro":"LTA-12","Pacific/Marquesas":"LTA9:30","Pacific/Midway":"SST11","Pacific/Nauru":"LTA-12","Pacific/Niue":"LTA11","Pacific/Norfolk":"LTA-11LTB,M10.1.0,M4.1.0/3","Pacific/Noumea":"LTA-11","Pacific/Pago_Pago":"SST11","Pacific/Palau":"LTA-9","Pacific/Pitcairn":"LTA8","Pacific/Pohnpei":"LTA-11","Pacific/Port_Moresby":"LTA-10","Pacific/Rarotonga":"LTA10","Pacific/Saipan":"ChST-10","Pacific/Tahiti":"LTA10","Pacific/Tarawa":"LTA-12","Pacific/Tongatapu":"LTA-13","Pacific/Wake":"LTA-12","Pacific/Wallis":"LTA-12"};
+
+/* The browser knows its time zone by name; the dongle needs the POSIX rule. */
+function browserTz(){
+var zone = "";
+try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch(e){}
+var posix = zone && TZ_POSIX[zone];
+return posix ? { zone: zone, posix: posix } : null;
+}
+function renderTzDetect(){
+var b = $("tzDetectBtn"), t = browserTz();
+if (!b) return;
+b.hidden = !t;
+if (t){
+b.textContent = "Use this browser's: " + t.zone.replace(/_/g, " ");
+b.dataset.tz = t.posix;
+}
+}
+
 /* firstLoad: pass a failure on to the caller, which retries, instead of
    toasting it - a dropped request at start-up is not worth alarming anyone. */
 function loadSettings(firstLoad){
@@ -3317,6 +3339,7 @@ $("setPassive").checked = !!s.passive_only;
 $("setPortscanEnabled").checked = !!s.portscan_enabled;
 $("setPortscanRate").value = s.portscan_rate;
 $("setPortscanMaxTier").value = s.portscan_max_tier;
+$("tier3Warn").hidden = String(s.portscan_max_tier) !== "3";
 $("setNtp").value = s.ntp_server || "";
 $("setTz").value = s.tz || "";
 applyAppearance(s.theme, s.detail, true);
@@ -3456,7 +3479,9 @@ loadDevices();
 var TOUR_STEPS = [
 { title: "Welcome to LANDA.SH", tab: "dashboard",
   body: function(){ return "<p>Your home network at a glance. Everything runs on this little " +
-    "dongle: no cloud, no account.</p>"; } },
+    "dongle: no cloud, no account.</p>" +
+    (state.tourTzNote ? "<p>The clock is set to your time zone, " + esc(state.tourTzNote) +
+      ".</p>" : ""); } },
 { title: "Your dashboard", tab: "dashboard",
   target: function(){
     var g = $("linkGrid"), e = $("linkEmpty");
@@ -3485,6 +3510,9 @@ var TOUR_STEPS = [
   target: function(){ return firstDeviceRow(); },
   body: function(){ return "<p>Click a device to see its open ports, when it's been online " +
     "over the last day, and your notes and passwords for it.</p>"; } },
+{ title: "How closely should it look?", rev: 2,
+  body: tourScanBody,
+  bind: bindTourScan },
 { title: "Only what matters", tab: "dashboard",
   target: function(){ return $("bellBtn"); },
   body: function(){ return "<p>New devices, address changes and internet drops land here. " +
@@ -3501,6 +3529,64 @@ var TOUR_STEPS = [
 ];
 
 var tour = { steps: null, i: 0, onClose: null, opener: null };
+
+/*
+ * The tour's revision. Cards carry the revision that added them (no rev means
+ * 1). A dongle that saw an older revision is shown only the newer cards, once,
+ * so an update can ask a new question without replaying the whole tour.
+ */
+var TOUR_REV = 2;
+
+var SCAN_CHOICES = [
+{ id: "off",      enabled: false, tier: 0, name: "Off",
+  note: "Don't check which services devices offer." },
+{ id: "light",    enabled: true,  tier: 1, name: "Light",
+  note: "About 120 common services. Quick, and unlikely to be noticed. Recommended." },
+{ id: "standard", enabled: true,  tier: 2, name: "Standard",
+  note: "Every well-known port, 1 to 1024. Slower to finish." },
+{ id: "thorough", enabled: true,  tier: 3, name: "Thorough",
+  note: "All 65,535 ports. Takes days, and security software on your devices may notice." }
+];
+
+function currentScanChoice(){
+var st = state.settings || {};
+if (!st.portscan_enabled) return "off";
+return st.portscan_max_tier >= 3 ? "thorough" : st.portscan_max_tier === 2 ? "standard" : "light";
+}
+
+function tourScanBody(){
+var cur = currentScanChoice();
+return "<p>To tell you what each device offers, LANDA.SH quietly tries its ports in the " +
+"background. How far should it go?</p><div class=\"detaillist\">" +
+SCAN_CHOICES.map(function(c){
+return "<button type=\"button\" class=\"detailrow\" data-scan=\"" + c.id + "\" aria-pressed=\"" +
+(c.id === cur ? "true" : "false") + "\"><span class=\"tick\">" + icon("i-check") + "</span>" +
+"<span><span class=\"dname\">" + esc(c.name) + "</span><span class=\"dnote\">" +
+esc(c.note) + "</span></span></button>";
+}).join("") + "</div><p class=\"hint\" style=\"margin-top:10px\">You can change this any time " +
+"in Settings &rsaquo; Scanning &amp; health.</p>";
+}
+
+function bindTourScan(){
+document.querySelectorAll("#tourBody [data-scan]").forEach(function(b){
+b.addEventListener("click", function(){
+var c = SCAN_CHOICES.filter(function(x){ return x.id === b.dataset.scan; })[0];
+var body = { portscan_enabled: c.enabled };
+if (c.enabled) body.portscan_max_tier = c.tier;
+api("PUT", "/api/settings", body).then(function(){
+state.settings = state.settings || {};
+state.settings.portscan_enabled = c.enabled;
+if (c.enabled) state.settings.portscan_max_tier = c.tier;
+$("setPortscanEnabled").checked = c.enabled;
+if (c.enabled){
+$("setPortscanMaxTier").value = c.tier;
+$("tier3Warn").hidden = c.tier !== 3;
+}
+renderTourStep();
+}).catch(toastErr);
+});
+});
+}
 
 function firstDeviceRow(){
 return document.querySelector("#devBody tr.devrow");
@@ -3532,7 +3618,8 @@ renderDevices();
 function tourVaultBody(){
 var v = state.vault || {};
 var intro = "<p>Save the passwords for your services, locked with a passphrase only you " +
-"know.</p>";
+"know.</p><p>The dashboard isn't encrypted, so your passphrase and logins cross your home " +
+"network as you type and view them. Only use it on a network you trust.</p>";
 if (v.configured){
 return intro + "<p class=\"tourok\">Your vault is set up.</p>";
 }
@@ -3624,13 +3711,14 @@ $("tourTitle").textContent = step.title;
 $("tourBody").innerHTML = step.body();
 if (step.bind) step.bind();
 
+var isLast = tour.i === steps.length - 1;
 $("tourBack").hidden = tour.i === 0 || !!step.actions;
-$("tourSkip").hidden = !!step.last || !!step.actions;
+$("tourSkip").hidden = isLast || !!step.actions;
 var next = $("tourNext");
 if (step.actions){
 next.textContent = step.actions.primary;
 } else {
-next.textContent = step.last ? "Done" : "Next";
+next.textContent = isLast ? "Done" : "Next";
 }
 /* "Add my first link" sits beside Done on the last card. */
 var extra = $("tourExtra");
@@ -3694,12 +3782,36 @@ if (cb) cb(finished);
 if (tour.opener && tour.opener.focus) tour.opener.focus();
 }
 
+function markTourSeen(){
+if (state.settings){ state.settings.tour_seen = true; state.settings.tour_rev = TOUR_REV; }
+api("PUT", "/api/settings", {tour_seen: true, tour_rev: TOUR_REV}).catch(function(){});
+}
+
+/*
+ * A new dongle's clock starts on UTC. The browser opening the tour knows
+ * where it is, so set it from that - once, and only over the factory default,
+ * never over something somebody chose.
+ */
+function adoptBrowserTz(){
+var st = state.settings, t = browserTz();
+if (!st || !t || st.tz !== "UTC0" || t.posix === "UTC0") return Promise.resolve();
+return api("PUT", "/api/settings", {tz: t.posix}).then(function(){
+st.tz = t.posix;
+$("setTz").value = t.posix;
+state.tourTzNote = t.zone.replace(/_/g, " ");
+}).catch(function(){});
+}
+
 function startTour(){
 selectTab("dashboard");
-openTour(TOUR_STEPS, function(){
-if (state.settings) state.settings.tour_seen = true;
-api("PUT", "/api/settings", {tour_seen: true}).catch(function(){});
-});
+adoptBrowserTz().then(function(){ openTour(TOUR_STEPS, markTourSeen); });
+}
+
+/* Only the cards added since this dongle last saw the tour. */
+function startTourUpdate(fromRev){
+var fresh = TOUR_STEPS.filter(function(st){ return (st.rev || 1) > fromRev; });
+if (!fresh.length){ markTourSeen(); return; }
+openTour(fresh, markTourSeen);
 }
 
 /* Before the dongle is on your Wi-Fi, the only useful thing to say is how to get it there. */
@@ -3719,6 +3831,7 @@ if (state.tourChecked) return;
 state.tourChecked = true;
 if (!s.wifi_configured) showSetupCard();
 else if (!s.tour_seen) startTour();
+else if ((s.tour_rev || 1) < TOUR_REV) startTourUpdate(s.tour_rev || 1);
 }
 
 $("tourNext").addEventListener("click", function(){
@@ -3733,7 +3846,7 @@ var f = $("setSsid");
 if (f) f.focus();
 return;
 }
-if (step.last) closeTour(true); else goTourStep(tour.i + 1);
+if (tour.i === tour.steps.length - 1) closeTour(true); else goTourStep(tour.i + 1);
 });
 $("tourBack").addEventListener("click", function(){ if (tour.i > 0) goTourStep(tour.i - 1); });
 $("tourSkip").addEventListener("click", function(){ closeTour(true); });
@@ -3877,6 +3990,11 @@ selectSetPage(want);
 })();
 
 $("setHostsPerSec").addEventListener("input", renderSweepEstimate);
+renderTzDetect();
+$("setPortscanMaxTier").addEventListener("change", function(){
+$("tier3Warn").hidden = this.value !== "3";
+});
+$("tzDetectBtn").addEventListener("click", function(){ $("setTz").value = this.dataset.tz; });
 document.querySelectorAll(".presets [data-tz]").forEach(function(b){
 b.addEventListener("click", function(){ $("setTz").value = b.dataset.tz; });
 });
