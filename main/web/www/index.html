@@ -962,7 +962,7 @@ HTTP, so a revealed secret crosses the network in the clear.</p>
 <button type="button" class="btn" id="otaCheckBtn">Check now</button>
 <button type="button" class="btn btn-accent" id="otaInstallBtn" hidden>Install</button>
 </div>
-<label class="switch" style="margin-top:16px"><input type="checkbox" id="otaEnabled"> Check GitHub for new releases every 12 hours</label>
+<label class="switch" style="margin-top:16px"><input type="checkbox" id="otaEnabled"> Check GitHub for new releases <span id="otaEvery">every 12 hours</span></label>
 <label class="switch"><input type="checkbox" id="otaAuto"> Install them automatically</label>
 <div class="field" style="margin-top:14px;margin-bottom:6px">
 <label for="otaToken">Access token</label>
@@ -3236,6 +3236,10 @@ $("setRescanDays").value = s.portscan_rescan_days;
 $("otaEnabled").checked = !!s.ota_enabled;
 $("otaAuto").checked = !!s.ota_auto;
 $("otaAuto").disabled = !s.ota_enabled;
+/* The interval is only settable through the API, so say what it really is. */
+var hrs = s.ota_interval_h || 12;
+$("otaEvery").textContent = hrs === 1 ? "every hour" : hrs === 24 ? "once a day" :
+hrs % 24 === 0 ? "every " + (hrs / 24) + " days" : "every " + hrs + " hours";
 $("setWanEnabled").checked = !!s.wan_enabled;
 $("setWanInterval").value = s.wan_interval_s;
 $("setWanPing").value = s.wan_ping_host || "";
