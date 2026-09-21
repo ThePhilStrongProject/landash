@@ -116,7 +116,10 @@ def fail(msg):
 
 
 def git(cwd, *args, check=False):
-    r = subprocess.run(["git"] + list(args), cwd=cwd, capture_output=True, text=True)
+    # git speaks UTF-8; Python on Windows would otherwise decode it as cp1252 and
+    # turn "›" in a tag message into "â€º" in the public changelog.
+    r = subprocess.run(["git"] + list(args), cwd=cwd, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
     if check and r.returncode != 0:
         fail("git %s failed in %s:\n%s" % (" ".join(args), cwd, r.stderr.strip()))
     return r
