@@ -101,6 +101,7 @@ text-transform:uppercase;letter-spacing:.06em}
 .namecell .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 @media (min-width:721px) and (hover:hover){
 #devBody .iconbtn[data-act="edit"]{opacity:0;transition:opacity .12s ease}
+.touring-name #devBody tr.devrow:first-child .iconbtn[data-act="edit"],
 #devBody tr:hover .iconbtn[data-act="edit"],
 #devBody tr:focus-within .iconbtn[data-act="edit"],
 #devBody .iconbtn[data-act="edit"]:focus-visible{opacity:1}
@@ -1588,6 +1589,9 @@ if (!q) return true;
 return [d.display_name,d.ip,d.hw_mac||d.mac,d.vendor,d.hostname].join(" ").toLowerCase().indexOf(q) !== -1;
 });
 list = sortDevices(list);
+/* An empty table during the welcome tour shows the dongle itself as an
+   example, so the cards about rows have a row to point at. */
+if (!list.length && state.tourDemo) list = [state.tourDemo];
 $("devEmpty").hidden = list.length !== 0;
 $("devBody").innerHTML = list.map(rowHtml).join("");
 }
@@ -3450,36 +3454,78 @@ loadDevices();
  * from a version without the flag, brings it back once.
  */
 var TOUR_STEPS = [
-{ title: "Welcome to LANDA.SH",
+{ title: "Welcome to LANDA.SH", tab: "dashboard",
   body: function(){ return "<p>Your home network at a glance. Everything runs on this little " +
     "dongle: no cloud, no account.</p>"; } },
-{ title: "Your dashboard",
+{ title: "Your dashboard", tab: "dashboard",
   target: function(){
     var g = $("linkGrid"), e = $("linkEmpty");
     return (e && !e.hidden) ? e : g;
   },
   body: function(){ return "<p>Pin the things you use every day, like your router, NAS or Home " +
     "Assistant. A green dot means the service is answering.</p>"; } },
-{ title: "Every device, found for you",
-  target: function(){ return $("tab-devices"); },
-  body: function(){ return "<p>Everything on your network appears here by itself. Give devices " +
-    "names you'll recognise.</p>"; } },
-{ title: "Only what matters",
+{ title: "Every device, found for you", tab: "devices",
+  target: function(){ return document.querySelector("#panel-devices .toolbar"); },
+  enter: tourDevicesEnter,
+  body: function(){ return "<p>Everything on your network appears here by itself. Search it, " +
+    "choose which columns to show, or scan again now.</p>"; } },
+{ title: "Make it recognisable", tab: "devices",
+  target: function(){
+    var row = firstDeviceRow();
+    return row ? row.querySelector('[data-col="name"]') : null;
+  },
+  /* The pencil only shows on hover; hold the first row's visible while this
+     card is up. On the page rather than the row, because the table is
+     redrawn every few seconds. */
+  enter: function(){ document.body.classList.add("touring-name"); },
+  leave: function(){ document.body.classList.remove("touring-name"); },
+  body: function(){ return "<p>Use the pencil to give a device a name you'll recognise, and " +
+    "click its type to change how it's shown.</p>"; } },
+{ title: "Everything about one device", tab: "devices",
+  target: function(){ return firstDeviceRow(); },
+  body: function(){ return "<p>Click a device to see its open ports, when it's been online " +
+    "over the last day, and your notes and passwords for it.</p>"; } },
+{ title: "Only what matters", tab: "dashboard",
   target: function(){ return $("bellBtn"); },
   body: function(){ return "<p>New devices, address changes and internet drops land here. " +
     "Nothing else.</p>"; } },
-{ title: "Keep your logins safe",
+{ title: "Keep your logins safe", tab: "dashboard",
   target: function(){ return $("tab-settings"); },
   body: tourVaultBody,
   enter: function(){ return loadVault().catch(function(){}); },
   bind: bindTourVault },
-{ title: "You're all set",
+{ title: "You're all set", tab: "dashboard",
   body: function(){ return "<p>Themes, detail level and more are in Settings. Updates install " +
     "themselves.</p>"; },
   last: true }
 ];
 
 var tour = { steps: null, i: 0, onClose: null, opener: null };
+
+function firstDeviceRow(){
+return document.querySelector("#devBody tr.devrow");
+}
+
+/* The dongle never appears in its own list - it does not sweep its own
+   address - so it makes an honest example when the list is still empty. */
+function tourDemoDevice(){
+var s = state.status || {};
+var now = s.time || Math.floor(Date.now() / 1000);
+var name = s.hostname || "landash";
+return { mac: s.mac || "", hw_mac: s.mac || "", ip: s.ip || "", display_name: name,
+nickname: "", hostname: name, vendor: "Espressif", type: "iot", type_override: null,
+services: ["http"], sources: [], online: true, is_new: true, hidden: false,
+has_note: false, has_secret: false, shared_mac: false, first_seen: now, last_seen: now,
+open_port_count: 1, portscan_tier: 1 };
+}
+
+function tourDevicesEnter(){
+return loadDevices().then(function(){
+var visible = (state.devices || []).some(function(d){ return !d.hidden; });
+state.tourDemo = visible ? null : tourDemoDevice();
+renderDevices();
+});
+}
 
 function tourVaultBody(){
 var v = state.vault || {};
@@ -3609,11 +3655,24 @@ var focusable = $("tourBody").querySelector("input");
 (focusable || next).focus();
 }
 
+function leaveTourStep(next){
+var prev = tour.steps && tour.steps[tour.i];
+if (prev && prev.leave) prev.leave();
+if (state.tourDemo && (!next || next.tab !== "devices")){
+state.tourDemo = null;
+if (state.tab === "devices") renderDevices();
+}
+}
+
 function goTourStep(i){
-tour.i = i;
 var step = tour.steps[i];
+leaveTourStep(step);
+tour.i = i;
+/* Each card says which page it belongs on; switch without remembering it
+   as the page to open next time. */
+if (step.tab && state.tab !== step.tab) selectTab(step.tab, true);
 var p = step.enter ? step.enter() : null;
-if (p && p.then) p.then(renderTourStep); else renderTourStep();
+if (p && p.then) p.then(renderTourStep, renderTourStep); else renderTourStep();
 }
 
 function openTour(steps, onClose){
@@ -3625,6 +3684,7 @@ goTourStep(0);
 
 /* finished: the tour was completed or skipped, so the dongle stops offering it. */
 function closeTour(finished){
+leaveTourStep();
 $("tour").hidden = true;
 var cb = tour.onClose;
 tour.steps = null; tour.onClose = null;
