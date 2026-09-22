@@ -33,6 +33,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "esp_partition.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -84,6 +85,24 @@ esp_err_t ota_install_now(void);
 
 /* The repository updates come from, "owner/name", or "" when none is built in. */
 const char *ota_repo(void);
+
+/*
+ * "v1.2.3" (the v optional) into v[]. False for anything else, such as a bare
+ * commit hash. Whatever follows the patch number ("-3-gabc1234-dirty") is
+ * ignored.
+ */
+bool ota_parse_version(const char *s, int v[3]);
+
+/*
+ * Lends the idle update slot out as scratch space: the backup restore stages
+ * a verified file there before the reboot that applies it. NULL when the slot
+ * is not free to lend - an update is downloading or installing, or the
+ * running image is still on probation, when the idle slot holds the image a
+ * rollback would return to. While lent, an update refuses to start.
+ * ota_return_slot() gives it back; a reboot does too.
+ */
+const esp_partition_t *ota_borrow_slot(void);
+void                   ota_return_slot(void);
 
 #ifdef __cplusplus
 }

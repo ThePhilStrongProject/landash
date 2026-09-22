@@ -20,7 +20,7 @@ extern "C" {
  * looks exactly like a routing bug. http_server.c carries a _Static_assert
  * against the size of the route table so that cannot happen quietly again.
  */
-#define NETDASH_HTTPD_MAX_URI_HANDLERS 48
+#define NETDASH_HTTPD_MAX_URI_HANDLERS 56
 
 /* Listening port. */
 #define NETDASH_HTTPD_PORT 80

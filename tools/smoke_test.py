@@ -6,21 +6,38 @@ the response shapes, then does a nickname round-trip to prove the device
 database persists user edits.
 
 Nothing here destroys anything you did not ask it to: reboot and factory-reset
-are only probed with a deliberately invalid body to confirm they refuse it, and
-the vault section is skipped entirely when a vault already exists, because
-exercising it means destroying it at the end.
+are only probed with a deliberately invalid body to confirm they refuse it, the
+vault section is skipped entirely when a vault already exists, because
+exercising it means destroying it at the end, and a full restore only ever
+runs with --restore-roundtrip.
 
 Usage:
     python tools/smoke_test.py                       # http://landash.local
     python tools/smoke_test.py http://192.168.1.58
+    python tools/smoke_test.py --restore-roundtrip    # also restores the
+                                                       # backup it just made
+
+Decrypting the downloaded backup to check its contents needs the
+`cryptography` package (pip install cryptography); without it, that one check
+is skipped and noted rather than failed.
 """
 
+import hashlib
 import json
 import struct
 import sys
+import time
 import urllib.error
 import urllib.request
 import zlib
+
+try:
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    HAVE_CRYPTO = True
+except ImportError:
+    HAVE_CRYPTO = False
 
 TIMEOUT = 10
 
@@ -74,6 +91,91 @@ def get_raw(base, path):
         return e.code, e.read(), dict(e.headers)
     except Exception as e:  # noqa: BLE001
         return None, str(e).encode(), {}
+
+
+def is_hex(s, length):
+    return isinstance(s, str) and len(s) == length and all(c in "0123456789abcdef" for c in s.lower())
+
+
+def parse_landash_header(raw):
+    """Parses the fixed framing every .landash file starts with - magic,
+    header length and the header JSON - none of which needs the passphrase.
+    Returns (header_dict, body_bytes) where body is everything after the
+    header, i.e. the still-encrypted records."""
+    if len(raw) < 10 or raw[:8] != b"LANDASH\n":
+        raise ValueError("bad magic")
+    hlen = struct.unpack("<H", raw[8:10])[0]
+    if hlen > 1024 or len(raw) < 10 + hlen:
+        raise ValueError("header length out of range")
+    header = json.loads(raw[10:10 + hlen].decode("utf-8"))
+    return header, raw[10 + hlen:]
+
+
+def iter_record_spans(body):
+    """Walks the record framing (a 4-byte cleartext length before each
+    ciphertext+tag) without decrypting anything, so record boundaries -
+    including the truncation point used to drop the last record - can be
+    found without the passphrase. Returns a list of (start, end) byte offsets
+    into `body`, one per record, each spanning the whole record: its 4-byte
+    length prefix plus the ciphertext and tag."""
+    spans = []
+    off = 0
+    while off < len(body):
+        if off + 4 > len(body):
+            raise ValueError("truncated record length")
+        (length,) = struct.unpack("<I", body[off:off + 4])
+        if length < 1 or length > 8192:
+            raise ValueError(f"record length {length} out of range")
+        start = off
+        off += 4 + length + 16
+        if off > len(body):
+            raise ValueError("truncated record body")
+        spans.append((start, off))
+    return spans
+
+
+def decrypt_landash(raw, passphrase):
+    """Decrypts every record of a downloaded .landash file, the real proof
+    the format matches docs/API.md rather than just its framing. Returns
+    (header, records), where each record is (type_byte, plaintext_after_type).
+    Raises (InvalidTag, from `cryptography`) on a wrong passphrase or a
+    damaged file, same as the firmware refuses one."""
+    header, body = parse_landash_header(raw)
+    header_len = len(raw) - len(body)
+    aad = hashlib.sha256(raw[:header_len]).digest()
+
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32,
+                      salt=bytes.fromhex(header["salt"]), iterations=header["iterations"])
+    aesgcm = AESGCM(kdf.derive(passphrase.encode()))
+    nonce_prefix = bytes.fromhex(header["nonce"])
+
+    records = []
+    for idx, (start, end) in enumerate(iter_record_spans(body)):
+        # Spans include the 4-byte length prefix (so a truncation point can
+        # drop a whole record, prefix and all) - skip it for decryption.
+        nonce = nonce_prefix + struct.pack(">I", idx)
+        pt = aesgcm.decrypt(nonce, body[start + 4:end], aad)
+        records.append((pt[0:1], pt[1:]))
+    return header, records
+
+
+def parse_record_ns_key(type_byte, payload):
+    """For an 'N' record's plaintext (after the type byte): (namespace, key)."""
+    if type_byte != b"N":
+        return None, None
+    nlen = payload[0]
+    ns = payload[1:1 + nlen].decode("utf-8", "replace")
+    klen = payload[1 + nlen]
+    key = payload[2 + nlen:2 + nlen + klen].decode("utf-8", "replace")
+    return ns, key
+
+
+def parse_record_filename(type_byte, payload):
+    """For an 'F' record's plaintext (after the type byte): the file name."""
+    if type_byte != b"F":
+        return None
+    nlen = payload[0]
+    return payload[1:1 + nlen].decode("utf-8", "replace")
 
 
 def check(name, condition, detail=""):
@@ -134,7 +236,10 @@ DEVICE_FIELDS = [
 
 
 def main():
-    base = (sys.argv[1] if len(sys.argv) > 1 else "http://landash.local").rstrip("/")
+    args = sys.argv[1:]
+    restore_roundtrip = "--restore-roundtrip" in args
+    args = [a for a in args if a != "--restore-roundtrip"]
+    base = (args[0] if args else "http://landash.local").rstrip("/")
     print(f"NetDash smoke test against {base}\n")
 
     # --- the web UI itself -------------------------------------------------
@@ -631,6 +736,135 @@ def main():
             check("delete an icon", st == 200, f"status {st}")
             st, _, _ = get_raw(base, f"/api/icons/{icon_id}")
             check("it is gone afterwards", st == 404, f"status {st}")
+
+    # --- full backup / restore ----------------------------------------------
+    print("\nbackup and restore")
+    st, b, _ = request(base, "GET", "/api/backup")
+    check("GET /api/backup answers", st == 200 and isinstance(b, dict), f"status {st}")
+    check("backup status has last_backup and restored",
+          isinstance((b or {}).get("last_backup"), int) and "restored" in (b or {}),
+          repr(b)[:120])
+
+    st, _, _ = request(base, "POST", "/api/backup", {"passphrase": "xyz"})
+    check("a too-short backup passphrase is rejected", st == 400, f"status {st}")
+
+    st, _, _ = request(base, "POST", "/api/backup", {"passphrase": "has a\nnewline in it"})
+    check("a backup passphrase with a newline is rejected", st == 400, f"status {st}")
+
+    backup_pass = "smoke test backup passphrase"
+    st, raw, hdrs = request(base, "POST", "/api/backup", {"passphrase": backup_pass})
+    check("POST /api/backup returns 200", st == 200, f"status {st}")
+
+    cd = hdrs.get("Content-Disposition", "")
+    check("backup is an attachment ending in .landash",
+          "attachment" in cd and cd.rstrip('"').endswith(".landash"), repr(cd))
+
+    header, body, spans = None, b"", []
+    if st == 200 and isinstance(raw, (bytes, bytearray)):
+        check("backup body starts with the LANDASH magic", raw[:8] == b"LANDASH\n",
+              repr(raw[:12]))
+        try:
+            header, body = parse_landash_header(raw)
+            spans = iter_record_spans(body)
+            check("header parses and records follow it", True)
+        except Exception as e:  # noqa: BLE001
+            check("header parses and records follow it", False, str(e))
+    else:
+        check("backup body is bytes", False, repr(raw)[:120])
+
+    if header is not None:
+        for f in ("format", "fw", "hostname", "created", "devices", "links",
+                  "icons", "kdf", "iterations", "salt", "nonce"):
+            check(f"backup header has {f}", f in header, sorted(header))
+        check("format is 1", header.get("format") == 1, repr(header.get("format")))
+        check("kdf is pbkdf2-sha256", header.get("kdf") == "pbkdf2-sha256", repr(header.get("kdf")))
+        check("iterations is an int", isinstance(header.get("iterations"), int),
+              repr(header.get("iterations")))
+        check("salt is 32 hex chars", is_hex(header.get("salt"), 32), repr(header.get("salt")))
+        check("nonce is 16 hex chars", is_hex(header.get("nonce"), 16), repr(header.get("nonce")))
+        check("at least one record follows the header", len(spans) > 0, len(spans))
+
+        if HAVE_CRYPTO:
+            try:
+                _, records = decrypt_landash(raw, backup_pass)
+                types = {r[0] for r in records}
+                check("every decrypted record has a known type",
+                      types <= {b"N", b"F", b"D", b"E"}, types)
+                last_ok = bool(records) and records[-1][0] == b"E" and \
+                    struct.unpack("<I", records[-1][1][:4])[0] == len(records) - 1
+                check("the last record is E with the right count", last_ok,
+                      repr(records[-1]) if records else "no records")
+                has_cfg = any(parse_record_ns_key(*r)[0] == "cfg" for r in records if r[0] == b"N")
+                check("an N record for namespace \"cfg\" exists", has_cfg)
+                has_devdb = any(parse_record_filename(*r) == "devices.db"
+                                for r in records if r[0] == b"F")
+                check("an F record named \"devices.db\" exists", has_devdb)
+            except Exception as e:  # noqa: BLE001
+                check("the backup decrypts under its own passphrase", False, str(e))
+        else:
+            print("       cryptography package not importable - skipping the decrypt checks")
+
+    st, b2, _ = request(base, "GET", "/api/backup")
+    check("GET /api/backup still answers after a download",
+          st == 200 and isinstance((b2 or {}).get("last_backup"), int), repr(b2)[:120])
+    if (status or {}).get("time_synced"):
+        check("last_backup is nonzero once the clock has synced",
+              (b2 or {}).get("last_backup", 0) != 0, repr(b2)[:120])
+
+    # restore: three ways to refuse, none of which should touch the dongle
+    st, _, _ = post_raw(base, "/api/restore", backup_pass.encode() + b"\n" + b"x" * 100,
+                         ctype="application/octet-stream")
+    check("restore rejects a body that is not a backup at all", st == 400, f"status {st}")
+
+    if header is not None:
+        st, _, _ = post_raw(base, "/api/restore", b"the wrong passphrase\n" + raw,
+                             ctype="application/octet-stream")
+        check("restore rejects the wrong passphrase", st == 403, f"status {st}")
+
+        if spans:
+            truncated = raw[:len(raw) - len(body) + spans[-1][0]]
+            st, _, _ = post_raw(base, "/api/restore",
+                                 backup_pass.encode() + b"\n" + truncated,
+                                 ctype="application/octet-stream")
+            check("restore rejects a backup missing its last record", st == 400, f"status {st}")
+        else:
+            check("restore rejects a backup missing its last record", False, "no records to drop")
+
+    st, _, _ = request(base, "GET", "/api/status")
+    check("the dongle is still up after the restore refusals", st == 200, f"status {st}")
+
+    if restore_roundtrip and header is not None:
+        print("\nrestore round-trip (--restore-roundtrip)")
+        st, r, _ = post_raw(base, "/api/restore", backup_pass.encode() + b"\n" + raw,
+                             ctype="application/octet-stream")
+        check("restore accepts the real backup", st == 200 and isinstance(r, dict) and r.get("ok"),
+              f"status {st} {r!r}"[:160])
+        if st == 200:
+            print("       waiting for the dongle to come back...")
+            # It restarts a second after replying; don't mistake the old
+            # instance, still up for that second, for the restored one.
+            time.sleep(8)
+            deadline = time.time() + 90
+            back = False
+            while time.time() < deadline and not back:
+                time.sleep(3)
+                st2, _, _ = request(base, "GET", "/api/status")
+                back = st2 == 200
+            check("the dongle comes back within 90s", back)
+            if back:
+                st3, b3, _ = request(base, "GET", "/api/backup")
+                check("GET /api/backup.restored is set after the round trip",
+                      bool((b3 or {}).get("restored")), repr(b3)[:120])
+                st4, s4, _ = request(base, "GET", "/api/status")
+                check("device count matches the header",
+                      isinstance(s4, dict) and s4.get("devices_total") == header.get("devices"),
+                      f"status {st4} got {(s4 or {}).get('devices_total')} want {header.get('devices')}")
+                st5, l5, _ = request(base, "GET", "/api/links")
+                got_links = len((l5 or {}).get("links", [])) if isinstance(l5, dict) else None
+                check("link count matches the header", got_links == header.get("links"),
+                      f"status {st5} got {got_links} want {header.get('links')}")
+    elif restore_roundtrip:
+        print("       no usable backup to restore - skipping the round trip")
 
     # --- destructive endpoints, non-destructively ---------------------------
     print("\nguards")

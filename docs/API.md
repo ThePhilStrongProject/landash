@@ -321,6 +321,10 @@ The full table plus a header, for backing up nicknames.
 
 `Content-Disposition: attachment; filename="landash-devices.json"`.
 
+This is nicknames only. For a file that sets up a replacement dongle
+identically - Wi-Fi credentials, hostname, every device, links, icons, notes
+and the vault - see **The full backup**, below.
+
 ---
 
 ## POST /api/devices/import
@@ -346,6 +350,208 @@ stands for.
 ```
 
 400 when `version` is not 1 or `devices` is not an array.
+
+---
+
+## The full backup
+
+A single `.landash` file that sets up a replacement dongle identically:
+settings including the Wi-Fi SSID and password, hostname and setup-AP
+password, every device ever seen (nicknames, types, ports), dashboard links
+and groups, uploaded icons, notes, and the vault (still encrypted under the
+vault passphrase - a backup does not need the vault unlocked, and does not
+expose its secrets in the clear). The notification feed and update bookkeeping
+are not included, since neither means anything on a different dongle.
+
+The whole file is encrypted with a backup passphrase chosen at export time,
+separate from the vault passphrase. Restore replaces everything on the dongle
+and restarts it.
+
+**Say this plainly: anyone on the LAN can call `POST /api/backup`.** There is
+no authentication in v1 (see the top of this document), so the only thing
+standing between a stranger on the network and a file containing your Wi-Fi
+password is the export passphrase they choose right there in the same
+request - which they, being the one calling the endpoint, obviously know. This
+is no worse than any other endpoint here, but a backup is the one file that
+carries the Wi-Fi password at all: `GET /api/settings` never returns it, and
+`GET /api/devices/export` does not touch settings.
+
+### GET /api/backup
+
+```json
+{ "last_backup": 1789520400, "restored": null }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `last_backup` | number | unix seconds of the last completed download, `0` for never (or before NTP synced). After a restore, this is the `created` time of the file that was restored, not the moment of the restore |
+| `restored` | object or null | `null` if this dongle has never been restored onto |
+
+A factory reset clears both.
+
+```json
+{ "hostname": "landash", "fw": "v0.19.0", "created": 1789520400 }
+```
+
+`restored` describes the backup this dongle was last restored from: the
+hostname and firmware version it was made on, and when it was made.
+
+### POST /api/backup
+
+```json
+{ "passphrase": "correct horse battery staple" }
+```
+
+`passphrase`: 8 to 128 characters, no control characters (so no newline).
+
+Response `200`, `Content-Type: application/octet-stream`, sent chunked, with:
+
+```
+Content-Disposition: attachment; filename="landash-<hostname>-<YYYYMMDD>.landash"
+```
+
+(just `landash-<hostname>.landash` when the clock has not synced, since there
+is no date to put in it; and plain `landash-<YYYYMMDD>.landash` while the
+hostname is still the default `landash`). The first byte of the response takes about six
+seconds - that is PBKDF2 key derivation, run at idle priority so the rest of the dongle keeps
+going, not a stall. A restore spends the same time before it reads the records.
+
+400 on a passphrase outside the length or character rules, in the same
+`{"error": "..."}` shape as everywhere else. A failure partway through
+streaming (flash read error, heap exhaustion) closes the connection without
+sending the final chunk, so the client sees a network error rather than a
+200 - it must treat a short read as a failed backup and not save the partial
+file.
+
+### POST /api/restore
+
+Body `application/octet-stream`, **not** JSON: the passphrase as UTF-8, one
+`\n` (0x0A) byte, then the `.landash` file's bytes unchanged. Max 4 MB total.
+
+```
+POST /api/restore
+Content-Type: application/octet-stream
+
+correct horse battery staple
+<file bytes>
+```
+
+The firmware checks every record's authentication tag and stages the whole
+file - on the spare OTA slot used as scratch space - before changing anything
+live, so a bad file leaves the dongle exactly as it was.
+
+`200`:
+
+```json
+{
+  "ok": true,
+  "restarting": true,
+  "hostname": "landash",
+  "fw": "v0.19.0",
+  "created": 1789520400,
+  "devices": 123,
+  "links": 12,
+  "icons": 4
+}
+```
+
+The dongle restarts about a second after replying and applies the backup
+during boot, before anything else starts. It then comes back up with the
+restored hostname and Wi-Fi, so **it may be at a different address or on a
+different network** than the one the request was sent to.
+
+The `error` strings are sentences meant to be shown as they are:
+
+| Status | When |
+|---|---|
+| 400 | the passphrase line is missing, or not 8-128 characters |
+| 400 | `This is not a LANDA.SH backup file.` - bad magic, or an unreadable header |
+| 400 | `The backup is damaged or incomplete.` - a tag failed after the first record, the file ends before its `E` record, or bytes follow it |
+| 403 | `Wrong passphrase.` - the first record fails its tag |
+| 409 | the backup was made by newer firmware than this dongle runs, or uses a newer `format` or key settings: update the dongle first |
+| 409 | a firmware update is downloading, or was installed so recently that it is still on probation: the spare update slot restore stages into holds the image a rollback would need |
+| 408 | the upload stopped part-way |
+| 413 | over 4 MB |
+| 500 | a flash write failed, or out of memory |
+
+Backups travel forwards only. A dongle restores a backup made by the same or
+older firmware - every stored layout since backups began (v0.19.0) must go on
+loading, which is the same promise an update already makes - and refuses one
+made by newer firmware, whose layouts it may not know. A development build
+whose version is a bare commit hash is not checked.
+
+### The `.landash` file format
+
+Documented here so the browser-based installer can be written against it
+without reading the firmware.
+
+| Bytes | Content |
+|---|---|
+| 0-7 | ASCII `LANDASH` followed by `0x0A` |
+| 8-9 | header length `H`, unsigned 16-bit little-endian, at most 1024 |
+| 10..10+H | the header: UTF-8 JSON, readable without the passphrase |
+| 10+H.. | records, until end of file |
+
+Header:
+
+```json
+{
+  "format": 1,
+  "fw": "v0.19.0",
+  "hostname": "landash",
+  "created": 1789520400,
+  "devices": 123,
+  "links": 12,
+  "icons": 4,
+  "kdf": "pbkdf2-sha256",
+  "iterations": 40000,
+  "salt": "<32 hex chars>",
+  "nonce": "<16 hex chars>"
+}
+```
+
+`devices`, `links` and `icons` are informational, for showing what a file
+holds before asking for its passphrase. `devices` counts every device the
+dongle knew, as `devices_total` in `GET /api/status` does.
+
+**Key**: `PBKDF2-HMAC-SHA256(passphrase, salt, iterations, 32 bytes)`. The
+firmware writes 40,000 iterations and accepts 10,000 to 400,000.
+
+**Records**: each is a 4-byte little-endian length `L` (1..8192) giving the
+ciphertext size that follows, then `L` bytes of AES-256-GCM ciphertext, then
+its 16-byte tag - so a whole record on disk is `4 + L + 16` bytes, and `L`
+itself measures only the ciphertext in the middle. Records run back-to-back
+until the file ends.
+
+- **IV** (12 bytes): the header's 8 nonce bytes, then the record's 0-based
+  index as a 4-byte big-endian integer. Every record therefore has a distinct
+  IV under the one key.
+- **AAD**: SHA-256 of every byte of the file before the first record - the
+  magic, the length field and the header, exactly as they appear on disk. This
+  is what stops the header being edited, or records being dropped, reordered
+  or swapped in from a different file, without every remaining tag failing.
+
+Once decrypted, a record's plaintext starts with one type byte:
+
+| Type | Meaning | Layout |
+|---|---|---|
+| `N` | one NVS entry, carried byte for byte | `u8` namespace length, namespace bytes, `u8` key length, key bytes, `u8 nvs_type_t`, then the value: a little-endian integer of the type's width, string bytes with no NUL, or blob bytes. Only the namespaces listed in `main/db/backup.c` are accepted |
+| `F` | start of a file on the storage partition | `u8` name length, name bytes (1-31 of `A-Z a-z 0-9 . _ -`, not starting with `.`), `u32` LE size |
+| `D` | file data, following its `F` | up to 4096 bytes, no length prefix - the record framing above already gives its length |
+| `E` | end of the backup | `u32` LE count of records before this one |
+
+A file (`F`) without a matching `E` having been reached is incomplete and the
+whole restore is refused - see the 400 above. Unknown record types are
+refused outright rather than skipped, since skipping one silently would mean
+restoring a dongle that is missing whatever that record was.
+
+A plaintext record is at most 8,192 bytes. Records come in this order: the
+NVS entries, then the device register (`devices.db`), then one file per
+uploaded icon (`<id>.png`), then `E`.
+
+`format` is bumped only when a reader of the current version could not make
+sense of a file it produces. Within one `format`, the firmware version check
+above still applies.
 
 ---
 

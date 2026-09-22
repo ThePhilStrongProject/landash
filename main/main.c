@@ -19,6 +19,7 @@
 #include "nvs_flash.h"
 
 #include "app_events.h"
+#include "backup.h"
 #include "button.h"
 #include "device_db.h"
 #include "disc_mdns.h"
@@ -62,6 +63,8 @@ void app_main(void)
     ESP_LOGI(TAG, "NetDash %s (IDF %s) starting", app->version, app->idf_ver);
 
     init_nvs();
+    /* Before anything reads NVS or mounts storage: see backup.h. */
+    backup_apply_pending();
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(esp_netif_init());
 

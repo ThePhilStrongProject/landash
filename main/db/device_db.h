@@ -169,6 +169,17 @@ size_t device_db_register_slots(void);
 bool   device_db_get_archived(size_t slot, netdash_device_t *out);
 
 /*
+ * The register as raw bytes, for the backup, which carries the file byte for
+ * byte and writes it back under this name in the storage partition before
+ * device_db_init() next runs. Copies up to max_slots whole records of
+ * DEVICE_DB_REGISTER_REC_BYTES, starting at slot first, free slots included.
+ * Returns how many; 0 past the end. Reads flash.
+ */
+#define DEVICE_DB_REGISTER_FILE      "devices.db"
+#define DEVICE_DB_REGISTER_REC_BYTES 192
+size_t device_db_register_read_raw(size_t first, void *out, size_t max_slots);
+
+/*
  * Copies the record at index (0 .. device_db_count() - 1) into out.
  * Indices are only stable while the lock is held, so hold device_db_lock()
  * across the whole iteration.

@@ -202,6 +202,15 @@ main/
                             timer, and armed only after the first sweep so a
                             fresh flash does not announce the whole network.
 
+  db/backup.c/.h            the .landash backup: every NVS namespace that holds
+                            the user's setup plus every file on the storage
+                            partition, byte for byte, encrypted with a
+                            passphrase. A restore is checked in full and staged
+                            in the idle update slot (borrowed from net/ota.c),
+                            then applied by backup_apply_pending() at the top
+                            of app_main, before anything reads NVS. Its own
+                            NVS "backup" holds when the last one was made.
+
   net/linkcheck.c/.h        one TCP connect per dashboard link, once a minute,
                             so a tile reports whether the service answers
                             rather than whether the box pings. Links whose
@@ -366,6 +375,34 @@ a fake low version, so the real release looks new, and watch the console:
 idf.py -B build_otatest "-DSDKCONFIG=build_otatest/sdkconfig" "-DPROJECT_VER=v0.0.1" build
 git checkout dependencies.lock    # see the next trap
 ```
+
+## Traps in backup and restore
+
+**A backup carries stored layouts, not fields, so every loader is a promise.**
+Settings, links, notes, vault entries and register records go into a
+`.landash` file exactly as they sit in flash, and a restore writes them back
+for the firmware to load as it would after an update. A dongle refuses a
+backup from newer firmware, but must accept one from any older firmware back
+to v0.19.0. So a blob's migration code can never be dropped the way the links
+v1 migration was in v0.14.5: a file made on v0.19.0 may be restored years
+later.
+
+**A new NVS namespace must go on two lists.** `k_nvs_namespaces` in
+`http_server.c` (what a factory reset erases) and `k_namespaces` in
+`db/backup.c` (what a backup carries). Forget the second and the data quietly
+fails to move to a replacement dongle; a restore also refuses any namespace
+not on it.
+
+**A restore uses the idle update slot as scratch.** That slot holds the
+previous firmware, so `ota_borrow_slot()` refuses while an update downloads
+or the running image is still on probation, and an update refuses to start
+while the slot is lent. A refused or failed restore has already erased the
+slot's first sector, so the old image is gone either way; nothing needs it
+once the running image is confirmed.
+
+To try a restore end to end, run `tools/smoke_test.py --restore-roundtrip`
+against a dongle whose data you are happy to have replaced by a copy of
+itself.
 
 ## The dependencies.lock trap
 

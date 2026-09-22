@@ -34,6 +34,7 @@
 #include "nvs.h"
 
 #include "app_events.h"
+#include "backup.h"
 #include "classify.h"
 #include "device_db.h"
 #include "linkcheck.h"
@@ -1689,6 +1690,7 @@ static const char *const k_nvs_namespaces[] = {
     "lsec",   /* credentials on links         */
     "vault",  /* vault salt and verifier      */
     "icons",  /* uploaded icon id counter     */
+    "backup", /* last backup, restored-from   */
 };
 
 static void erase_nvs_namespace(const char *ns)
@@ -1737,6 +1739,144 @@ static esp_err_t factory_reset_handler(httpd_req_t *req)
              (unsigned)(sizeof(k_nvs_namespaces) / sizeof(k_nvs_namespaces[0])));
     schedule_restart(500000);
     return err;
+}
+
+/* ------------------------------------------------------------------------- */
+/* GET / POST /api/backup and POST /api/restore                              */
+/* ------------------------------------------------------------------------- */
+
+static esp_err_t backup_get_handler(httpd_req_t *req)
+{
+    backup_status_t st;
+    backup_get_status(&st);
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddNumberToObject(o, "last_backup", (double)st.last_backup);
+    if (st.restored) {
+        cJSON *r = cJSON_AddObjectToObject(o, "restored");
+        cJSON_AddStringToObject(r, "hostname", st.from.hostname);
+        cJSON_AddStringToObject(r, "fw", st.from.fw);
+        cJSON_AddNumberToObject(r, "created", (double)st.from.created);
+    } else {
+        cJSON_AddNullToObject(o, "restored");
+    }
+    return send_json(req, "200 OK", o);
+}
+
+typedef struct {
+    httpd_req_t *req;
+    bool         started;   /* headers are out: an error can only drop the line */
+} backup_send_t;
+
+static esp_err_t backup_send_chunk(void *ctx, const void *buf, size_t len)
+{
+    backup_send_t *s = ctx;
+    s->started       = true;
+    return httpd_resp_send_chunk(s->req, buf, (ssize_t)len);
+}
+
+static esp_err_t backup_post_handler(httpd_req_t *req)
+{
+    char *body = NULL;
+    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    const cJSON *j = json != NULL ? cJSON_GetObjectItemCaseSensitive(json, "passphrase") : NULL;
+    if (!cJSON_IsString(j) || !backup_passphrase_ok(j->valuestring)) {
+        cJSON_Delete(json);
+        return send_json_error(req, "400 Bad Request",
+                               "passphrase must be 8-128 characters with no control characters");
+    }
+    char pass[BACKUP_PASS_MAX + 1];
+    snprintf(pass, sizeof(pass), "%s", j->valuestring);
+    cJSON_Delete(json);
+
+    const int64_t now = now_or_zero();
+    char          name[64];
+    char          disposition[96];
+    backup_filename(now, name, sizeof(name));
+    snprintf(disposition, sizeof(disposition), "attachment; filename=\"%s\"", name);
+
+    httpd_resp_set_type(req, "application/octet-stream");
+    httpd_resp_set_hdr(req, "Content-Disposition", disposition);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    backup_send_t   ctx = {.req = req};
+    const esp_err_t err = backup_export(pass, now, backup_send_chunk, &ctx);
+    memset(pass, 0, sizeof(pass));
+
+    if (err == ESP_OK) {
+        return httpd_resp_send_chunk(req, NULL, 0);
+    }
+    if (!ctx.started) {
+        httpd_resp_set_hdr(req, "Content-Disposition", "inline");
+        return send_json_error(req, "500 Internal Server Error", "could not make the backup");
+    }
+    /* Part of a file is out. Dropping the connection without the last chunk
+       is the only way left to tell the browser it is not the whole file. */
+    return ESP_FAIL;
+}
+
+typedef struct {
+    httpd_req_t *req;
+    size_t       left;
+} restore_recv_t;
+
+static int restore_recv(void *ctx, void *buf, size_t len)
+{
+    restore_recv_t *r = ctx;
+    if (r->left == 0) {
+        return 0;
+    }
+    const int n = httpd_req_recv(r->req, buf, len < r->left ? len : r->left);
+    if (n > 0) {
+        r->left -= (size_t)n;
+    }
+    return n;
+}
+
+static esp_err_t restore_post_handler(httpd_req_t *req)
+{
+    if (req->content_len > BACKUP_MAX_BYTES + BACKUP_PASS_MAX + 1) {
+        return send_json_error(req, "413 Content Too Large", "backup over 4 MB");
+    }
+
+    restore_recv_t ctx = {.req = req, .left = req->content_len};
+    backup_info_t  info;
+    char           msg[128];
+    const esp_err_t err = backup_restore(restore_recv, &ctx, &info, msg, sizeof(msg));
+
+    if (err != ESP_OK) {
+        const char *status;
+        switch (err) {
+        case ESP_ERR_INVALID_MAC:   status = "403 Forbidden"; break;
+        case ESP_ERR_NOT_SUPPORTED:
+        case ESP_ERR_INVALID_STATE: status = "409 Conflict"; break;
+        case ESP_ERR_INVALID_SIZE:  status = "413 Content Too Large"; break;
+        case ESP_ERR_TIMEOUT:       status = "408 Request Timeout"; break;
+        case ESP_FAIL:
+        case ESP_ERR_NO_MEM:        status = "500 Internal Server Error"; break;
+        default:                    status = "400 Bad Request"; break;
+        }
+        /* httpd drains the unread rest of the body after this reply, so the
+           browser finishes its upload and reads the answer instead of a reset. */
+        return send_json_error(req, status, msg);
+    }
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "ok", true);
+    cJSON_AddBoolToObject(o, "restarting", true);
+    cJSON_AddStringToObject(o, "hostname", info.hostname);
+    cJSON_AddStringToObject(o, "fw", info.fw);
+    cJSON_AddNumberToObject(o, "created", (double)info.created);
+    cJSON_AddNumberToObject(o, "devices", info.devices);
+    cJSON_AddNumberToObject(o, "links", info.links);
+    cJSON_AddNumberToObject(o, "icons", info.icons);
+    const esp_err_t sent = send_json(req, "200 OK", o);
+    schedule_restart(1000000);
+    return sent;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -3316,6 +3456,9 @@ static const httpd_uri_t s_uri_handlers[] = {
     {.uri = "/api/wifi/scan",            .method = HTTP_POST,   .handler = wifi_scan_handler},
     {.uri = "/api/system/reboot",        .method = HTTP_POST,   .handler = reboot_handler},
     {.uri = "/api/system/factory-reset", .method = HTTP_POST,   .handler = factory_reset_handler},
+    {.uri = "/api/backup",               .method = HTTP_GET,    .handler = backup_get_handler},
+    {.uri = "/api/backup",               .method = HTTP_POST,   .handler = backup_post_handler},
+    {.uri = "/api/restore",              .method = HTTP_POST,   .handler = restore_post_handler},
 };
 
 /*

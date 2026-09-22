@@ -90,6 +90,14 @@ bool dev_store_get(const uint8_t id[6], dev_rec_t *out);
 bool dev_store_read_slot(size_t i, dev_rec_t *out);
 
 /*
+ * Copies up to max slots starting at first into out exactly as they are in
+ * the file, free slots included, whole records at a time under the lock so
+ * none is caught half-written. Returns the number copied, 0 past the end. For
+ * the backup, which carries the file byte for byte.
+ */
+size_t dev_store_read_raw(size_t first, dev_rec_t *out, size_t max);
+
+/*
  * Writes rec, replacing the record with the same key or taking a free slot.
  * When the register is full, the record not seen for longest that has no
  * nickname makes way, and *out_evicted (may be NULL) receives its key so the

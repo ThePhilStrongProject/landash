@@ -12,11 +12,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+#include "device_db.h"
 #include "icons.h"
 
 static const char *TAG = "dev_store";
 
-#define STORE_PATH NETDASH_STORAGE_BASE "/devices.db"
+#define STORE_PATH NETDASH_STORAGE_BASE "/" DEVICE_DB_REGISTER_FILE
 
 _Static_assert(sizeof(dev_rec_t) == 192, "the device record layout is persisted");
 
@@ -191,6 +192,27 @@ bool dev_store_read_slot(size_t i, dev_rec_t *out)
     }
     unlock();
     return ok;
+}
+
+size_t dev_store_read_raw(size_t first, dev_rec_t *out, size_t max)
+{
+    if (!s_ready || out == NULL) {
+        return 0;
+    }
+    lock();
+    size_t n = 0;
+    if (first < s_slots) {
+        FILE *f = fopen(STORE_PATH, "rb");
+        if (f != NULL) {
+            const size_t want = s_slots - first < max ? s_slots - first : max;
+            if (fseek(f, (long)(first * sizeof(dev_rec_t)), SEEK_SET) == 0) {
+                n = fread(out, sizeof(dev_rec_t), want, f);
+            }
+            fclose(f);
+        }
+    }
+    unlock();
+    return n;
 }
 
 /*

@@ -62,6 +62,9 @@ static char     s_file_url[256];    /* the image latest.json names          */
 static uint32_t s_file_size;        /* its size, 0 when the manifest omits it */
 static bool     s_pending_verify;   /* running image not yet confirmed good  */
 
+/* The idle slot is lent to the backup restore. Guarded by s_lock. */
+static bool     s_slot_lent;
+
 static void lock(void)   { xSemaphoreTake(s_lock, portMAX_DELAY); }
 static void unlock(void) { xSemaphoreGive(s_lock); }
 
@@ -142,6 +145,11 @@ static bool parse_version(const char *s, int v[3], const char **rest)
         *rest = s;
     }
     return true;
+}
+
+bool ota_parse_version(const char *s, int v[3])
+{
+    return parse_version(s, v, NULL);
 }
 
 /*
@@ -487,6 +495,11 @@ static void do_install(void)
 
     char tag[32];
     lock();
+    if (s_slot_lent) {
+        unlock();
+        set_state(OTA_STATE_ERROR, "A backup is being restored");
+        return;
+    }
     snprintf(tag, sizeof(tag), "%s", s_status.latest);
     s_status.bytes_done  = 0;
     s_status.bytes_total = s_file_size;
@@ -840,4 +853,40 @@ esp_err_t ota_install_now(void)
     }
     xTaskNotify(s_task, REQ_INSTALL, eSetBits);
     return ESP_OK;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Lending the idle slot                                                     */
+/* ------------------------------------------------------------------------- */
+
+const esp_partition_t *ota_borrow_slot(void)
+{
+    if (s_lock == NULL) {
+        return NULL;   /* before ota_init(): nothing is checked yet */
+    }
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t   st;
+    if (running != NULL && esp_ota_get_state_partition(running, &st) == ESP_OK &&
+        st == ESP_OTA_IMG_PENDING_VERIFY) {
+        return NULL;
+    }
+
+    lock();
+    const bool busy = s_slot_lent || s_status.state == OTA_STATE_DOWNLOADING ||
+                      s_status.state == OTA_STATE_REBOOTING;
+    if (!busy) {
+        s_slot_lent = true;
+    }
+    unlock();
+    return busy ? NULL : esp_ota_get_next_update_partition(NULL);
+}
+
+void ota_return_slot(void)
+{
+    if (s_lock == NULL) {
+        return;
+    }
+    lock();
+    s_slot_lent = false;
+    unlock();
 }

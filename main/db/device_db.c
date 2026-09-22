@@ -1369,6 +1369,14 @@ size_t device_db_register_slots(void)
     return dev_store_slots();
 }
 
+_Static_assert(DEVICE_DB_REGISTER_REC_BYTES == sizeof(dev_rec_t),
+               "the backup copies the register in whole records");
+
+size_t device_db_register_read_raw(size_t first, void *out, size_t max_slots)
+{
+    return dev_store_read_raw(first, (dev_rec_t *)out, max_slots);
+}
+
 bool device_db_get_archived(size_t slot, netdash_device_t *out)
 {
     static dev_rec_t          rec;

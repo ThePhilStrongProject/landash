@@ -54,9 +54,16 @@ static void unlock(void)
     }
 }
 
+void icons_file_name(uint16_t id, char *out, size_t cap)
+{
+    snprintf(out, cap, "%u.png", (unsigned)id);
+}
+
 static void path_for(uint16_t id, char *out, size_t cap)
 {
-    snprintf(out, cap, ICON_BASE "/%u.png", (unsigned)id);
+    char name[16];
+    icons_file_name(id, name, sizeof(name));
+    snprintf(out, cap, ICON_BASE "/%s", name);
 }
 
 /* Caller holds the lock. -1 when the id is not present. */
@@ -121,6 +128,34 @@ static void index_locked(void)
 
 /* ------------------------------------------------------------------------- */
 
+static esp_err_t mount(void)
+{
+    const esp_vfs_spiffs_conf_t conf = {
+        .base_path              = ICON_BASE,
+        .partition_label        = ICON_PART,
+        .max_files              = 6,   /* icons, plus the device register */
+        .format_if_mount_failed = true,
+    };
+    return esp_vfs_spiffs_register(&conf);
+}
+
+esp_err_t icons_storage_claim_empty(void)
+{
+    esp_err_t err = mount();
+    if (err == ESP_OK) {
+        err = esp_spiffs_format(ICON_PART);
+        if (err != ESP_OK) {
+            esp_vfs_spiffs_unregister(ICON_PART);
+        }
+    }
+    return err;
+}
+
+void icons_storage_release(void)
+{
+    esp_vfs_spiffs_unregister(ICON_PART);
+}
+
 esp_err_t icons_init(void)
 {
     if (s_lock == NULL) {
@@ -130,14 +165,7 @@ esp_err_t icons_init(void)
         }
     }
 
-    esp_vfs_spiffs_conf_t conf = {
-        .base_path              = ICON_BASE,
-        .partition_label        = ICON_PART,
-        .max_files              = 6,   /* icons, plus the device register */
-        .format_if_mount_failed = true,
-    };
-
-    esp_err_t err = esp_vfs_spiffs_register(&conf);
+    esp_err_t err = mount();
     if (err != ESP_OK) {
         /* A dashboard without uploaded icons is still a dashboard. */
         ESP_LOGW(TAG, "storage unavailable (%s); uploaded icons are disabled",

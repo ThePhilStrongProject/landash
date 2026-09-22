@@ -76,6 +76,9 @@ bool icons_get_at(size_t index, uint16_t *out_id, size_t *out_bytes);
 
 bool icons_exists(uint16_t id);
 
+/* The icon's file name within NETDASH_STORAGE_BASE, "<id>.png". */
+void icons_file_name(uint16_t id, char *out, size_t cap);
+
 esp_err_t icons_delete(uint16_t id);
 
 /*
@@ -93,6 +96,15 @@ void icons_usage(size_t *out_used, size_t *out_total);
  * the namespaces alone would leave the images behind.
  */
 esp_err_t icons_factory_reset(void);
+
+/*
+ * For the backup restore, which runs at boot before icons_init(): mounts the
+ * storage partition at NETDASH_STORAGE_BASE and formats it, so the caller can
+ * write the restored files into an empty volume. icons_storage_release()
+ * unmounts it again, and icons_init() then indexes whatever was written.
+ */
+esp_err_t icons_storage_claim_empty(void);
+void      icons_storage_release(void);
 
 #ifdef __cplusplus
 }

@@ -1047,10 +1047,24 @@ up your credential vault.</p>
 <label class="switch"><input type="checkbox" id="otaAuto"> Install them automatically</label>
 </div>
 <div class="settgroup">
+<h3>Backup</h3>
+<p class="hint" style="margin:0 0 12px">One file that sets up a replacement dongle exactly like
+this one - Wi-Fi password included. Protected by a passphrase you choose now; the vault's secrets
+stay encrypted under the vault passphrase as well. Keep the file somewhere safe: with the
+passphrase, it gets whoever has it onto your Wi-Fi.</p>
+<div id="backupStatus" aria-live="polite"></div>
+<div class="formrow-actions" style="margin-top:10px">
+<button type="button" class="btn" id="backupDownloadBtn">Download backup&hellip;</button>
+<button type="button" class="btn" id="backupRestoreBtn">Restore from backup&hellip;</button>
+<input type="file" id="restoreFile" accept=".landash" hidden>
+</div>
+</div>
+<div class="settgroup">
 <h3>Device list</h3>
 <p class="hint" style="margin:0 0 12px">A JSON copy of every device the dongle knows, with
-the nicknames, types and notes you have given them. Importing merges into what is
-already there rather than replacing it, so it is safe to restore onto a running dongle.</p>
+the nicknames, types and notes you have given them - the nickname-only export. Importing merges
+into what is already there rather than replacing it, so it is safe to restore onto a running
+dongle. Moving to a new dongle? Use Backup, above, instead.</p>
 <div class="formrow-actions" style="margin-top:0">
 <button type="button" class="btn" id="exportBtn">Export devices</button>
 <button type="button" class="btn" id="importBtn">Import devices</button>
@@ -1219,6 +1233,7 @@ iconsMeta: null,
 notifUnread: 0,
 notifRendered: false,
 vault: null,
+backup: null,
 linksEditMode: false,
 linksRenamingId: null,
 linksRendered: false,
@@ -4096,7 +4111,7 @@ if (pane) pane.hidden = !on;
    nothing you asked for. */
 var sb = $("saveBar");
 if (sb) sb.hidden = (key === "maintenance");
-if (key === "maintenance") loadOta();
+if (key === "maintenance"){ loadOta(); loadBackupStatus(); }
 try { localStorage.setItem("netdash-setpage", key); } catch(e){}
 }
 document.querySelectorAll("[data-setpage]").forEach(function(b){
@@ -4236,6 +4251,144 @@ loadDevices();
 reader.readAsText(f);
 $("importFile").value = "";
 });
+
+/* ---- full backup / restore -------------------------------------------- */
+
+function loadBackupStatus(){
+return api("GET","/api/backup").then(function(b){
+state.backup = b; renderBackupStatus();
+}).catch(function(){});
+}
+function renderBackupStatus(){
+var b = state.backup, host = $("backupStatus");
+if (!b || !host) return;
+var stale = !b.last_backup || (Math.floor(Date.now()/1000) - b.last_backup) > 30*86400;
+var line = b.last_backup ? "Last backup: " + relTime(b.last_backup) : "Never backed up";
+var html = "<p class=\"hint\" style=\"margin:0" + (stale ? ";color:var(--warn)" : "") + "\">" +
+esc(line) + "</p>";
+if (b.restored){
+var r = b.restored;
+html += "<p class=\"hint\" style=\"margin:4px 0 0\">Restored from a backup of " +
+esc(r.hostname) + " made " + esc(absTime(r.created)) + " (" + esc(r.fw) + ")</p>";
+}
+host.innerHTML = html;
+}
+
+$("backupDownloadBtn").addEventListener("click", function(){
+var html = "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Download backup\">" +
+"<button type=\"button\" class=\"modalclose\" aria-label=\"Close\">" + icon("i-close") + "</button>" +
+"<h3>Download backup</h3>" +
+"<p class=\"hint\" style=\"margin:0 0 12px\">Choose a passphrase to protect the file. It can't " +
+"be recovered - without it, the file is useless.</p>" +
+"<div class=\"field\"><label for=\"backupPass\">Passphrase</label>" +
+"<input type=\"password\" id=\"backupPass\" autocomplete=\"new-password\" minlength=\"8\"></div>" +
+"<div class=\"field\"><label for=\"backupPass2\">Confirm passphrase</label>" +
+"<input type=\"password\" id=\"backupPass2\" autocomplete=\"new-password\" minlength=\"8\"></div>" +
+"<div class=\"detailactions\"><button type=\"button\" class=\"btn btn-accent\" id=\"backupGoBtn\">Download</button></div>" +
+"</div>";
+openModal(html, function(root){
+root.querySelector(".modalclose").addEventListener("click", closeModal);
+function go(){
+var btn = $("backupGoBtn"), a = $("backupPass").value, b = $("backupPass2").value;
+if (a.length < 8){ toast("The passphrase needs at least 8 characters", "err"); return; }
+if (a.length > 128){ toast("The passphrase is too long", "err"); return; }
+if (/[\x00-\x1f\x7f]/.test(a)){ toast("The passphrase can't contain control characters", "err"); return; }
+if (a !== b){ toast("The two passphrases don't match", "err"); return; }
+btn.disabled = true; btn.textContent = "Preparing backup…";
+fetch("/api/backup", {method:"POST", headers:{"Content-Type":"application/json"},
+body: JSON.stringify({passphrase: a})}).then(function(res){
+if (!res.ok){
+return res.text().then(function(t){
+var d = null; try { d = JSON.parse(t); } catch(e){}
+throw new Error((d && d.error) || ("backup failed (" + res.status + ")"));
+});
+}
+var cd = res.headers.get("Content-Disposition") || "";
+var m = /filename="([^"]+)"/.exec(cd);
+var filename = m ? m[1] : "landash.landash";
+return res.blob().then(function(blob){ return {blob: blob, filename: filename}; });
+}).then(function(r){
+var url = URL.createObjectURL(r.blob);
+var a2 = document.createElement("a");
+a2.href = url; a2.download = r.filename;
+document.body.appendChild(a2); a2.click(); a2.remove();
+URL.revokeObjectURL(url);
+closeModal();
+toast("Backup saved", "ok");
+loadBackupStatus();
+}).catch(function(e){
+btn.disabled = false; btn.textContent = "Download";
+toastErr(e);
+});
+}
+$("backupGoBtn").addEventListener("click", go);
+$("backupPass2").addEventListener("keydown", function(ev){ if (ev.key === "Enter"){ ev.preventDefault(); go(); } });
+});
+});
+
+function openRestoreModal(header, buf){
+var html = "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Restore from backup\">" +
+"<button type=\"button\" class=\"modalclose\" aria-label=\"Close\">" + icon("i-close") + "</button>" +
+"<h3>Restore from backup</h3>" +
+"<p class=\"hint\" style=\"margin:0 0 12px\">Backup of " + esc(header.hostname) + ", made " +
+esc(absTime(header.created)) + ", firmware " + esc(header.fw) + ": " + (header.devices|0) +
+" devices, " + (header.links|0) + " links, " + (header.icons|0) + " icons.</p>" +
+"<p class=\"hint\" style=\"margin:0 0 12px;color:var(--danger)\">This replaces everything on " +
+"this dongle - Wi-Fi, settings, devices, dashboard, vault - and restarts it. There is no undo.</p>" +
+"<div class=\"field\"><label for=\"restorePass\">Passphrase</label>" +
+"<input type=\"password\" id=\"restorePass\" autocomplete=\"current-password\"></div>" +
+"<div class=\"detailactions\"><button type=\"button\" class=\"btn btn-danger\" id=\"restoreGoBtn\">Restore and restart</button></div>" +
+"</div>";
+openModal(html, function(root){
+root.querySelector(".modalclose").addEventListener("click", closeModal);
+function go(){
+var btn = $("restoreGoBtn"), pass = $("restorePass").value;
+if (!pass) return;
+if (/[\r\n]/.test(pass)){ toast("The passphrase can't contain a newline", "err"); return; }
+btn.disabled = true; btn.textContent = "Restoring…";
+var body = new Blob([new TextEncoder().encode(pass + "\n"), buf]);
+fetch("/api/restore", {method:"POST", headers:{"Content-Type":"application/octet-stream"}, body: body})
+.then(function(res){
+return res.text().then(function(t){
+var d = null; try { d = JSON.parse(t); } catch(e){}
+if (!res.ok) throw new Error((d && d.error) || ("restore failed (" + res.status + ")"));
+return d;
+});
+}).then(function(d){
+closeModal();
+toast("Restoring - " + d.hostname + " is restarting. If it used a different hostname or " +
+"Wi-Fi network, it will reappear at http://" + d.hostname + ".local", "ok");
+}).catch(function(e){
+btn.disabled = false; btn.textContent = "Restore and restart";
+toastErr(e);
+});
+}
+$("restoreGoBtn").addEventListener("click", go);
+$("restorePass").addEventListener("keydown", function(ev){ if (ev.key === "Enter"){ ev.preventDefault(); go(); } });
+});
+}
+$("backupRestoreBtn").addEventListener("click", function(){ $("restoreFile").click(); });
+$("restoreFile").addEventListener("change", function(){
+var f = $("restoreFile").files[0];
+$("restoreFile").value = "";
+if (!f) return;
+var reader = new FileReader();
+reader.onload = function(){
+var buf = reader.result, bytes = new Uint8Array(buf);
+if (bytes.length < 10 || String.fromCharCode.apply(null, bytes.subarray(0,8)) !== "LANDASH\n"){
+toast("Not a LANDA.SH backup file", "err"); return;
+}
+var dv = new DataView(buf), hlen = dv.getUint16(8, true);
+if (hlen > 1024 || bytes.length < 10 + hlen){ toast("Not a LANDA.SH backup file", "err"); return; }
+var header;
+try { header = JSON.parse(new TextDecoder("utf-8").decode(bytes.subarray(10, 10 + hlen))); }
+catch(e){ toast("Not a LANDA.SH backup file", "err"); return; }
+openRestoreModal(header, buf);
+};
+reader.onerror = function(){ toast("Could not read that file", "err"); };
+reader.readAsArrayBuffer(f);
+});
+
 $("rebootBtn").addEventListener("click", function(){
 if (!confirm("Reboot the dongle now?")) return;
 api("POST","/api/system/reboot").then(function(){ toast("Rebooting…", "ok"); }).catch(toastErr);
