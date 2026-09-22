@@ -1,6 +1,6 @@
 # LANDA.SH
 
-**The homelab dashboard that maintains itself.**
+**The standalone homelab dashboard that maintains itself.**
 
 A USB dongle that finds every device and service on your network and builds
 your dashboard for you. No server, no Docker, no config files.

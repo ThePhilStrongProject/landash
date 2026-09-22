@@ -51,8 +51,9 @@ APP_DESC_MAGIC = 0xABCD5432
 
 RELEASES_README = """# LANDA.SH firmware
 
-**The homelab dashboard that maintains itself.** A USB dongle that finds every
-device and service on your network and builds your dashboard for you.
+**The standalone homelab dashboard that maintains itself.** A USB dongle that
+finds every device and service on your network and builds your dashboard for
+you.
 
 **[landa.sh](https://landa.sh)** (project page and browser installer)
 · [Source code](https://github.com/ThePhilStrongProject/landash)
