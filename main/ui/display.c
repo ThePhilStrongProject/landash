@@ -110,6 +110,8 @@ static const char *TAG = "display";
 #define COL_OK               0x22C55E
 #define COL_WARN             0xF59E0B
 #define COL_BAD              0xEF4444
+#define COL_MARK_RING        0x25519A   /* COL_ACCENT at 60 % over COL_BG, as the web logo */
+#define COL_MARK_DOT         0x60A5FA
 
 /* ------------------------------------------------------------------------- */
 /* State                                                                     */
@@ -407,8 +409,18 @@ static void build_page_main(void)
     lv_obj_t *page = page_create();
     s_pages[DISPLAY_PAGE_MAIN] = page;
 
+    /* The logo mark (a dot in a ring, as on the web dashboard) before the name. */
+    lv_obj_t *ring = make_box(page, 12, 12, COL_BG);
+    lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(ring, 2, 0);
+    lv_obj_set_style_border_color(ring, lv_color_hex(COL_MARK_RING), 0);
+    lv_obj_align(ring, LV_ALIGN_TOP_LEFT, 6, 8);
+    lv_obj_t *dot = make_box(ring, 4, 4, COL_MARK_DOT);
+    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_center(dot);
+
     lv_obj_t *hdr = make_label(page, &lv_font_montserrat_12, COL_ACCENT, "LANDA.SH");
-    lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 6, 6);
+    lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 23, 6);
 
     for (int i = 0; i < 4; i++) {
         int32_t h = 5 + 3 * i;
