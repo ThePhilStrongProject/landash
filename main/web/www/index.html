@@ -1554,11 +1554,23 @@ if (o.state === "error") return "<span class=\"muted\">" + esc(o.error || "Last 
 return esc(OTA_STATE_TEXT[o.state] || o.state);
 }
 
+function extLink(href, text){
+return "<a href=\"" + esc(href) + "\" target=\"_blank\" rel=\"noopener noreferrer\">" + esc(text) + "</a>";
+}
+/* The changelog lives beside the releases this dongle updates from, so a
+   self-built firmware pointed at its own repository links to its own. */
+function changelogUrl(){
+var repo = (state.ota && state.ota.repo) || "ThePhilStrongProject/landash-releases";
+return "https://github.com/" + repo + "/blob/main/CHANGELOG.md";
+}
+
 function renderSystem(){
 var s = state.status;
 if (!s.fw) return;
 var rows = [
 ["Firmware", esc(s.fw) + (s.idf?(" <span class=\"muted\">("+esc(s.idf)+")</span>"):"")],
+["Project", extLink("https://landa.sh", "landa.sh") + " · " + extLink(changelogUrl(), "Changelog") +
+" · " + extLink("https://github.com/ThePhilStrongProject/landash", "Source code")],
 ["Uptime", fmtUptime(s.uptime_s)],
 ["Free heap", fmtBytes(s.heap_free) + " <span class=\"muted\">(min " + fmtBytes(s.heap_min_free) + ")</span>"],
 ["Mode", esc((s.mode||"").toUpperCase())],
@@ -3987,7 +3999,8 @@ $("otaSource").textContent = o.repo
 : "This firmware was built without automatic updates.";
 
 var rows = [["Running", "<span class=\"mono\">" + esc(o.current) + "</span>"]];
-if (o.latest) rows.push(["Latest release", "<span class=\"mono\">" + esc(o.latest) + "</span>"]);
+if (o.latest) rows.push(["Latest release", "<span class=\"mono\">" + esc(o.latest) + "</span>" +
+(o.available && o.repo ? " · " + extLink(changelogUrl(), "What's new") : "")]);
 var st = (o.state === "error" && o.error) ? o.error : (OTA_STATE_TEXT[o.state] || o.state);
 if (o.last_check && o.state !== "checking" && o.state !== "downloading") {
 st += " · checked " + relTime(o.last_check);
