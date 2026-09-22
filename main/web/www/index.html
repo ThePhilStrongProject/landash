@@ -1062,13 +1062,10 @@ passphrase, it gets whoever has it onto your Wi-Fi.</p>
 <div class="settgroup">
 <h3>Device list</h3>
 <p class="hint" style="margin:0 0 12px">A JSON copy of every device the dongle knows, with
-the nicknames, types and notes you have given them - the nickname-only export. Importing merges
-into what is already there rather than replacing it, so it is safe to restore onto a running
-dongle. Moving to a new dongle? Use Backup, above, instead.</p>
+the nicknames and types you have given them, for a spreadsheet or another tool. Moving to a new
+dongle? Use Backup, above.</p>
 <div class="formrow-actions" style="margin-top:0">
 <button type="button" class="btn" id="exportBtn">Export devices</button>
-<button type="button" class="btn" id="importBtn">Import devices</button>
-<input type="file" id="importFile" accept="application/json,.json" hidden>
 </div>
 </div>
 <div class="settgroup">
@@ -4233,24 +4230,6 @@ $("modalRoot").innerHTML = "";
 document.removeEventListener("keydown", modalEscHandler);
 }
 $("exportBtn").addEventListener("click", function(){ window.location.href = "/api/devices/export"; });
-$("importBtn").addEventListener("click", function(){ $("importFile").click(); });
-$("importFile").addEventListener("change", function(){
-var f = $("importFile").files[0];
-if (!f) return;
-var reader = new FileReader();
-reader.onload = function(){
-var parsed;
-try { parsed = JSON.parse(reader.result); } catch(e){ toast("Not valid JSON", "err"); return; }
-var n = (parsed.devices||[]).length;
-if (!confirm("Import " + n + " device" + (n===1?"":"s") + "? Matching nicknames and settings will be overwritten.")) return;
-api("POST","/api/devices/import", parsed).then(function(res){
-toast("Imported " + res.imported + ", skipped " + res.skipped, "ok");
-loadDevices();
-}).catch(toastErr);
-};
-reader.readAsText(f);
-$("importFile").value = "";
-});
 
 /* ---- full backup / restore -------------------------------------------- */
 
