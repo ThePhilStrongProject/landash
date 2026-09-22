@@ -9,6 +9,10 @@ device on your network, works out what each one is, and serves a dashboard you
 open in any browser. Everything runs on the dongle: no cloud, no account, no
 app.
 
+**[Project page and browser installer](https://thephilstrongproject.github.io/landash-releases/)**
+· **[Firmware releases](https://github.com/ThePhilStrongProject/landash-releases)**
+· [Changelog](https://github.com/ThePhilStrongProject/landash-releases/blob/main/CHANGELOG.md)
+
 ## What it does
 
 - **A start page for your home.** Pin the things you use every day, like your
@@ -39,18 +43,26 @@ app.
 
 - A Waveshare **ESP32-C6-GEEK**. Several revisions exist with different screen
   wiring; see [Hardware](#hardware).
-- A computer with **ESP-IDF v5.5** to build and flash it once over USB.
+- Chrome or Edge on a computer, to install it from the
+  [project page](https://thephilstrongproject.github.io/landash-releases/#install).
+  Or **ESP-IDF v5.5**, if you want to build it yourself.
 - A 2.4 GHz Wi-Fi network. The ESP32-C6 does not do 5 GHz.
 
 ## Getting started
 
-### 1. Build and flash
+### 1. Install
 
-Install [ESP-IDF v5.5](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32c6/get-started/),
+The quickest way is the browser installer on the
+[project page](https://thephilstrongproject.github.io/landash-releases/#install):
+plug the dongle in, press **Install** in Chrome or Edge, and it writes the
+latest release from
+[landash-releases](https://github.com/ThePhilStrongProject/landash-releases).
+
+To build it yourself instead, install [ESP-IDF v5.5](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32c6/get-started/),
 open its terminal (or source `export.sh` / `export.ps1`), then:
 
 ```bash
-git clone <this repository> landash
+git clone https://github.com/ThePhilStrongProject/landash.git
 cd landash
 idf.py set-target esp32c6
 idf.py build
@@ -78,8 +90,9 @@ forgets the Wi-Fi details and returns the dongle to setup mode.
 
 ### 3. Updates
 
-From then on the dongle checks for new firmware twice a day and installs it by
-itself. You can turn that off, or have it wait for you, under
+From then on the dongle checks
+[landash-releases](https://github.com/ThePhilStrongProject/landash-releases)
+for new firmware twice a day and installs it by itself. You can turn that off, or have it wait for you, under
 **Settings › Maintenance**.
 
 > **If you build your own firmware**, point it at your own releases: set
