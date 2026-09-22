@@ -183,6 +183,21 @@ SETTINGS = {
 }
 
 STATUS_EXTRA = {"scanning": False, "scan_done": 0, "scan_total": 0, "last_sweep": ago(120)}
+
+# Firmware updates. A check behaves like the real one: POST /api/ota/check
+# replies with the state as it was, and the check runs a moment later.
+OTA = {"state": "up_to_date", "current": "v0.17.2", "latest": "v0.17.2", "available": False,
+       "auto_blocked": False, "error": None, "rolled_back": None, "last_check": ago(3600),
+       "bytes_done": 0, "bytes_total": 0, "repo": "ThePhilStrongProject/landash-releases"}
+
+
+def ota_check_later():
+    time.sleep(0.4)
+    with LOCK:
+        OTA["state"] = "checking"
+    time.sleep(3)
+    with LOCK:
+        OTA.update(state="up_to_date", last_check=int(time.time()))
 PORTSCAN_CYCLE_STARTED = ago(4000)
 PORTSCAN_PROBES = 18342
 
@@ -377,6 +392,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._get_portscan()
             if path == "/api/links":
                 return self._get_links()
+            if path == "/api/ota":
+                return self._send_json(200, OTA)
         if path.startswith("/api/"):
             return self._error(404, "unknown endpoint")
         return self._send_html()
@@ -393,6 +410,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._wifi_scan()
             if path == "/api/system/reboot":
                 return self._send_json(200, {"ok": True})
+            if path == "/api/ota/check":
+                threading.Thread(target=ota_check_later, daemon=True).start()
+                return self._send_json(202, OTA)
             if path == "/api/system/factory-reset":
                 return self._factory_reset()
             m = re.match(r"^/api/devices/([0-9a-f:]+)/portscan$", path)

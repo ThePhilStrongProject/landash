@@ -3960,9 +3960,23 @@ downloading:"Downloading…", rebooting:"Installed, restarting",
 error:"The last check failed"
 };
 
+/* "Check now" only wakes the update task: the reply comes back before the
+   dongle has moved to "checking", so without this the page shows nothing
+   until the result lands. Show the check as running from the click until
+   the dongle reports one, with a time limit in case it never does. */
+function otaPendingDone(o){
+var p = state.otaPending;
+if (!p) return true;
+if (o.state === "checking"){ p.seen = true; return false; }
+return p.seen || o.last_check !== p.from || (o.state === "error" && p.fromState !== "error") ||
+Date.now() > p.until;
+}
+
 function renderOta(){
 var o = state.ota;
 if (!o) return;
+if (otaPendingDone(o)) state.otaPending = null;
+else if (o.state !== "checking") o = Object.assign({}, o, {state: "checking"});
 
 $("otaSource").textContent = o.repo
 ? "The dongle keeps itself up to date. It checks for new firmware in the background, " +
@@ -4018,13 +4032,19 @@ if (state.status && state.status.fw) renderSystem();
 setInterval(function(){
 if (state.tab !== "settings" || $("setpage-maintenance").hidden) return;
 var o = state.ota;
-var active = o && (o.state === "checking" || o.state === "downloading" || o.state === "rebooting");
+var active = state.otaPending ||
+(o && (o.state === "checking" || o.state === "downloading" || o.state === "rebooting"));
 state.otaTick = (state.otaTick || 0) + 1;
 if (active || state.otaTick % 5 === 0) loadOta();
 }, 2000);
 
 $("otaCheckBtn").addEventListener("click", function(){
-api("POST","/api/ota/check").then(function(o){ state.ota = o; renderOta(); }).catch(toastErr);
+var o = state.ota || {};
+state.otaPending = {from: o.last_check, fromState: o.state, seen: false, until: Date.now() + 30000};
+renderOta();
+api("POST","/api/ota/check").then(function(r){ state.ota = r; renderOta(); }).catch(function(e){
+state.otaPending = null; renderOta(); toastErr(e);
+});
 });
 $("otaInstallBtn").addEventListener("click", function(){
 var v = state.ota && state.ota.latest ? state.ota.latest : "the latest release";
