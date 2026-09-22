@@ -6,8 +6,9 @@ reach the dongle is trusted. This page is honest about what that means.
 ## Reporting a problem
 
 Please report security problems privately, using GitHub's **private
-vulnerability reporting** on this repository (*Security › Report a
-vulnerability*), rather than in a public issue. Include what you found, how
+vulnerability reporting** on this repository
+([report a vulnerability](https://github.com/ThePhilStrongProject/landash/security/advisories/new),
+or *Security › Report a vulnerability*), rather than in a public issue. Include what you found, how
 to reproduce it, and which firmware version (Settings › Maintenance, or the
 System tab). You will get a reply, and a fix will go out as a normal
 over-the-air update.
