@@ -3,7 +3,7 @@
 **The standalone homelab dashboard that maintains itself.**
 
 A USB dongle that finds every device and service on your network and builds
-your dashboard for you. No server, no Docker, no config files.
+the dashboard for you, no server or containers required.
 
 **[landa.sh](https://landa.sh)** (project page and browser installer)
 · [Firmware releases](https://github.com/ThePhilStrongProject/landash-releases)
@@ -19,22 +19,23 @@ your dashboard for you. No server, no Docker, no config files.
 
 ## What it does
 
-- **Finds every device.** A paced ping and ARP sweep every few minutes, with
-  names from mDNS, SSDP, NetBIOS and the router's reverse DNS, and the maker
-  from the MAC address. Each device gets a type, a 24-hour presence history,
-  notes, and a name you can change.
-- **Finds what each device runs.** A slow background port scan, as deep as you
-  choose, repeated on a schedule so services that stop are dropped.
-- **Never goes stale.** Tiles follow the device through IP changes and show
-  whether each service is up.
-- **Tells you what changed.** New devices, services opening or closing, and
-  internet or DNS outages.
-- **Passwords beside services.** An encrypted vault for your router and NAS
-  logins, unlocked with your passphrase. Read [Security](#security) first.
-- **Updates itself.** New releases install automatically and roll back if
-  they fail.
+It finds every device on your network with a paced ping and ARP sweep every
+few minutes, and works out a name for each one from mDNS, SSDP, NetBIOS and
+the router's reverse DNS, plus a maker from the MAC address. Every device
+gets a type, a 24-hour presence history, notes and a name you can change.
 
-It also has five themes, four levels of detail and a welcome tour.
+- A slow background port scan, as deep as you choose, finds what each device
+  runs, and repeats on a schedule so a service that's gone gets dropped again.
+- Tiles follow a device through IP changes and show whether the service
+  behind them is actually up.
+- New devices, services opening or closing, and internet or DNS outages show
+  up in a notification feed.
+- An encrypted vault keeps router and NAS logins next to the tiles that need
+  them, unlocked with a passphrase you choose. Read [Security](#security)
+  first.
+
+It updates itself and rolls back if a release fails, and comes with five
+themes, four levels of detail and a welcome tour.
 
 ## What you need
 
@@ -95,16 +96,15 @@ have it wait for you, under **Settings › Maintenance**.
 
 ## Security
 
-LANDA.SH is meant for a home network you trust.
+LANDA.SH is meant for a home network you trust. There's no login, so anyone
+who can reach the dashboard can use it, including its settings, and it's
+plain HTTP: a browser can't trust a certificate for a device on a home
+network without throwing warnings.
 
-- **No login.** Anyone who can reach the dashboard can use it, including its
-  settings.
-- **Plain HTTP.** A browser can't trust a certificate for a device on a home
-  network without warnings, so the dashboard doesn't use one.
 - **The vault** encrypts logins on the dongle with a key derived from your
-  passphrase, and never stores the key. But the passphrase, and a login when
-  you view it, cross your network unencrypted. It protects against someone
-  stealing the dongle, not someone watching your network.
+  passphrase, and never stores the key itself. The passphrase, and a login
+  when you view it, still cross your network unencrypted: it protects
+  against someone stealing the dongle, not someone watching your network.
 - **Port scanning** is slow and paced, but an intrusion detection system will
   still notice it. You can turn it off.
 
@@ -146,6 +146,14 @@ devices are under *Show them* on the Devices page.
 - `python tools/smoke_test.py http://landash.local` exercises every endpoint of
   a live dongle against the API documentation.
 
+## Why I built this
+
+I'm Phil Strong. I built LANDA.SH because I'm lazy: every time I wanted to
+reach my NAS I had to log into the router first to find its address, so most
+of the time I didn't bother and used Google Drive instead. It runs on my own
+network at home, about 30 devices, two mesh nodes and a couple of NAS boxes.
+Claude Code did a lot of the actual typing.
+
 ## Acknowledgements
 
 Built on [ESP-IDF](https://github.com/espressif/esp-idf) and
@@ -155,7 +163,7 @@ component and its licence.
 
 ## Licence
 
-Copyright (C) 2026 Philip Strong.
+Copyright (C) 2026 Phil Strong.
 
 LANDA.SH is free software under the [GNU General Public License v3.0](LICENSE).
 You may use, change and share it, including selling it, as long as anything
