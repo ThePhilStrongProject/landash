@@ -147,5 +147,10 @@ component and its licence.
 
 ## Licence
 
-Not yet chosen. Until a licence is added, all rights are reserved by the
-author.
+Copyright (C) 2026 Philip Strong.
+
+LANDA.SH is free software, released under the
+[GNU General Public License v3.0](LICENSE): you may use, change and share it,
+including selling it, as long as anything you distribute that is based on it
+comes with its source under the same licence. The components it builds on
+keep their own licences; see [THIRD_PARTY.md](THIRD_PARTY.md).

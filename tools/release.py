@@ -57,8 +57,11 @@ dongle. Plug it in and it joins your Wi-Fi, finds the devices on your network,
 works out what each one is, and serves a dashboard of them from the dongle
 itself. It needs no cloud service, app or account.
 
-This repository holds the built firmware that dongles update themselves from.
-There is no source code here.
+This repository holds the built firmware that dongles update themselves from,
+and the project page with its browser installer. The source code is at
+[ThePhilStrongProject/landash](https://github.com/ThePhilStrongProject/landash),
+under the [GPL-3.0](https://github.com/ThePhilStrongProject/landash/blob/main/LICENSE);
+each `landash-vX.Y.Z.bin` is built from the tag of the same name there.
 
 ## What's here
 

@@ -4,6 +4,9 @@ Thanks for looking. LANDA.SH is small and opinionated: a calm dashboard first,
 running entirely on one small dongle. Changes that keep it that way are very
 welcome.
 
+LANDA.SH is licensed under the [GPL-3.0](LICENSE). By sending a pull request
+you agree that your contribution is released under the same licence.
+
 ## Before you start
 
 Read [CLAUDE.md](CLAUDE.md). It is the developer's guide, written for AI coding
