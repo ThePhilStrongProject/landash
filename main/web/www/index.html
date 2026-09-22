@@ -444,10 +444,10 @@ border-radius:var(--r-sm);padding:9px 11px;margin:0;flex:1;min-width:0}
 .lockedhint{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:var(--fs-sm)}
 
 /* --- availability sparkline --------------------------------------------- */
-.spark{display:flex;align-items:flex-end;gap:1px;height:30px;padding:3px 0}
-.spark i{flex:1 1 0;min-width:1px;height:100%;border-radius:1px;background:var(--surface2)}
-.spark i.on{background:var(--online)}
-.spark i.off{background:rgba(var(--danger-rgb),.55)}
+.spark{display:block;width:100%;height:24px;margin:3px 0;border-radius:3px;
+background:var(--surface2)}
+.spark rect.on{fill:var(--online)}
+.spark rect.off{fill:rgba(var(--danger-rgb),.55)}
 .sparkaxis{display:flex;justify-content:space-between;font-size:var(--fs-xs);
 color:var(--muted);margin-top:4px}
 
@@ -2330,18 +2330,33 @@ return;
 }
 var bytes = [];
 for (var i = 0; i + 1 < h.bits.length; i += 2) bytes.push(parseInt(h.bits.substr(i,2),16));
-var bars = "";
-for (var j = 0; j < valid; j++){
-var on = (bytes[j >> 3] >> (j & 7)) & 1;
-bars += "<i class=\"" + (on ? "on" : "off") + "\"></i>";
+function bit(j){ return (bytes[j >> 3] >> (j & 7)) & 1; }
+/* The strip is always the whole day. History lives in RAM, so after a reboot
+   only the last `valid` slots are known; the rest stay the empty background.
+   The newest slot is still in progress - a device the sweep has not reached
+   yet is not down - so it only counts once it has been seen. */
+var total = 288;
+var known = bit(valid - 1) ? valid : valid - 1;
+var off0 = total - valid;
+var rects = "", up = 0, run = 0;
+for (var j = 0; j < known; j++){
+var on = bit(j);
+up += on;
+if (j + 1 < known && bit(j + 1) === on) continue;
+rects += "<rect class=\"" + (on ? "on" : "off") + "\" x=\"" + (off0 + run) +
+"\" y=\"0\" width=\"" + (j + 1 - run) + "\" height=\"1\"/>";
+run = j + 1;
 }
-var mins = valid * (h.slot_sec || 300) / 60;
-var span = mins >= 120 ? (Math.round(mins/60) + " hours") : (Math.round(mins) + " minutes");
-var up = 0;
-for (var k = 0; k < valid; k++) up += (bytes[k >> 3] >> (k & 7)) & 1;
-host.innerHTML = "<div class=\"spark\">" + bars + "</div>" +
-"<div class=\"sparkaxis\"><span>" + esc(span) + " ago</span>" +
-"<span>" + Math.round(100*up/valid) + "% reachable</span><span>now</span></div>";
+var pct = known ? Math.round(100*up/known) + "% reachable" : "Waiting for the first sweep";
+if (known && valid < total){
+var mins = known * (h.slot_sec || 300) / 60;
+pct += " in the last " +
+(mins >= 120 ? Math.round(mins/60) + " hours" : Math.round(mins) + " minutes");
+}
+host.innerHTML = "<svg class=\"spark\" viewBox=\"0 0 " + total + " 1\" " +
+"preserveAspectRatio=\"none\" shape-rendering=\"crispEdges\" aria-hidden=\"true\">" + rects + "</svg>" +
+"<div class=\"sparkaxis\"><span>24 hours ago</span>" +
+"<span>" + esc(pct) + "</span><span>now</span></div>";
 }).catch(function(){
 host.innerHTML = "<p class=\"muted\" style=\"margin:0;font-size:var(--fs-sm)\">History unavailable.</p>";
 });
