@@ -484,6 +484,9 @@ Verified on a live /24 home network (23 devices):
   the tile repainting with the result - was driven end to end in headless Edge
   against the live dongle. A 300x120 JPEG became a 1,930-byte 64x64 PNG.
 - Free heap about 112 KB with a low-water mark of 88 KB in normal polling.
+- The LCD's orientation, colour order and panel window (v0.18.1): upright,
+  correct colours, and no noise along any edge with the y gap at 53. On a
+  board mounted the other way up, `NETDASH_LCD_ROTATE_180` wants y 52.
 
 ### Heap, and the one endpoint that still costs
 
@@ -499,7 +502,5 @@ stream if the device table ever gets close to its 128-device capacity.
 
 Not verified:
 
-- The LCD's physical orientation and colour order. If the image is upside down,
-  flip `NETDASH_LCD_ROTATE_180`; the other knobs are in `Kconfig.projbuild`.
 - The dashboard rendered in a browser. The API behind it is fully exercised.
 - Long-term stability beyond a few minutes of uptime.
