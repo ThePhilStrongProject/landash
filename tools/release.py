@@ -115,7 +115,9 @@ esptool image-info firmware/landash-vX.Y.Z.bin                          # esptoo
 python -m esptool image_info --version 2 firmware/landash-vX.Y.Z.bin    # esptool 4
 ```
 
-Look for `Project name: netdash` and the version you expect.
+Look for the version you expect, and `Project name: netdash`. That is
+LANDA.SH's original internal name. It stays because dongles only accept an
+update with the same project name as their own.
 """
 
 CHANGELOG_HEAD = """# Changelog
