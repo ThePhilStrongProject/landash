@@ -1,16 +1,22 @@
 /*
- * NetDash per-device notes, and the vault that holds the secret ones.
+ * NetDash notes and credentials on dashboard links, and the vault that holds
+ * the credentials.
  *
  * Two separate things live here because they share a lifetime (both are keyed
- * by MAC and both die with the device) but not a threat model:
+ * by link id and both die with the link) but not a threat model:
  *
- *   notes   Plain text, NVS namespace "note". Served to anyone who can reach
- *           the web UI, exactly like a nickname. For "IPMI is on .211".
+ *   notes   Plain text, NVS namespace "lnote". Served to anyone who can reach
+ *           the web UI, exactly like a nickname. For "8443 is the HTTPS one".
  *
- *   secrets AES-256-GCM ciphertext, NVS namespace "sec". Only ever decrypted
+ *   secrets AES-256-GCM ciphertext, NVS namespace "lsec". Only ever decrypted
  *           after someone has unlocked the vault with the passphrase, and the
  *           key is derived from that passphrase every time - it is never
- *           stored. For "root / hunter2".
+ *           stored. For "admin / hunter2".
+ *
+ * Devices had a note and a secret of their own until v0.21.0, in namespaces
+ * "note" and "sec". Nothing reads those any more. They are left in flash so a
+ * rollback still finds them; a factory reset erases them, and so does
+ * vault_reset(), since it promises to destroy every secret.
  *
  * What the vault is for, stated plainly so nobody over-trusts it:
  *
@@ -44,7 +50,6 @@
 extern "C" {
 #endif
 
-#define NETDASH_NOTE_MAX        256  /* including the NUL */
 #define NETDASH_LINK_NOTE_MAX   160  /* including the NUL */
 #define NETDASH_SECRET_MAX      192  /* plaintext, including the NUL */
 #define NETDASH_VAULT_TOKEN_LEN 33   /* 32 hex characters plus the NUL */
@@ -53,21 +58,6 @@ extern "C" {
 
 /* Loads the note and secret indexes. Safe to call before Wi-Fi is up. */
 esp_err_t notes_init(void);
-
-/* ------------------------------------------------------------------------- */
-/* Plain text notes                                                          */
-/* ------------------------------------------------------------------------- */
-
-/* NULL or "" erases the note. */
-esp_err_t notes_set(const uint8_t mac[6], const char *text);
-
-/* Copies the note into out. False when there is none; out is still NUL-set. */
-bool notes_get(const uint8_t mac[6], char *out, size_t cap);
-
-bool notes_exists(const uint8_t mac[6]);
-
-/* Erases both the note and the secret for mac. Used by DELETE /api/devices. */
-esp_err_t notes_forget_device(const uint8_t mac[6]);
 
 /* ------------------------------------------------------------------------- */
 /* Notes on dashboard links                                                  */
@@ -83,7 +73,7 @@ esp_err_t notes_forget_device(const uint8_t mac[6]);
  * and widening netdash_link_t would mean migrating the layout again.
  *
  * These are plain text and are served to anyone who can reach the web UI, the
- * same as a device note. Secrets belong in the vault.
+ * same as a nickname. Secrets belong in the vault.
  */
 
 /* NULL or "" erases the note. */
@@ -99,11 +89,12 @@ esp_err_t link_note_forget(uint16_t link_id);
 
 /*
  * Credentials against a link. A device may run half a dozen services, each
- * with its own login, so the service is the useful unit - the device-level
- * secret below is for the box itself, such as a console or BMC password.
+ * with its own login, so the service is the useful unit.
  *
- * Same vault, same key, same rules: the vault must be unlocked, and rotating
- * the passphrase re-encrypts these along with everything else.
+ * Setting one needs the vault unlocked (ESP_ERR_INVALID_STATE otherwise);
+ * NULL or "" erases it. Getting one also fails ESP_ERR_NOT_FOUND when there is
+ * none, and ESP_ERR_INVALID_MAC when the ciphertext fails its tag. Rotating
+ * the passphrase re-encrypts every one of them.
  */
 esp_err_t link_secret_set(uint16_t link_id, const char *text);
 esp_err_t link_secret_get(uint16_t link_id, char *out, size_t cap);
@@ -158,29 +149,6 @@ bool vault_token_valid(const char *token);
  * passphrase is lost - the secrets are not recoverable, by design.
  */
 esp_err_t vault_reset(void);
-
-/* ------------------------------------------------------------------------- */
-/* Secrets                                                                   */
-/* ------------------------------------------------------------------------- */
-
-/*
- * Encrypts text against mac and stores it. NULL or "" erases the secret.
- * ESP_ERR_INVALID_STATE when the vault is locked.
- */
-esp_err_t secret_set(const uint8_t mac[6], const char *text);
-
-/*
- * Decrypts the secret for mac into out.
- * ESP_ERR_INVALID_STATE when locked, ESP_ERR_NOT_FOUND when there is none,
- * ESP_ERR_INVALID_MAC when the ciphertext fails its authentication tag.
- */
-esp_err_t secret_get(const uint8_t mac[6], char *out, size_t cap);
-
-/* True when a secret is stored, whether or not the vault is unlocked. */
-bool secret_exists(const uint8_t mac[6]);
-
-/* How many devices have a secret. Shown while the vault is locked. */
-size_t secret_count(void);
 
 #ifdef __cplusplus
 }

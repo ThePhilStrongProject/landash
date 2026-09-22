@@ -42,7 +42,6 @@
 #include "app_events.h"
 #include "classify.h"
 #include "dev_store.h"
-#include "notes.h"
 #include "notify.h"
 #include "oui.h"
 #include "wifi_mgr.h"
@@ -632,8 +631,7 @@ static bool edit_device(dev_rec_t *rec, bool created, void *ctx)
 
 /*
  * Writes the device to the register, creating its record if need be. Flash
- * I/O: never with the lock held. When the register was full and a long-gone
- * device was forgotten to make room, its notes go with it.
+ * I/O: never with the lock held.
  */
 static esp_err_t store_device(const netdash_device_t *d, const port_state_t *ps)
 {
@@ -641,13 +639,7 @@ static esp_err_t store_device(const netdash_device_t *d, const port_state_t *ps)
         return ESP_ERR_INVALID_STATE;
     }
     store_ctx_t ctx = { .dev = d, .ports = ps };
-    uint8_t     evicted[6];
-    bool        did_evict = false;
-    esp_err_t   err = dev_store_update(d->mac, true, edit_device, &ctx, evicted, &did_evict);
-    if (did_evict) {
-        notes_forget_device(evicted);
-    }
-    return err;
+    return dev_store_update(d->mac, true, edit_device, &ctx, NULL, NULL);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -2006,8 +1998,6 @@ esp_err_t device_db_remove(const uint8_t mac[6])
     if (!found) {
         return ESP_ERR_NOT_FOUND;
     }
-    /* Forgetting a device means forgetting what was written about it too. */
-    notes_forget_device(mac);
     return dev_store_remove(mac);
 }
 
@@ -2057,12 +2047,7 @@ esp_err_t device_db_ensure_shared(const uint8_t id[6], const uint8_t hw_mac[6], 
 
     /* Remembered, not active: an imported device is offline until it is seen. */
     ensure_ctx_t ctx = { .hw = hw_mac, .ip = ip, .shared = memcmp(id, hw_mac, 6) != 0 };
-    uint8_t      evicted[6];
-    bool         did_evict = false;
-    esp_err_t    err = dev_store_update(id, true, edit_ensure, &ctx, evicted, &did_evict);
-    if (did_evict) {
-        notes_forget_device(evicted);
-    }
+    esp_err_t    err = dev_store_update(id, true, edit_ensure, &ctx, NULL, NULL);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "cannot import %02x:%02x:%02x:%02x:%02x:%02x: %s", id[0], id[1], id[2],
                  id[3], id[4], id[5], esp_err_to_name(err));

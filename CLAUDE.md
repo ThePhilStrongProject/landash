@@ -181,17 +181,19 @@ main/
                             reused, which is what makes the served bytes
                             immutably cacheable.
 
-  db/notes.c/.h             plain-text notes for devices (NVS "note") and links
-                            (NVS "lnote"), plus the AES-256-GCM vault holding
-                            secrets for devices (NVS "sec") and credentials for
+  db/notes.c/.h             plain-text notes on dashboard links (NVS "lnote"),
+                            plus the AES-256-GCM vault holding credentials for
                             links (NVS "lsec"), with its metadata in "vault".
+                            Devices had a note and a secret of their own until
+                            v0.21.0 (NVS "note" and "sec"); nothing reads those
+                            now, but a factory reset still erases them and a
+                            restore drops them from older backups.
                             The key is derived from a passphrase with PBKDF2 on
                             every unlock and never stored. Everything encrypted
                             is addressed through a sec_ref_t - namespace, key,
-                            and the AAD that binds it to its owner - so a
-                            passphrase change re-encrypts every kind in one
-                            pass, and a third kind means extending build_refs()
-                            rather than writing another rotation loop. Read the
+                            and the AAD that binds it to its owner - so another
+                            kind of secret means extending build_refs() rather
+                            than writing another rotation loop. Read the
                             header before trusting it with anything: it does not
                             defend against LAN traffic capture, because the
                             dashboard is plain HTTP.
@@ -522,12 +524,12 @@ Verified on a live /24 home network (23 devices):
   nodes. 253 addresses probed, 23 alive.
 - Naming works from mDNS, the router's reverse DNS and SSDP; vendors resolve
   for every device that is not using a randomised MAC.
-- `tools/smoke_test.py` passes all 115 checks against the real device, which
-  now covers groups, device and link notes, both kinds of vault secret and a
-  passphrase rotation carrying both, history, WAN, the feed and uploaded
-  icons. It reports 89 when a vault already exists, because exercising the
-  vault means destroying it at the end and the suite will not do that to
-  someone's real credentials. Do not work around that guard by hand - a vault
+- `tools/smoke_test.py` passes against the real device, covering groups, link
+  notes, link credentials in the vault and a passphrase rotation carrying
+  them, history, WAN, the feed, uploaded icons and backups. It ran 131 checks
+  with a vault already present (v0.21.0 work), and skips the vault's own
+  checks then, because exercising the vault means destroying it at the end
+  and the suite will not do that to someone's real credentials. Do not work around that guard by hand - a vault
   created between two runs belongs to the user, not to the test.
 - The browser half of the icon upload - decode, resize, re-encode, POST, and
   the tile repainting with the result - was driven end to end in headless Edge

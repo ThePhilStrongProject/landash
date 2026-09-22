@@ -82,10 +82,8 @@ static const char *TAG = "backup";
 static const char *const k_namespaces[] = {
     "cfg",    /* settings, Wi-Fi and setup-AP passwords included */
     "links",  /* dashboard links and groups                      */
-    "note",   /* notes on devices                                */
     "lnote",  /* notes on links                                  */
-    "sec",    /* secrets on devices, still vault-encrypted       */
-    "lsec",   /* credentials on links, likewise                  */
+    "lsec",   /* credentials on links, still vault-encrypted     */
     "vault",  /* vault salt and verifier                         */
     "icons",  /* uploaded icon id counter                        */
 };
@@ -94,8 +92,12 @@ static const char *const k_namespaces[] = {
  * Not carried, but wiped by a restore: the storage from before v0.16, which
  * device_db copies into a register it has to create. A backup made without a
  * register would otherwise have this dongle's old devices appear in it.
+ *
+ * Also the device notes and secrets that firmware before v0.21 kept. Those did
+ * go into backups, so a file from then carries them: its entries are accepted
+ * and dropped rather than refusing the whole file.
  */
-static const char *const k_legacy_namespaces[] = {"dev", "ports"};
+static const char *const k_legacy_namespaces[] = {"dev", "ports", "note", "sec"};
 
 #define COUNT_OF(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -188,6 +190,16 @@ static bool namespace_carried(const char *ns)
 {
     for (size_t i = 0; i < COUNT_OF(k_namespaces); i++) {
         if (strcmp(ns, k_namespaces[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool namespace_legacy(const char *ns)
+{
+    for (size_t i = 0; i < COUNT_OF(k_legacy_namespaces); i++) {
+        if (strcmp(ns, k_legacy_namespaces[i]) == 0) {
             return true;
         }
     }
@@ -859,7 +871,7 @@ static esp_err_t check_record(restore_t *s, const uint8_t *p, size_t len, uint32
         n += kl;
         const uint8_t type = p[n++];
         const size_t  vl   = len - n;
-        if (!namespace_carried(ns)) {
+        if (!namespace_carried(ns) && !namespace_legacy(ns)) {
             return ESP_ERR_NOT_SUPPORTED;
         }
         if (nvs_int_type(type)) {
@@ -1207,6 +1219,9 @@ static void apply_record(apply_t *a, uint8_t *p, size_t len)
         const uint8_t type = p[n++];
         p[len]             = '\0';
 
+        if (namespace_legacy(ns)) {
+            return;   /* from older firmware, and nothing reads it now */
+        }
         if (strcmp(ns, a->ns) != 0) {
             if (a->ns[0] != '\0') {
                 nvs_commit(a->h);

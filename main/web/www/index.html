@@ -429,13 +429,11 @@ white-space:nowrap}
 .wanpill.degraded{color:var(--warn);border-color:rgba(245,158,11,.35)}
 .wanpill.down{color:var(--danger);border-color:rgba(var(--danger-rgb),.4)}
 
-/* --- notes and secrets -------------------------------------------------- */
+/* --- link notes and credentials ----------------------------------------- */
 .notebox{width:100%;min-height:76px;resize:vertical;font:inherit;font-size:var(--fs-sm);
 line-height:1.5;padding:9px 11px;border-radius:var(--r-sm);border:1px solid var(--border);
 background:var(--bg);color:var(--text)}
 .notebox:focus{outline:2px solid var(--accent);outline-offset:-1px}
-.notetext{font-size:var(--fs-sm);line-height:1.55;white-space:pre-wrap;word-break:break-word;margin:0}
-.secretrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .modal.narrow{max-width:460px}
 .secretval.big{font-size:var(--fs-md);line-height:1.6;padding:14px 16px;margin:4px 0 0}
 .secretval{font-family:var(--mono);font-size:var(--fs-sm);white-space:pre-wrap;
@@ -458,7 +456,6 @@ border-radius:var(--r-sm);background:var(--surface);color:var(--text);cursor:poi
 .iconpick button:hover{border-color:var(--accent)}
 .iconpick button[aria-pressed="true"]{border-color:var(--accent);background:rgba(var(--accent-rgb),.14)}
 .iconpick .ic{width:19px;height:19px}
-.rowmark{width:13px;height:13px;color:var(--muted);flex:none}
 .upic{object-fit:contain;image-rendering:auto;border-radius:3px}
 .lc-icon.upic{width:1.15em;height:1.15em}
 .uploadtile{border-style:dashed !important;color:var(--muted) !important}
@@ -1718,7 +1715,6 @@ return "<tr data-mac=\"" + esc(d.mac) + "\" class=\"devrow" + (d.archived ? " ar
 "<span class=\"sr-only\">" + (d.online?"Online":"Offline") + "</span></span></td>" +
 "<td data-col=\"name\" data-label=\"Name\"><span class=\"namecell\">" +
 "<span class=\"nm\" title=\"" + esc(d.display_name) + "\">" + esc(d.display_name) + "</span>" + isNew +
-(d.has_note ? icon("i-note", "rowmark") : "") + (d.has_secret ? icon("i-key", "rowmark") : "") +
 "<button type=\"button\" class=\"iconbtn\" data-act=\"edit\" aria-label=\"Edit name for " + esc(d.display_name) + "\">" + icon("i-pencil") + "</button>" +
 "<button type=\"button\" class=\"expandbtn\" data-act=\"expand\" aria-label=\"Show more\">⋯</button>" +
 "</span></td>" +
@@ -2013,8 +2009,6 @@ return "" +
 icon(TYPE_ICON[type]||"i-unknown") + esc(TYPE_LABEL[type]||type) + "</button></dd>" +
 "<dt>Nickname</dt><dd>" + esc(d.nickname||"—") + "</dd>" +
 "</dl></div>" +
-"<div class=\"detailsection\"><h4>Notes</h4><div id=\"noteHost\"></div></div>" +
-"<div class=\"detailsection\"><h4>Secret</h4><div id=\"secretHost\"></div></div>" +
 "<div class=\"detailsection\"><h4>Seen over the last 24 hours</h4><div id=\"sparkHost\"></div></div>" +
 "<div class=\"detailsection\"><h4>Discovery</h4><dl class=\"kv\">" +
 "<dt>Sources</dt><dd><div class=\"chiprow\">" + sources + "</div></dd>" +
@@ -2125,50 +2119,8 @@ if (!d){ root.innerHTML = "<p class=\"empty\">Device not found.</p>"; return; }
 root.innerHTML = detailHtml(d) +
 (st.error ? ("<p class=\"empty\" style=\"color:var(--danger)\">" + esc(st.error) + "</p>") : "");
 wireDetailBody(d);
-renderNote(d);
-renderSecret(d);
 renderSpark(d);
 }
-/* ---- notes ---------------------------------------------------------- */
-
-function renderNote(d){
-var host = $("noteHost");
-if (!host) return;
-var note = d.note || "";
-if (state.detail.editingNote){
-host.innerHTML = "<textarea class=\"notebox\" id=\"noteInput\" maxlength=\"255\" " +
-"placeholder=\"What would you want to be told about this box in six months? " +
-"Where its admin page is, which vault entry holds the password, what it is for.\"></textarea>" +
-"<div class=\"detailactions\" style=\"margin-top:8px\">" +
-"<button type=\"button\" class=\"btn btn-accent\" id=\"noteSaveBtn\">Save</button>" +
-"<button type=\"button\" class=\"btn\" id=\"noteCancelBtn\">Cancel</button></div>";
-var ta = $("noteInput");
-ta.value = note;
-ta.focus();
-$("noteSaveBtn").addEventListener("click", function(){
-api("PUT","/api/devices/"+d.mac+"/note",{note:ta.value})
-.then(function(){
-state.detail.editingNote = false;
-toast("Note saved","ok");
-fetchDetail();
-}).catch(toastErr);
-});
-$("noteCancelBtn").addEventListener("click", function(){
-state.detail.editingNote = false; renderNote(d);
-});
-return;
-}
-host.innerHTML = (note
-? "<p class=\"notetext\">" + esc(note) + "</p>"
-: "<p class=\"muted\" style=\"margin:0;font-size:var(--fs-sm)\">No note yet.</p>") +
-"<div class=\"detailactions\" style=\"margin-top:8px\">" +
-"<button type=\"button\" class=\"btn\" id=\"noteEditBtn\">" +
-icon("i-pencil") + " " + (note ? "Edit note" : "Add a note") + "</button></div>";
-$("noteEditBtn").addEventListener("click", function(){
-state.detail.editingNote = true; renderNote(d);
-});
-}
-
 /* ---- vault ---------------------------------------------------------- */
 
 var vaultToken = null;   /* session only: never written to storage */
@@ -2180,99 +2132,6 @@ return api("GET","/api/vault").then(function(v){
 state.vault = v;
 if (!v.unlocked) vaultToken = null;
 return v;
-});
-}
-
-function renderSecret(d){
-var host = $("secretHost");
-if (!host) return;
-var v = state.vault || {};
-var st = state.detail;
-
-if (!v.configured){
-host.innerHTML = "<div class=\"lockedhint\">" + icon("i-lock") +
-"<span>No vault yet. Set a passphrase in Settings to store credentials here.</span></div>";
-return;
-}
-if (!vaultUnlocked()){
-host.innerHTML = "<div class=\"lockedhint\">" + icon("i-lock") + "<span>" +
-(d.has_secret ? "A secret is stored for this device." : "Vault is locked.") +
-"</span></div><div class=\"detailactions\" style=\"margin-top:8px\">" +
-"<button type=\"button\" class=\"btn\" id=\"secUnlockBtn\">Unlock vault</button></div>";
-$("secUnlockBtn").addEventListener("click", function(){ openUnlockModal(function(){ renderSecret(d); }); });
-return;
-}
-
-if (st.editingSecret){
-host.innerHTML = "<textarea class=\"notebox\" id=\"secInput\" maxlength=\"191\" " +
-"placeholder=\"root / hunter2&#10;Recovery key in Bitwarden under 'pve'\"></textarea>" +
-"<div class=\"detailactions\" style=\"margin-top:8px\">" +
-"<button type=\"button\" class=\"btn btn-accent\" id=\"secSaveBtn\">Save</button>" +
-"<button type=\"button\" class=\"btn\" id=\"secCancelBtn\">Cancel</button></div>";
-var ta = $("secInput");
-ta.value = st.secretText || "";
-ta.focus();
-$("secSaveBtn").addEventListener("click", function(){
-apiAuth("PUT","/api/devices/"+d.mac+"/secret",{secret:ta.value})
-.then(function(){
-st.editingSecret = false; st.secretText = null; st.secretShown = false;
-ta.value = "";
-toast("Secret saved","ok");
-fetchDetail();
-}).catch(toastErr);
-});
-$("secCancelBtn").addEventListener("click", function(){
-st.editingSecret = false; st.secretText = null; renderSecret(d);
-});
-return;
-}
-
-if (!d.has_secret){
-host.innerHTML = "<p class=\"muted\" style=\"margin:0;font-size:var(--fs-sm)\">Nothing stored.</p>" +
-"<div class=\"detailactions\" style=\"margin-top:8px\">" +
-"<button type=\"button\" class=\"btn\" id=\"secAddBtn\">" + icon("i-key") + " Add a secret</button></div>";
-$("secAddBtn").addEventListener("click", function(){
-st.editingSecret = true; st.secretText = ""; renderSecret(d);
-});
-return;
-}
-
-host.innerHTML = "<div class=\"secretrow\">" +
-(st.secretShown
-? "<pre class=\"secretval\">" + esc(st.secretText || "") + "</pre>"
-: "<pre class=\"secretval\">" + "•".repeat(12) + "</pre>") +
-"</div><div class=\"detailactions\" style=\"margin-top:8px\">" +
-"<button type=\"button\" class=\"btn\" id=\"secShowBtn\">" +
-icon(st.secretShown ? "i-eye-off" : "i-eye") + " " + (st.secretShown ? "Hide" : "Reveal") + "</button>" +
-(st.secretShown ? "<button type=\"button\" class=\"btn\" id=\"secCopyBtn\">Copy</button>" : "") +
-"<button type=\"button\" class=\"btn\" id=\"secEditBtn\">Replace</button>" +
-"<button type=\"button\" class=\"btn btn-danger-outline\" id=\"secDelBtn\">Delete</button></div>";
-
-$("secShowBtn").addEventListener("click", function(){
-if (st.secretShown){ st.secretShown = false; st.secretText = null; renderSecret(d); return; }
-apiAuth("GET","/api/devices/"+d.mac+"/secret").then(function(r){
-st.secretText = r.secret || ""; st.secretShown = true; renderSecret(d);
-}).catch(toastErr);
-});
-var copyBtn = $("secCopyBtn");
-if (copyBtn) copyBtn.addEventListener("click", function(){
-if (!navigator.clipboard){ toast("Clipboard unavailable","err"); return; }
-navigator.clipboard.writeText(st.secretText || "")
-.then(function(){ toast("Copied","ok"); })
-.catch(function(){ toast("Could not copy","err"); });
-});
-$("secEditBtn").addEventListener("click", function(){
-apiAuth("GET","/api/devices/"+d.mac+"/secret").then(function(r){
-st.secretText = r.secret || ""; st.editingSecret = true; renderSecret(d);
-}).catch(toastErr);
-});
-$("secDelBtn").addEventListener("click", function(){
-if (!confirm("Delete the stored secret for this device?")) return;
-apiAuth("PUT","/api/devices/"+d.mac+"/secret",{secret:""})
-.then(function(){
-st.secretShown = false; st.secretText = null;
-toast("Secret deleted","ok"); fetchDetail();
-}).catch(toastErr);
 });
 }
 
@@ -2372,7 +2231,7 @@ state.devicesByMac[d.mac] = d;
 var idx = state.devices.findIndex(function(x){ return x.mac === d.mac; });
 if (idx !== -1) state.devices[idx] = d;
 if (state.tab === "devices") renderDevices();
-if (!state.detail.editingName && !state.detail.editingNote && !state.detail.editingSecret) renderDetailBody();
+if (!state.detail.editingName) renderDetailBody();
 }).catch(function(err){
 if (state.detail.mac !== mac) return;
 state.detail.loading = false;
@@ -2386,7 +2245,7 @@ var opener = state.detail.opener, mac = state.detail.mac;
 if (detailKeyHandler){ document.removeEventListener("keydown", detailKeyHandler); detailKeyHandler = null; }
 $("detailRoot").innerHTML = "";
 state.detail = { mac: null, data: null, loading: false, error: null, editingName: false,
-editingNote: false, editingSecret: false, secretShown: false, secretText: null, opener: null };
+opener: null };
 if (!opener || !document.contains(opener)){
 opener = document.querySelector('tr.devrow[data-mac="' + mac.replace(/"/g,"") + '"]');
 }
@@ -2396,8 +2255,7 @@ else $("tab-devices").focus();
 function openDetail(mac, opener){
 closePopover();
 state.detail = { mac: mac, data: state.devicesByMac[mac]||null, loading: true, error: null,
-editingName: false, editingNote: false, editingSecret: false,
-secretShown: false, secretText: null, opener: opener||null };
+editingName: false, opener: opener||null };
 var back = document.createElement("div");
 back.className = "drawerback";
 back.innerHTML = "<div class=\"drawer\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Device details\" id=\"detailPanel\">" +
@@ -2961,9 +2819,8 @@ if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)){ ev.preventDefault(); save
 }
 
 /*
- * Per-link credentials. Same vault, same token, same fifteen-minute relock as
- * the device secrets - only the thing they hang off differs, because one box
- * can run half a dozen services each with its own login.
+ * Per-link credentials, in the vault: one box can run half a dozen services,
+ * each with its own login, so they hang off the link rather than the device.
  */
 var linkSecState = {shown:false, text:null, editing:false};
 
@@ -3539,13 +3396,10 @@ var blurb = $("vaultBlurb");
 if (!blurb) return;
 if (!v.configured){
 blurb.textContent = "No vault has been set up. Choose a passphrase to start storing " +
-"credentials against devices.";
+"credentials against dashboard links.";
 } else {
-var n = (v.secrets||0) + (v.link_secrets||0);
-var held = n === 0 ? "nothing yet"
-: (n + " entr" + (n === 1 ? "y" : "ies") +
-((v.link_secrets||0) && (v.secrets||0)
-? " (" + v.secrets + " on devices, " + v.link_secrets + " on links)" : ""));
+var n = v.link_secrets || 0;
+var held = n === 0 ? "nothing yet" : (n + " entr" + (n === 1 ? "y" : "ies"));
 blurb.textContent = v.unlocked
 ? ("Vault is unlocked, holding " + held + ". It relocks after " +
 Math.round((v.idle_timeout_s||900)/60) + " minutes idle.")
@@ -3581,14 +3435,13 @@ toast("Vault locked","ok");
 }).catch(toastErr);
 });
 $("vaultResetBtn").addEventListener("click", function(){
-var n = (state.vault && state.vault.secrets) || 0;
+var n = (state.vault && state.vault.link_secrets) || 0;
 if (!confirm("Destroy the vault and all " + n + " secret" + (n===1?"":"s") +
 " in it? They cannot be recovered.")) return;
 if (!confirm("Last chance. This is permanent.")) return;
 api("DELETE","/api/vault",{confirm:"destroy secrets"}).then(function(v){
 vaultToken = null; state.vault = v; renderVaultSettings();
 toast("Vault destroyed","ok");
-loadDevices();
 }).catch(toastErr);
 });
 
@@ -3727,7 +3580,7 @@ var name = s.hostname || "landash";
 return { mac: s.mac || "", hw_mac: s.mac || "", ip: s.ip || "", display_name: name,
 nickname: "", hostname: name, vendor: "Espressif", type: "iot", type_override: null,
 services: ["http"], sources: [], online: true, is_new: true, hidden: false,
-has_note: false, has_secret: false, shared_mac: false, first_seen: now, last_seen: now,
+shared_mac: false, first_seen: now, last_seen: now,
 open_port_count: 1, portscan_tier: 1 };
 }
 
@@ -4404,8 +4257,7 @@ if (state.tab === "dashboard") loadLinks();
 if (state.tab === "devices") loadDevices();
 if (state.tab === "system") loadEvents();
 if (feedOpen()) loadNotifs();
-if (state.detail.mac && !state.detail.editingName && !state.detail.editingNote &&
-!state.detail.editingSecret) fetchDetail();
+if (state.detail.mac && !state.detail.editingName) fetchDetail();
 }
 setInterval(tick, 5000);
 var savedTab = "dashboard";

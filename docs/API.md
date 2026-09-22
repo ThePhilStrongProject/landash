@@ -179,11 +179,11 @@ different addresses. Keyed by MAC alone they would collapse into one entry that
 The firmware recognises this pattern and splits it: the entry already holding
 that MAC keeps it and is pinned to one address, and every other address gets an
 entry of its own with `shared_mac: true`, the same `hw_mac`, and a synthetic
-`mac` that serves as its key everywhere a key is needed - PATCH, notes,
-secrets, links, history, the port scan. A synthetic key starts with `03:`,
+`mac` that serves as its key everywhere a key is needed - PATCH, links,
+history, the port scan. A synthetic key starts with `03:`,
 which as a multicast address can never be a real device's MAC. It is derived
 from `hw_mac` and the address, so the same device gets the same key after a
-reboot and its nickname and notes come back with it.
+reboot and its nickname comes back with it.
 
 Telling this apart from an ordinary DHCP move needs time rather than a single
 sighting, because lwIP keeps a departed host's ARP entry for up to five
@@ -223,7 +223,7 @@ up to `CONFIG_NETDASH_MAX_DEVICES` (144) - are in RAM, and this endpoint, which
 the page polls, lists them. Every device ever seen also has a record in the
 **register** in flash, up to `CONFIG_NETDASH_REGISTER_DEVICES` (1,024). When
 the active table is full, the device offline longest leaves it; its record
-keeps its nickname, type, notes, ports and the rest, and it becomes active
+keeps its nickname, type, ports and the rest, and it becomes active
 again the moment it is seen. Those remembered-only devices are listed with
 `archived=1`, on request rather than on every poll, because there can be a
 thousand of them. `devices_archived` in `GET /api/status` says how many there
@@ -237,8 +237,8 @@ Query parameters:
 | `online` | `0` or `1` | — | when `1`, only online devices |
 | `archived` | `0` or `1` | `0` | when `1`, list **only** the remembered devices that are not active, each with `"archived": true`. One flash read per device |
 
-Everything else that takes a `{mac}` - `GET`, `PATCH`, `DELETE`, notes,
-secrets, history - works for a remembered device too. It is offline, and it
+Everything else that takes a `{mac}` - `GET`, `PATCH`, `DELETE`, history -
+works for a remembered device too. It is offline, and it
 has no history (that is kept for active devices only).
 
 ```http
@@ -322,8 +322,8 @@ The full table plus a header, for backing up nicknames.
 `Content-Disposition: attachment; filename="landash-devices.json"`.
 
 This is nicknames only. For a file that sets up a replacement dongle
-identically - Wi-Fi credentials, hostname, every device, links, icons, notes
-and the vault - see **The full backup**, below.
+identically - Wi-Fi credentials, hostname, every device, links and their
+notes, icons and the vault - see **The full backup**, below.
 
 ---
 
@@ -358,7 +358,7 @@ stands for.
 A single `.landash` file that sets up a replacement dongle identically:
 settings including the Wi-Fi SSID and password, hostname and setup-AP
 password, every device ever seen (nicknames, types, ports), dashboard links
-and groups, uploaded icons, notes, and the vault (still encrypted under the
+and groups with their notes, uploaded icons, and the vault (still encrypted under the
 vault passphrase - a backup does not need the vault unlocked, and does not
 expose its secrets in the clear). The notification feed and update bookkeeping
 are not included, since neither means anything on a different dongle.
@@ -544,6 +544,11 @@ A file (`F`) without a matching `E` having been reached is incomplete and the
 whole restore is refused - see the 400 above. Unknown record types are
 refused outright rather than skipped, since skipping one silently would mean
 restoring a dongle that is missing whatever that record was.
+
+The one exception is the device notes and device secrets that firmware before
+v0.21.0 kept (NVS namespaces `note` and `sec`). A backup made on such a dongle
+carries them; a restore accepts those entries and drops them, since there is
+nothing left to show them.
 
 A plaintext record is at most 8,192 bytes. Records come in this order: the
 NVS entries, then the device register (`devices.db`), then one file per
@@ -988,8 +993,9 @@ does not exist. 404 for an unknown link id.
 ### Notes on links
 
 A link can carry a short note, shown on its tile. A link is a service rather
-than a box, so this is the place for "admin account, 8443 is the HTTPS one" -
-the device note in `GET /api/devices/{mac}` is for the machine as a whole.
+than a box, so this is the place for "admin account, 8443 is the HTTPS one".
+Devices themselves have no notes: what is worth writing down is almost always
+about a service, and a box with nothing on the dashboard has nowhere to put it.
 
 Set it through `PATCH /api/links/{id}` with a `note` member, at most 159
 characters; an empty string erases it. It comes back on every link object as
@@ -1003,18 +1009,14 @@ widening the link record would mean migrating the stored layout again. Deleting
 a link - including implicitly, through the bulk delete in `PUT /api/links` -
 takes its note with it.
 
-Like a device note this is **plain text**, readable by anyone who can reach the
+A note is **plain text**, readable by anyone who can reach the
 web UI. Credentials belong in the vault.
 
 ### Credentials on a link
 
-The vault holds two kinds of secret, because a device and a service are not the
-same thing. One box may run half a dozen services, each with its own login, so
-the service is usually the useful unit; the device-level secret is for the box
-itself, such as a console or BMC password.
-
-Same vault, same passphrase, same token, same fifteen-minute relock. Changing
-the passphrase re-encrypts **both** kinds in one pass.
+The vault holds credentials against links rather than devices. One box may run
+half a dozen services, each with its own login, so the service is the useful
+unit.
 
 ```
 GET /api/links/{id}/secret
@@ -1045,15 +1047,14 @@ Every link object carries `has_secret`, and **never** the secret itself.
 The dashboard deliberately does not act on `has_secret` when drawing a tile:
 a key icon on the ones that have credentials would tell anyone glancing at
 the screen which services have a login saved, which is not theirs to know.
-`GET /api/vault` reports `secrets` and `link_secrets` separately.
+`GET /api/vault` counts them as `link_secrets`.
 
 Deleting a link destroys its credentials, including through the bulk delete in
 `PUT /api/links`.
 
-The two kinds use differently shaped additional authenticated data - six raw
-MAC bytes for a device, the text `link:<id>` for a link - so a ciphertext
-lifted from one slot and dropped into another fails its tag rather than
-decrypting under the wrong name, in either direction.
+Each ciphertext carries the text `link:<id>` as additional authenticated data,
+so one lifted from one link's slot and dropped into another's fails its tag
+rather than decrypting under the wrong name.
 
 ### DELETE /api/links/{id}
 
@@ -1122,29 +1123,6 @@ Sets the heading order. Unlike `PUT /api/links` this is **not** a bulk delete:
 the ids must be a permutation of the existing ones. 400 otherwise, with the
 stored order untouched.
 
-## Per-device notes
-
-A plain-text note kept against a device, for the things you would otherwise
-have to remember — where its admin page is, which vault entry holds its
-password, what it is actually for.
-
-Notes are served to anyone who can reach the web UI, exactly like a nickname.
-Anything that should not be is a **secret**, below.
-
-### PUT /api/devices/{mac}/note
-
-```json
-{ "note": "Proxmox host. Root pw in Bitwarden under 'pve'. IPMI on .211." }
-```
-
-At most 255 characters; an empty string erases the note. Returns
-`{ "ok": true, "has_note": true }`.
-
-400 when the note is too long, 404 for an unknown device.
-
-The note itself comes back on `GET /api/devices/{mac}` as `note`. The device
-list carries only the `has_note` flag, so the polled endpoint stays small.
-
 ## The secret vault
 
 Credentials, encrypted with AES-256-GCM under a key derived from a passphrase
@@ -1163,6 +1141,13 @@ crypto in the browser instead would fix that and was the first design tried;
 
 The vault relocks itself after 15 minutes idle and on every reboot.
 
+It holds credentials for dashboard links - see **Credentials on a link**,
+above. Until v0.21.0 devices could carry a secret of their own, and a plain
+note, at `/api/devices/{mac}/secret` and `/api/devices/{mac}/note`. Both were
+removed; a request to either now fails with 404 or 405. Anything stored under them is left in
+flash untouched, so a dongle rolled back to older firmware still has it, and
+a factory reset still erases it.
+
 ### GET /api/vault
 
 ```json
@@ -1171,7 +1156,6 @@ The vault relocks itself after 15 minutes idle and on every reboot.
   "unlocked": false,
   "idle_timeout_s": 900,
   "expires_in_s": 0,
-  "secrets": 3,
   "link_secrets": 5,
   "max_len": 191,
   "min_passphrase": 8
@@ -1222,25 +1206,6 @@ Wipes the key from RAM and invalidates the token. Returns the vault state.
 Destroys the vault and every secret in it. This is the way out when the
 passphrase has been lost; the secrets are not recoverable, by design. The
 confirmation phrase must match exactly.
-
-### GET /api/devices/{mac}/secret
-
-Requires an `X-Vault-Token` header from an unlock. Returns
-`{ "secret": "..." }`.
-
-401 when the vault is locked or the token is wrong, 404 when there is no
-secret, 409 when the ciphertext fails its authentication tag.
-
-### PUT /api/devices/{mac}/secret
-
-```json
-{ "secret": "root / hunter2" }
-```
-
-Requires `X-Vault-Token`. At most 191 characters; an empty string erases it.
-Returns `{ "ok": true, "has_secret": true }`.
-
-The device object carries `has_secret` but **never** the secret itself.
 
 ## GET /api/devices/{mac}/history
 

@@ -542,8 +542,6 @@ static cJSON *device_to_json(const netdash_device_t *d, int64_t now)
     cJSON_AddBoolToObject(o, "hidden", (d->flags & NETDASH_FLAG_HIDDEN) != 0);
     cJSON_AddNumberToObject(o, "rtt_ms", d->rtt_ms);
     cJSON_AddNumberToObject(o, "miss_count", d->miss_count);
-    cJSON_AddBoolToObject(o, "has_note", notes_exists(d->mac));
-    cJSON_AddBoolToObject(o, "has_secret", secret_exists(d->mac));
 
     /*
      * Port-scan summary. The list endpoint is polled every few seconds, so it
@@ -981,13 +979,6 @@ static esp_err_t devices_get_handler(httpd_req_t *req)
     }
     cJSON *o = device_to_json(&d, now_or_zero());
     device_add_ports(o, mac);
-
-    char note[NETDASH_NOTE_MAX];
-    if (notes_get(mac, note, sizeof(note))) {
-        cJSON_AddStringToObject(o, "note", note);
-    } else {
-        cJSON_AddStringToObject(o, "note", "");
-    }
     return send_json(req, "200 OK", o);
 }
 
@@ -1684,9 +1675,9 @@ static const char *const k_nvs_namespaces[] = {
     "links",  /* dashboard links and groups   */
     "ota",    /* update bookkeeping           */
     "notif",  /* notification feed            */
-    "note",   /* notes on devices             */
+    "note",   /* device notes, before v0.21   */
     "lnote",  /* notes on links               */
-    "sec",    /* secrets on devices           */
+    "sec",    /* device secrets, before v0.21 */
     "lsec",   /* credentials on links         */
     "vault",  /* vault salt and verifier      */
     "icons",  /* uploaded icon id counter     */
@@ -2463,7 +2454,7 @@ static esp_err_t groups_put_handler(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------------- */
-/* Per-device notes, secrets and history                                     */
+/* Per-device history                                                        */
 /* ------------------------------------------------------------------------- */
 
 /*
@@ -2500,46 +2491,6 @@ static bool device_sub_uri(const char *uri, const char *suffix, uint8_t mac[6])
         return false;
     }
     return strcmp(sub, suffix) == 0;
-}
-
-static esp_err_t note_put_handler(httpd_req_t *req)
-{
-    uint8_t mac[6];
-    if (!device_sub_uri(req->uri, "note", mac)) {
-        return send_json_error(req, "404 Not Found", "not found");
-    }
-    netdash_device_t dev;
-    if (!device_db_get_by_mac(mac, &dev)) {
-        return send_json_error(req, "404 Not Found", "device not found");
-    }
-
-    char *body = NULL;
-    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
-        return ESP_OK;
-    }
-    cJSON *json = cJSON_Parse(body);
-    free(body);
-    if (json == NULL) {
-        return send_json_error(req, "400 Bad Request", "invalid json");
-    }
-
-    const cJSON *j = cJSON_GetObjectItemCaseSensitive(json, "note");
-    if (!cJSON_IsString(j) || strlen(j->valuestring) >= NETDASH_NOTE_MAX) {
-        cJSON_Delete(json);
-        return send_json_error(req, "400 Bad Request", "note too long");
-    }
-
-    const esp_err_t err = notes_set(mac, j->valuestring);
-    cJSON_Delete(json);
-
-    if (err != ESP_OK) {
-        return send_json_error(req, "500 Internal Server Error", "could not save note");
-    }
-
-    cJSON *o = cJSON_CreateObject();
-    cJSON_AddBoolToObject(o, "ok", true);
-    cJSON_AddBoolToObject(o, "has_note", notes_exists(mac));
-    return send_json(req, "200 OK", o);
 }
 
 /*
@@ -2598,7 +2549,6 @@ static cJSON *vault_state_json(void)
     cJSON_AddBoolToObject(o, "unlocked", vault_unlocked());
     cJSON_AddNumberToObject(o, "idle_timeout_s", NETDASH_VAULT_IDLE_S);
     cJSON_AddNumberToObject(o, "expires_in_s", vault_idle_remaining());
-    cJSON_AddNumberToObject(o, "secrets", secret_count());
     cJSON_AddNumberToObject(o, "link_secrets", link_secret_count());
     cJSON_AddNumberToObject(o, "max_len", NETDASH_SECRET_MAX - 1);
     cJSON_AddNumberToObject(o, "min_passphrase", NETDASH_VAULT_PASS_MIN);
@@ -2729,86 +2679,6 @@ static esp_err_t vault_delete_handler(httpd_req_t *req)
         return send_json_error(req, "500 Internal Server Error", "could not reset vault");
     }
     return send_json(req, "200 OK", vault_state_json());
-}
-
-static esp_err_t secret_get_handler(httpd_req_t *req)
-{
-    uint8_t mac[6];
-    if (!device_sub_uri(req->uri, "secret", mac)) {
-        return send_json_error(req, "404 Not Found", "not found");
-    }
-    if (!vault_authorised(req)) {
-        return send_json_error(req, "401 Unauthorized", "vault is locked");
-    }
-
-    char            text[NETDASH_SECRET_MAX];
-    const esp_err_t err = secret_get(mac, text, sizeof(text));
-
-    if (err == ESP_ERR_NOT_FOUND) {
-        return send_json_error(req, "404 Not Found", "no secret for this device");
-    }
-    if (err == ESP_ERR_INVALID_STATE) {
-        return send_json_error(req, "401 Unauthorized", "vault is locked");
-    }
-    if (err == ESP_ERR_INVALID_MAC) {
-        return send_json_error(req, "409 Conflict", "secret failed its integrity check");
-    }
-    if (err != ESP_OK) {
-        return send_json_error(req, "500 Internal Server Error", "could not read secret");
-    }
-
-    cJSON *o = cJSON_CreateObject();
-    cJSON_AddStringToObject(o, "secret", text);
-    memset(text, 0, sizeof(text));
-    return send_json(req, "200 OK", o);
-}
-
-static esp_err_t secret_put_handler(httpd_req_t *req)
-{
-    uint8_t mac[6];
-    if (!device_sub_uri(req->uri, "secret", mac)) {
-        return send_json_error(req, "404 Not Found", "not found");
-    }
-    if (!vault_authorised(req)) {
-        return send_json_error(req, "401 Unauthorized", "vault is locked");
-    }
-    netdash_device_t dev;
-    if (!device_db_get_by_mac(mac, &dev)) {
-        return send_json_error(req, "404 Not Found", "device not found");
-    }
-
-    char *body = NULL;
-    if (read_body(req, BODY_MAX_BYTES, &body) != ESP_OK) {
-        return ESP_OK;
-    }
-    cJSON *json = cJSON_Parse(body);
-    free(body);
-    if (json == NULL) {
-        return send_json_error(req, "400 Bad Request", "invalid json");
-    }
-
-    const cJSON *j = cJSON_GetObjectItemCaseSensitive(json, "secret");
-    if (!cJSON_IsString(j) || strlen(j->valuestring) >= NETDASH_SECRET_MAX) {
-        cJSON_Delete(json);
-        return send_json_error(req, "400 Bad Request", "secret too long");
-    }
-
-    const esp_err_t err = secret_set(mac, j->valuestring);
-    /* Wipe the plaintext out of the parsed body before it is freed. */
-    memset(j->valuestring, 0, strlen(j->valuestring));
-    cJSON_Delete(json);
-
-    if (err == ESP_ERR_INVALID_STATE) {
-        return send_json_error(req, "401 Unauthorized", "vault is locked");
-    }
-    if (err != ESP_OK) {
-        return send_json_error(req, "500 Internal Server Error", "could not save secret");
-    }
-
-    cJSON *o = cJSON_CreateObject();
-    cJSON_AddBoolToObject(o, "ok", true);
-    cJSON_AddBoolToObject(o, "has_secret", secret_exists(mac));
-    return send_json(req, "200 OK", o);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -3039,26 +2909,6 @@ static esp_err_t devices_get_router(httpd_req_t *req)
     }
     if (strcmp(sub, "history") == 0) {
         return history_get_handler(req);
-    }
-    if (strcmp(sub, "secret") == 0) {
-        return secret_get_handler(req);
-    }
-    return send_json_error(req, "404 Not Found", "not found");
-}
-
-static esp_err_t devices_put_router(httpd_req_t *req)
-{
-    uint8_t mac[6];
-    char    sub[32];
-
-    if (!device_uri_split(req->uri, mac, sub, sizeof(sub))) {
-        return send_json_error(req, "400 Bad Request", "bad mac");
-    }
-    if (strcmp(sub, "note") == 0) {
-        return note_put_handler(req);
-    }
-    if (strcmp(sub, "secret") == 0) {
-        return secret_put_handler(req);
     }
     return send_json_error(req, "404 Not Found", "not found");
 }
@@ -3416,7 +3266,6 @@ static const httpd_uri_t s_uri_handlers[] = {
     {.uri = "/api/links/*",              .method = HTTP_DELETE, .handler = links_delete_handler},
     /* One route per method; the routers above pick the sub-resource. */
     {.uri = "/api/devices/*",            .method = HTTP_GET,    .handler = devices_get_router},
-    {.uri = "/api/devices/*",            .method = HTTP_PUT,    .handler = devices_put_router},
     {.uri = "/api/devices/*",            .method = HTTP_POST,   .handler = devices_post_router},
     {.uri = "/api/devices/*",            .method = HTTP_PATCH,  .handler = devices_patch_handler},
     {.uri = "/api/devices/*",            .method = HTTP_DELETE, .handler = devices_delete_handler},

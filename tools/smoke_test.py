@@ -435,30 +435,23 @@ def main():
         st, _, _ = request(base, "DELETE", f"/api/links/groups/{gid}")
         check("delete a group", st == 200, f"status {st}")
 
-    # --- notes --------------------------------------------------------------
-    print("\nnotes")
+    # --- devices carry no notes or secrets ---------------------------------
+    # Removed in v0.21.0: notes and credentials belong to links.
+    print("\ndevice notes and secrets are gone")
     st, devices, _ = request(base, "GET", "/api/devices")
     mac = devices[0]["mac"] if isinstance(devices, list) and devices else None
-    check("a device is available to annotate", mac is not None, "no devices listed")
+    check("a device is available", mac is not None, "no devices listed")
 
     if mac:
-        check("device list carries note and secret markers",
-              "has_note" in devices[0] and "has_secret" in devices[0],
-              sorted(devices[0])[:10])
-
-        st, r, _ = request(base, "PUT", f"/api/devices/{mac}/note",
-                           {"note": "smoke test note"})
-        check("save a note", st == 200 and (r or {}).get("has_note"), f"status {st}")
-
+        check("the device list has no note or secret markers",
+              "has_note" not in devices[0] and "has_secret" not in devices[0],
+              sorted(devices[0])[:12])
         st, d, _ = request(base, "GET", f"/api/devices/{mac}")
-        check("note round-trips", (d or {}).get("note") == "smoke test note",
-              repr((d or {}).get("note"))[:80])
-
-        st, _, _ = request(base, "PUT", f"/api/devices/{mac}/note", {"note": "x" * 300})
-        check("an over-long note is rejected", st == 400, f"status {st}")
-
-        st, r, _ = request(base, "PUT", f"/api/devices/{mac}/note", {"note": ""})
-        check("clear a note", st == 200 and not (r or {}).get("has_note"), f"status {st}")
+        check("a device has no note field", "note" not in (d or {}), sorted(d or {})[:12])
+        st, _, _ = request(base, "PUT", f"/api/devices/{mac}/note", {"note": "x"}, expect=None)
+        check("the device note route is gone", st in (404, 405), f"status {st}")
+        st, _, _ = request(base, "GET", f"/api/devices/{mac}/secret", expect=None)
+        check("the device secret route is gone", st == 404, f"status {st}")
 
     # --- availability history ----------------------------------------------
     print("\nhistory")
@@ -544,54 +537,25 @@ def main():
 
     if (v or {}).get("configured"):
         print("       a vault is already set up - skipping the destructive checks")
-    elif mac:
+    else:
+        check("the vault counts only link credentials",
+              "link_secrets" in (v or {}) and "secrets" not in (v or {}), sorted(v or {}))
+
         st, _, _ = request(base, "PUT", "/api/vault", {"passphrase": "short"})
         check("a short passphrase is rejected", st == 400, f"status {st}")
 
         st, v, _ = request(base, "PUT", "/api/vault", {"passphrase": "smoke test passphrase"})
         token = (v or {}).get("token")
         check("create the vault", st == 200 and token, f"status {st}")
+        current_pass = "smoke test passphrase"
 
-        st, _, _ = request(base, "PUT", f"/api/devices/{mac}/secret", {"secret": "hunter2"})
-        check("storing a secret needs a token", st == 401, f"status {st}")
-
-        auth = {"X-Vault-Token": token or ""}
-        st, r, _ = request(base, "PUT", f"/api/devices/{mac}/secret",
-                           {"secret": "hunter2"}, extra_headers=auth)
-        check("store a secret", st == 200 and (r or {}).get("has_secret"), f"status {st}")
-
-        st, r, _ = request(base, "GET", f"/api/devices/{mac}/secret", extra_headers=auth)
-        check("read the secret back", st == 200 and (r or {}).get("secret") == "hunter2",
-              repr(r)[:80])
-
-        st, d, _ = request(base, "GET", f"/api/devices/{mac}")
-        check("the secret never rides on the device object", "secret" not in (d or {}),
-              sorted(d or {})[:10])
-
-        st, _, _ = request(base, "GET", f"/api/devices/{mac}/secret",
-                           extra_headers={"X-Vault-Token": "0" * 32})
-        check("a wrong token is rejected", st == 401, f"status {st}")
-
-        st, v2, _ = request(base, "PUT", "/api/vault",
-                            {"old_passphrase": "smoke test passphrase",
-                             "passphrase": "smoke test passphrase two"})
-        token2 = (v2 or {}).get("token")
-        check("rotate the passphrase", st == 200 and token2, f"status {st}")
-
-        st, r, _ = request(base, "GET", f"/api/devices/{mac}/secret",
-                           extra_headers={"X-Vault-Token": token2 or ""})
-        check("the secret survives re-encryption",
-              st == 200 and (r or {}).get("secret") == "hunter2", repr(r)[:80])
-
-        # --- credentials on a link, which share the vault -------------------
-        current_pass = "smoke test passphrase two"
         st, ls, _ = request(base, "GET", "/api/links")
         link_ids = [x["id"] for x in (ls or {}).get("links", [])]
         if not link_ids:
-            print("       no links to attach credentials to - skipping")
+            print("       no links to attach credentials to - skipping those checks")
         else:
             lid = link_ids[0]
-            auth2 = {"X-Vault-Token": token2 or ""}
+            auth = {"X-Vault-Token": token or ""}
             check("links advertise a credentials flag",
                   "has_secret" in ls["links"][0], sorted(ls["links"][0])[:10])
 
@@ -600,15 +564,18 @@ def main():
             check("link credentials need a token", st == 401, f"status {st}")
 
             st, r, _ = request(base, "PUT", f"/api/links/{lid}/secret",
-                               {"secret": "smoke / linkpass"}, extra_headers=auth2)
+                               {"secret": "smoke / linkpass"}, extra_headers=auth)
             check("store credentials on a link",
                   st == 200 and (r or {}).get("has_secret"), f"status {st}")
 
-            st, r, _ = request(base, "GET", f"/api/links/{lid}/secret",
-                               extra_headers=auth2)
+            st, r, _ = request(base, "GET", f"/api/links/{lid}/secret", extra_headers=auth)
             check("read link credentials back",
                   st == 200 and (r or {}).get("secret") == "smoke / linkpass",
                   repr(r)[:80])
+
+            st, _, _ = request(base, "GET", f"/api/links/{lid}/secret",
+                               extra_headers={"X-Vault-Token": "0" * 32})
+            check("a wrong token is rejected", st == 401, f"status {st}")
 
             st, r, _ = request(base, "GET", "/api/links")
             got = [x for x in r.get("links", []) if x["id"] == lid]
@@ -617,48 +584,37 @@ def main():
             check("credentials never ride on the link object",
                   got and "secret" not in got[0], sorted(got[0])[:12] if got else "")
 
-            # A rotation that forgot a namespace would lose these silently,
-            # so check both kinds come through the same one.
-            st, v5, _ = request(base, "PUT", "/api/vault",
-                                {"old_passphrase": "smoke test passphrase two",
-                                 "passphrase": "smoke test passphrase three"})
-            token3 = (v5 or {}).get("token")
-            check("rotate again with both kinds stored", st == 200 and token3,
-                  f"status {st}")
-            auth3 = {"X-Vault-Token": token3 or ""}
+            st, v2, _ = request(base, "PUT", "/api/vault",
+                                {"old_passphrase": "smoke test passphrase",
+                                 "passphrase": "smoke test passphrase two"})
+            token = (v2 or {}).get("token")
+            check("rotate the passphrase", st == 200 and token, f"status {st}")
+            current_pass = "smoke test passphrase two"
 
             st, r, _ = request(base, "GET", f"/api/links/{lid}/secret",
-                               extra_headers=auth3)
-            check("link credentials survive rotation",
-                  st == 200 and (r or {}).get("secret") == "smoke / linkpass",
-                  repr(r)[:80])
-            st, r, _ = request(base, "GET", f"/api/devices/{mac}/secret",
-                               extra_headers=auth3)
-            check("device secrets survive the same rotation",
-                  st == 200 and (r or {}).get("secret") == "hunter2", repr(r)[:80])
+                               extra_headers={"X-Vault-Token": token or ""})
+            check("link credentials survive re-encryption",
+                  st == 200 and (r or {}).get("secret") == "smoke / linkpass", repr(r)[:80])
 
             st, v6, _ = request(base, "GET", "/api/vault")
-            check("the vault counts both kinds",
-                  (v6 or {}).get("secrets") == 1 and (v6 or {}).get("link_secrets") == 1,
-                  repr(v6)[:120])
+            check("the vault counts them", (v6 or {}).get("link_secrets") == 1, repr(v6)[:120])
 
             st, _, _ = request(base, "PUT", f"/api/links/{lid}/secret",
-                               {"secret": ""}, extra_headers=auth3)
+                               {"secret": ""}, extra_headers={"X-Vault-Token": token or ""})
             check("clear link credentials", st == 200, f"status {st}")
-
-            token2 = token3
-            current_pass = "smoke test passphrase three"
 
         st, _, _ = request(base, "POST", "/api/vault/unlock", {"passphrase": "wrong"})
         check("a wrong passphrase is refused", st == 403, f"status {st}")
-        st, _, _ = request(base, "POST", "/api/vault/unlock", {"passphrase": current_pass})
+        st, u, _ = request(base, "POST", "/api/vault/unlock", {"passphrase": current_pass})
         check("unlock with the current passphrase", st == 200, f"status {st}")
+        token = (u or {}).get("token") or token
 
         st, _, _ = request(base, "POST", "/api/vault/lock")
         check("lock the vault", st == 200, f"status {st}")
-        st, _, _ = request(base, "GET", f"/api/devices/{mac}/secret",
-                           extra_headers={"X-Vault-Token": token2 or ""})
-        check("the token dies with the lock", st == 401, f"status {st}")
+        if link_ids:
+            st, _, _ = request(base, "GET", f"/api/links/{link_ids[0]}/secret",
+                               extra_headers={"X-Vault-Token": token or ""})
+            check("the token dies with the lock", st == 401, f"status {st}")
 
         st, _, _ = request(base, "DELETE", "/api/vault", {"confirm": "wrong words"})
         check("destroying the vault needs the exact phrase", st == 400, f"status {st}")

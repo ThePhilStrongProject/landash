@@ -1,18 +1,16 @@
 /*
- * NetDash per-device notes and the secret vault. See notes.h for the threat
- * model, which is worth reading before trusting this with anything.
+ * NetDash link notes and the secret vault. See notes.h for the threat model,
+ * which is worth reading before trusting this with anything.
  *
- * Both stores are keyed by the 12-hex-lowercase MAC, the same key scheme the
- * device table uses in namespace "dev". Which MACs have an entry is mirrored
- * into two small in-RAM sets so the device list can show a "has a note" marker
- * without an NVS lookup per row per poll.
+ * Both stores are keyed by the link id in decimal. Which ids have an entry is
+ * mirrored into two small in-RAM sets so the dashboard poll can flag them
+ * without an NVS lookup per tile.
  */
 #include "notes.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-#include "device_db.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -27,14 +25,14 @@
 
 static const char *TAG = "notes";
 
-#define NOTE_NVS_NS  "note"
 #define LNOTE_NVS_NS "lnote"
 #define LSEC_NVS_NS  "lsec"
-#define SEC_NVS_NS   "sec"
 #define VAULT_NVS_NS "vault"
 #define VAULT_KEY    "meta"
 
-#define NOTE_BLOB_VERSION  1
+/* Device secrets from before v0.21.0: never read, only erased by vault_reset(). */
+#define RETIRED_SEC_NVS_NS "sec"
+
 #define LNOTE_BLOB_VERSION 1
 #define SEC_BLOB_VERSION   1
 #define VAULT_META_VERSION 1
@@ -52,11 +50,6 @@ static const char *TAG = "notes";
 #define VAULT_IV_LEN       12
 #define VAULT_TAG_LEN      16
 #define VAULT_VERIFY_LABEL "netdash-vault-v1"
-
-typedef struct __attribute__((packed)) {
-    uint8_t version;
-    char    text[NETDASH_NOTE_MAX];
-} note_blob_t;
 
 typedef struct __attribute__((packed)) {
     uint8_t version;
@@ -83,9 +76,8 @@ typedef struct __attribute__((packed)) {
 } vault_meta_t;
 
 /*
- * Which link ids have a note. Mirrored in RAM like the MAC sets, so the
- * dashboard poll can flag them without an NVS lookup per tile. 64 is
- * comfortably above NETDASH_MAX_LINKS.
+ * Which link ids have a note, and which have a secret. 64 is comfortably
+ * above NETDASH_MAX_LINKS.
  */
 #define LNOTE_MAX 64
 static uint16_t s_lnote_ids[LNOTE_MAX];
@@ -96,12 +88,6 @@ static size_t   s_lsec_count;
 /* Defined with the rest of the link code further down. */
 static void index_link_notes_locked(void);
 static void index_link_secrets_locked(void);
-
-/* In-RAM mirrors of which MACs have an entry. */
-static uint8_t s_note_macs[NETDASH_MAX_DEVICES][6];
-static size_t  s_note_count;
-static uint8_t s_sec_macs[NETDASH_MAX_DEVICES][6];
-static size_t  s_sec_count;
 
 /* Live vault session. s_key is only ever populated while unlocked. */
 static uint8_t  s_key[VAULT_KEY_LEN];
@@ -129,40 +115,6 @@ static void unlock(void)
     }
 }
 
-static void mac_to_key(const uint8_t mac[6], char key[13])
-{
-    static const char hex[] = "0123456789abcdef";
-    for (int i = 0; i < 6; i++) {
-        key[i * 2]     = hex[(mac[i] >> 4) & 0x0f];
-        key[i * 2 + 1] = hex[mac[i] & 0x0f];
-    }
-    key[12] = '\0';
-}
-
-static int hex_val(char c)
-{
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
-
-static bool key_to_mac(const char *key, uint8_t mac[6])
-{
-    if (key == NULL || strlen(key) != 12) {
-        return false;
-    }
-    for (int i = 0; i < 6; i++) {
-        int hi = hex_val(key[i * 2]);
-        int lo = hex_val(key[i * 2 + 1]);
-        if (hi < 0 || lo < 0) {
-            return false;
-        }
-        mac[i] = (uint8_t)((hi << 4) | lo);
-    }
-    return true;
-}
-
 /* Does not branch on the contents, so a token cannot be guessed a byte at a
    time by timing the comparison. */
 static bool const_time_eq(const void *a, const void *b, size_t len)
@@ -175,62 +127,6 @@ static bool const_time_eq(const void *a, const void *b, size_t len)
         d |= (uint8_t)(x[i] ^ y[i]);
     }
     return d == 0;
-}
-
-/* Index set maintenance. Caller holds the lock. */
-static bool set_has(const uint8_t set[][6], size_t count, const uint8_t mac[6])
-{
-    for (size_t i = 0; i < count; i++) {
-        if (memcmp(set[i], mac, 6) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static void set_add(uint8_t set[][6], size_t *count, const uint8_t mac[6])
-{
-    if (set_has((const uint8_t (*)[6])set, *count, mac) || *count >= NETDASH_MAX_DEVICES) {
-        return;
-    }
-    memcpy(set[(*count)++], mac, 6);
-}
-
-static void set_remove(uint8_t set[][6], size_t *count, const uint8_t mac[6])
-{
-    for (size_t i = 0; i < *count; i++) {
-        if (memcmp(set[i], mac, 6) == 0) {
-            memmove(set[i], set[i + 1], 6 * (*count - i - 1));
-            (*count)--;
-            return;
-        }
-    }
-}
-
-/* Fills a set from every well-formed key in a namespace. Caller holds the lock. */
-static void index_namespace(const char *ns, uint8_t set[][6], size_t *count)
-{
-    *count = 0;
-
-    nvs_handle_t h;
-    if (nvs_open(ns, NVS_READONLY, &h) != ESP_OK) {
-        return;
-    }
-
-    nvs_iterator_t it   = NULL;
-    esp_err_t      fres = nvs_entry_find_in_handle(h, NVS_TYPE_BLOB, &it);
-    while (fres == ESP_OK && it != NULL) {
-        nvs_entry_info_t info;
-        nvs_entry_info(it, &info);
-
-        uint8_t mac[6];
-        if (key_to_mac(info.key, mac)) {
-            set_add(set, count, mac);
-        }
-        fres = nvs_entry_next(&it);
-    }
-    nvs_release_iterator(it);
-    nvs_close(h);
 }
 
 static esp_err_t blob_write(const char *ns, const char *key, const void *data, size_t len)
@@ -296,113 +192,15 @@ esp_err_t notes_init(void)
     }
 
     lock();
-    index_namespace(NOTE_NVS_NS, s_note_macs, &s_note_count);
-    index_namespace(SEC_NVS_NS, s_sec_macs, &s_sec_count);
     index_link_notes_locked();
     index_link_secrets_locked();
-    const size_t notes  = s_note_count;
-    const size_t secs   = s_sec_count;
     const size_t lnotes = s_lnote_count;
     const size_t lsecs  = s_lsec_count;
     unlock();
 
-    ESP_LOGI(TAG, "notes: %u device / %u link, secrets: %u device / %u link, vault %s",
-             (unsigned)notes, (unsigned)lnotes, (unsigned)secs, (unsigned)lsecs,
-             vault_configured() ? "configured" : "not set up");
+    ESP_LOGI(TAG, "%u link note(s), %u link secret(s), vault %s", (unsigned)lnotes,
+             (unsigned)lsecs, vault_configured() ? "configured" : "not set up");
     return ESP_OK;
-}
-
-/* ------------------------------------------------------------------------- */
-/* Plain text notes                                                          */
-/* ------------------------------------------------------------------------- */
-
-esp_err_t notes_set(const uint8_t mac[6], const char *text)
-{
-    if (mac == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    char key[13];
-    mac_to_key(mac, key);
-
-    if (text == NULL || text[0] == '\0') {
-        esp_err_t err = blob_erase(NOTE_NVS_NS, key);
-        if (err == ESP_OK) {
-            lock();
-            set_remove(s_note_macs, &s_note_count, mac);
-            unlock();
-        }
-        return err;
-    }
-
-    note_blob_t blob = {0};
-    blob.version     = NOTE_BLOB_VERSION;
-    strncpy(blob.text, text, sizeof(blob.text) - 1);
-
-    esp_err_t err = blob_write(NOTE_NVS_NS, key, &blob, sizeof(blob));
-    if (err == ESP_OK) {
-        lock();
-        set_add(s_note_macs, &s_note_count, mac);
-        unlock();
-    } else {
-        ESP_LOGW(TAG, "note not saved for %s: %s", key, esp_err_to_name(err));
-    }
-    return err;
-}
-
-bool notes_get(const uint8_t mac[6], char *out, size_t cap)
-{
-    if (out == NULL || cap == 0) {
-        return false;
-    }
-    out[0] = '\0';
-    if (mac == NULL || !notes_exists(mac)) {
-        return false;
-    }
-
-    char key[13];
-    mac_to_key(mac, key);
-
-    note_blob_t blob;
-    if (blob_read(NOTE_NVS_NS, key, &blob, sizeof(blob)) != ESP_OK ||
-        blob.version != NOTE_BLOB_VERSION) {
-        return false;
-    }
-    blob.text[sizeof(blob.text) - 1] = '\0';
-    strncpy(out, blob.text, cap - 1);
-    out[cap - 1] = '\0';
-    return true;
-}
-
-bool notes_exists(const uint8_t mac[6])
-{
-    if (mac == NULL) {
-        return false;
-    }
-    lock();
-    const bool has = set_has((const uint8_t (*)[6])s_note_macs, s_note_count, mac);
-    unlock();
-    return has;
-}
-
-esp_err_t notes_forget_device(const uint8_t mac[6])
-{
-    if (mac == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    char key[13];
-    mac_to_key(mac, key);
-
-    esp_err_t e1 = blob_erase(NOTE_NVS_NS, key);
-    esp_err_t e2 = blob_erase(SEC_NVS_NS, key);
-
-    lock();
-    set_remove(s_note_macs, &s_note_count, mac);
-    set_remove(s_sec_macs, &s_sec_count, mac);
-    unlock();
-
-    return e1 != ESP_OK ? e1 : e2;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -584,8 +382,8 @@ static void make_verifier(const uint8_t key[VAULT_KEY_LEN], uint8_t out[32])
 }
 
 /*
- * The MAC goes in as additional authenticated data, so a ciphertext lifted out
- * of one device's slot and dropped into another's fails its tag rather than
+ * The owner goes in as additional authenticated data, so a ciphertext lifted
+ * out of one link's slot and dropped into another's fails its tag rather than
  * quietly decrypting under the wrong name.
  */
 static esp_err_t gcm_encrypt(const uint8_t key[VAULT_KEY_LEN], const uint8_t *aad,
@@ -656,12 +454,9 @@ static bool session_key(uint8_t out[VAULT_KEY_LEN])
 /*
  * Everything the vault holds, addressed uniformly: which namespace, which key
  * within it, and the additional authenticated data that binds the ciphertext
- * to its owner. Rotation walks a list of these rather than looping over MACs,
- * so a third kind of secret is a matter of extending build_refs().
- *
- * The two kinds deliberately use differently shaped AAD - six raw MAC bytes
- * against the text "link:<id>" - so a ciphertext can never be moved from one
- * domain to the other and still authenticate.
+ * to its owner. Rotation walks a list of these, so another kind of secret is a
+ * matter of extending build_refs() - with AAD shaped unlike "link:<id>", so a
+ * ciphertext can never be moved from one kind to the other and authenticate.
  */
 typedef struct {
     const char *ns;
@@ -669,14 +464,6 @@ typedef struct {
     uint8_t     aad[16];
     size_t      aad_len;
 } sec_ref_t;
-
-static void ref_for_device(sec_ref_t *r, const uint8_t mac[6])
-{
-    r->ns = SEC_NVS_NS;
-    mac_to_key(mac, r->key);
-    memcpy(r->aad, mac, 6);
-    r->aad_len = 6;
-}
 
 static void ref_for_link(sec_ref_t *r, uint16_t id)
 {
@@ -691,9 +478,6 @@ static size_t build_refs(sec_ref_t *out, size_t cap)
     size_t n = 0;
 
     lock();
-    for (size_t i = 0; i < s_sec_count && n < cap; i++) {
-        ref_for_device(&out[n++], s_sec_macs[i]);
-    }
     for (size_t i = 0; i < s_lsec_count && n < cap; i++) {
         ref_for_link(&out[n++], s_lsec_ids[i]);
     }
@@ -898,15 +682,15 @@ esp_err_t vault_set_passphrase(const char *old_pass, const char *new_pass,
     make_verifier(new_key, fresh.verifier);
 
     /*
-     * Re-encrypt everything already stored, devices and links alike. Every
-     * secret is decrypted into a scratch buffer first, so a single unreadable
+     * Re-encrypt everything already stored. Every secret is decrypted into a
+     * scratch buffer first, so a single unreadable
      * blob aborts the rotation before anything has been overwritten with a key
      * the rest cannot open.
      */
     esp_err_t err = ESP_OK;
 
     if (exists) {
-        const size_t cap  = NETDASH_MAX_DEVICES + LNOTE_MAX;
+        const size_t cap  = LNOTE_MAX;
         sec_ref_t   *refs = calloc(cap, sizeof(*refs));
         if (refs == NULL) {
             err = ESP_ERR_NO_MEM;
@@ -968,7 +752,7 @@ esp_err_t vault_set_passphrase(const char *old_pass, const char *new_pass,
 
 esp_err_t vault_reset(void)
 {
-    const size_t cap  = NETDASH_MAX_DEVICES + LNOTE_MAX;
+    const size_t cap  = LNOTE_MAX;
     sec_ref_t   *refs = calloc(cap, sizeof(*refs));
     size_t       n    = 0;
 
@@ -981,10 +765,17 @@ esp_err_t vault_reset(void)
     }
     esp_err_t err = blob_erase(VAULT_NVS_NS, VAULT_KEY);
 
+    /* Device secrets from older firmware are secrets too. */
+    nvs_handle_t h;
+    if (nvs_open(RETIRED_SEC_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        if (nvs_erase_all(h) == ESP_OK) {
+            nvs_commit(h);
+        }
+        nvs_close(h);
+    }
+
     lock();
-    s_sec_count  = 0;
     s_lsec_count = 0;
-    memset(s_sec_macs, 0, sizeof(s_sec_macs));
     memset(s_lsec_ids, 0, sizeof(s_lsec_ids));
     memset(s_key, 0, sizeof(s_key));
     memset(s_token, 0, sizeof(s_token));
@@ -999,20 +790,14 @@ esp_err_t vault_reset(void)
 /* Secrets                                                                   */
 /* ------------------------------------------------------------------------- */
 
-/* Shared by the device and link forms; only the reference differs. */
 static esp_err_t secret_store(const sec_ref_t *r, const char *text, uint16_t *id_set,
-                              size_t *id_count, uint16_t id, uint8_t (*mac_set)[6],
-                              size_t *mac_count, const uint8_t *mac)
+                              size_t *id_count, uint16_t id)
 {
     if (text == NULL || text[0] == '\0') {
         esp_err_t err = blob_erase(r->ns, r->key);
         if (err == ESP_OK) {
             lock();
-            if (id_set != NULL) {
-                ids_remove(id_set, id_count, id);
-            } else {
-                set_remove(mac_set, mac_count, mac);
-            }
+            ids_remove(id_set, id_count, id);
             unlock();
         }
         return err;
@@ -1032,11 +817,7 @@ static esp_err_t secret_store(const sec_ref_t *r, const char *text, uint16_t *id
 
     if (err == ESP_OK) {
         lock();
-        if (id_set != NULL) {
-            ids_add(id_set, id_count, id);
-        } else {
-            set_add(mac_set, mac_count, mac);
-        }
+        ids_add(id_set, id_count, id);
         unlock();
     } else {
         ESP_LOGW(TAG, "secret not saved for %s: %s", r->key, esp_err_to_name(err));
@@ -1063,49 +844,6 @@ static esp_err_t secret_fetch(const sec_ref_t *r, char *out, size_t cap)
     return err;
 }
 
-esp_err_t secret_set(const uint8_t mac[6], const char *text)
-{
-    if (mac == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    sec_ref_t r;
-    ref_for_device(&r, mac);
-    return secret_store(&r, text, NULL, NULL, 0, s_sec_macs, &s_sec_count, mac);
-}
-
-esp_err_t secret_get(const uint8_t mac[6], char *out, size_t cap)
-{
-    if (mac == NULL || out == NULL || cap == 0) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    out[0] = '\0';
-    if (!secret_exists(mac)) {
-        return ESP_ERR_NOT_FOUND;
-    }
-    sec_ref_t r;
-    ref_for_device(&r, mac);
-    return secret_fetch(&r, out, cap);
-}
-
-bool secret_exists(const uint8_t mac[6])
-{
-    if (mac == NULL) {
-        return false;
-    }
-    lock();
-    const bool has = set_has((const uint8_t (*)[6])s_sec_macs, s_sec_count, mac);
-    unlock();
-    return has;
-}
-
-size_t secret_count(void)
-{
-    lock();
-    const size_t n = s_sec_count;
-    unlock();
-    return n;
-}
-
 /* ------------------------------------------------------------------------- */
 /* Secrets on links                                                          */
 /* ------------------------------------------------------------------------- */
@@ -1117,7 +855,7 @@ esp_err_t link_secret_set(uint16_t link_id, const char *text)
     }
     sec_ref_t r;
     ref_for_link(&r, link_id);
-    return secret_store(&r, text, s_lsec_ids, &s_lsec_count, link_id, NULL, NULL, NULL);
+    return secret_store(&r, text, s_lsec_ids, &s_lsec_count, link_id);
 }
 
 esp_err_t link_secret_get(uint16_t link_id, char *out, size_t cap)
