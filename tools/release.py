@@ -51,73 +51,68 @@ APP_DESC_MAGIC = 0xABCD5432
 
 RELEASES_README = """# LANDA.SH firmware
 
-Firmware updates for **LANDA.SH**, a small home-network dashboard that runs on
-a [Waveshare ESP32-C6-GEEK](https://www.waveshare.com/wiki/ESP32-C6-GEEK) USB
-dongle. Plug it in and it joins your Wi-Fi, finds the devices on your network,
-works out what each one is, and serves a dashboard of them from the dongle
-itself. It needs no cloud service, app or account.
+**The homelab dashboard that maintains itself.** A USB dongle that finds every
+device and service on your network and builds your dashboard for you.
 
-**[Project page and browser installer](https://thephilstrongproject.github.io/landash-releases/)**
-· **[Source code](https://github.com/ThePhilStrongProject/landash)**
+**[landa.sh](https://landa.sh)** (project page and browser installer)
+· [Source code](https://github.com/ThePhilStrongProject/landash)
 · [Changelog](CHANGELOG.md)
 
-This repository holds the built firmware that dongles update themselves from,
-and the project page with its browser installer. The source code is at
-[ThePhilStrongProject/landash](https://github.com/ThePhilStrongProject/landash),
-under the [GPL-3.0](https://github.com/ThePhilStrongProject/landash/blob/main/LICENSE);
-each `landash-vX.Y.Z.bin` is built from the tag of the same name there.
+This repository holds the built firmware that dongles update from, and the
+landa.sh page with its installer. The source is at
+[ThePhilStrongProject/landash](https://github.com/ThePhilStrongProject/landash)
+under the [GPL-3.0](https://github.com/ThePhilStrongProject/landash/blob/main/LICENSE).
+Each `landash-vX.Y.Z.bin` is built from the tag of the same name there.
 
 ## What's here
 
 | | |
 |---|---|
-| [`latest.json`](latest.json) | The current release: its version, the image file and its size. |
-| [`firmware/`](firmware) | One firmware image per release, `landash-vX.Y.Z.bin` (older ones `netdash-…`). |
+| [`latest.json`](latest.json) | The current release: version, image file and size. |
+| [`firmware/`](firmware) | One image per release, `landash-vX.Y.Z.bin` (older ones are `netdash-…`). |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release. |
-| [`install/`](install) | The browser installer's manifest and boot parts, used by the project page. |
-| [`index.html`](index.html) | The project page, served by GitHub Pages. |
+| [`install/`](install) | The browser installer's manifest and boot parts. |
+| [`index.html`](index.html), [`assets/`](assets) | The landa.sh page, served by GitHub Pages. |
+
+## Setting up a new board
+
+Plug the dongle into your computer, open [landa.sh](https://landa.sh/#install)
+in Chrome or Edge and press **Install**. It writes the bootloader, partition
+table and current release over USB. Tick **Erase device** for a new board;
+leave it unticked to keep your data.
+
+The images in `firmware/` are only the application, for dongles already
+running LANDA.SH v0.14.0 or later. On their own they won't set up a new board.
 
 ## How a dongle updates
 
 Two minutes after it starts, and every 12 hours after that, a dongle reads
-`latest.json` over HTTPS. If that version is newer than the one it is running,
-it:
+`latest.json` over HTTPS. If that version is newer than its own, it:
 
-1. downloads the image, resuming where it stopped if the connection drops,
-2. checks the image is LANDA.SH firmware and is the version `latest.json`
-   promised, before writing any of it,
-3. verifies the image's built-in SHA-256 checksum, then restarts into it,
-4. keeps the new version only once it has run for a minute and got back onto
-   Wi-Fi. Otherwise it automatically goes back to the version it had, and will
-   not install that release again by itself.
+1. downloads the image, resuming if the connection drops,
+2. checks it's LANDA.SH firmware of the promised version before writing any
+   of it,
+3. verifies the image's SHA-256 checksum and restarts into it,
+4. keeps the new version only once it has run for a minute and reconnected to
+   Wi-Fi. Otherwise it goes back to the old version and won't install that
+   release again by itself.
 
-A dongle never installs a version older than its own. It fetches two files and
-sends nothing about your network. As with any download, GitHub sees the
-request come from your IP address.
+A dongle never installs an older version. It fetches two files and sends
+nothing about your network, though GitHub sees the request come from your IP
+address, as with any download.
 
-You can switch automatic updates off, or have them wait for your go-ahead,
-under **Settings › Maintenance** on the dashboard. The same page shows the
-installed version and when it last checked.
-
-## Setting up a new board
-
-Use the installer on the project page,
-<https://thephilstrongproject.github.io/landash-releases/>, in Chrome or Edge.
-It writes the bootloader, partition table and the current release over USB
-from `install/manifest.json`, so a new board starts on the same version the
-others update to.
-
-The images in `firmware/` are only the application, for dongles that already
-run LANDA.SH v0.14.0 or later; on their own they will not set up a new board.
+You can turn automatic updates off, or have them wait for you, under
+**Settings › Maintenance**. The same page shows the installed version and the
+last check.
 
 ## Checking a file
 
-Every image records its own project name and version. With Python and
+Every image records its project name and version. With Python and
 [esptool](https://github.com/espressif/esptool) installed:
 
 ```
-esptool image-info firmware/landash-vX.Y.Z.bin                  # esptool 5
-python -m esptool image_info --version 2 firmware/landash-vX.Y.Z.bin   # esptool 4
+esptool image-info firmware/landash-vX.Y.Z.bin                          # esptool 5
+python -m esptool image_info --version 2 firmware/landash-vX.Y.Z.bin    # esptool 4
 ```
 
 Look for `Project name: netdash` and the version you expect.
