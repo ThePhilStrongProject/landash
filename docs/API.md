@@ -581,9 +581,10 @@ does not fit, and the dongle stops reading for several seconds while it
 derives the key, so ignoring the window loses bytes and the restore fails with
 `408`.
 
-Opening the port must not toggle DTR or RTS: on USB Serial/JTAG, RTS high with
-DTR low holds the chip in reset. Opening with both left as the operating
-system sets them is safe.
+Opening the port may reset the dongle: on USB Serial/JTAG, DTR and RTS drive
+the chip's reset, and pyserial's default open on Windows resets it. That is
+harmless, since the host repeats its command until the rebooted dongle
+answers, but opening with DTR and RTS both set low first leaves it running.
 
 ---
 

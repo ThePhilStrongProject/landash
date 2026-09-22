@@ -27,10 +27,18 @@ class Link:
     """Reads the dongle's console line by line and picks out LANDASH: lines."""
 
     def __init__(self, port):
-        # Opening leaves DTR and RTS as the OS sets them, which is not a reset
-        # on USB Serial/JTAG. Toggling them one at a time could pass through
-        # the reset state, so they are left alone.
-        self.s = serial.Serial(port, 115200, timeout=0.2)
+        # pyserial's default open raises DTR and RTS, which on Windows resets
+        # a USB Serial/JTAG chip (measured: uptime back to 4 s). Setting both
+        # low before opening leaves it running. A reset would only cost a
+        # reboot - the command is repeated until the dongle answers - but
+        # there is no reason to cause one.
+        self.s = serial.Serial()
+        self.s.port = port
+        self.s.baudrate = 115200
+        self.s.timeout = 0.2
+        self.s.dtr = False
+        self.s.rts = False
+        self.s.open()
         self.buf = b""
 
     def lines(self, until):

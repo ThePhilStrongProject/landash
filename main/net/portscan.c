@@ -560,6 +560,16 @@ static void portscan_task(void *arg)
     uint32_t ip       = 0;
     bool     have_dev = false;
     uint8_t  dev_tier = PS_TIER_COMMON;   /* tier being scanned for this device */
+    /*
+     * Once every online device is done, the loop below still steps through
+     * the tiers every PS_IDLE_MS looking for work. Announcing each of those
+     * as "complete" filled the console with three lines every five seconds,
+     * so a tier is only announced when it scanned something, and the idle
+     * state is announced once.
+     */
+    bool     tier_worked  = false;
+    bool     cycle_worked = false;
+    bool     idle_said    = false;
 
     for (;;) {
         reload_settings();
@@ -612,8 +622,20 @@ static void portscan_task(void *arg)
                 if (next == PS_TIER_COMMON) {
                     s_ps.cycle_started = 0;   /* a fresh cycle begins */
                 }
-                ESP_LOGI(TAG, "tier %u complete across %u device(s), moving to tier %u",
-                         (unsigned)s_ps.tier, (unsigned)count, (unsigned)next);
+                if (tier_worked) {
+                    ESP_LOGI(TAG, "tier %u complete across %u device(s), moving to tier %u",
+                             (unsigned)s_ps.tier, (unsigned)count, (unsigned)next);
+                }
+                if (next == PS_TIER_COMMON && !cycle_worked && !idle_said) {
+                    ESP_LOGI(TAG, "nothing to scan: all %u online device(s) done to tier %u; "
+                                  "waiting for a new device or a re-scan",
+                             (unsigned)count, (unsigned)max_tier);
+                    idle_said = true;
+                }
+                tier_worked = false;
+                if (next == PS_TIER_COMMON) {
+                    cycle_worked = false;
+                }
                 s_ps.tier         = next;
                 s_ps.device_index = 0;
                 s_ps.cursor       = 0;
@@ -647,6 +669,9 @@ static void portscan_task(void *arg)
             state_unlock();
             s_report_new_ports = is_rescan;
             have_dev           = true;
+            tier_worked        = true;
+            cycle_worked       = true;
+            idle_said          = false;
 
             if (is_rescan) {
                 netdash_ports_t old;
