@@ -743,7 +743,7 @@ border:1px solid var(--border);display:grid;place-items:center;color:var(--on-ac
 <g id="i-globe"><circle cx="12" cy="12" r="8.8"/><path d="M3.4 12h17.2"/><path d="M12 3.2a13.5 13.5 0 0 1 0 17.6 13.5 13.5 0 0 1 0-17.6"/></g>
 <g id="i-globe-off"><circle cx="12" cy="12" r="8.8"/><path d="M3.4 12h17.2"/><path d="M12 3.2a13.5 13.5 0 0 1 3.2 8.8"/><path d="M4 4 20 20"/></g>
 </defs></svg>
-<div id="offlineBanner" class="banner" role="status" hidden>Connection to the dongle was lost — retrying&hellip;</div>
+<div id="offlineBanner" class="banner" role="status" hidden>Connection to the dongle was lost, retrying&hellip;</div>
 <header class="topbar">
 <span class="logo">LANDA.SH</span>
 <nav class="tabs" role="tablist" aria-label="Sections">
@@ -774,7 +774,7 @@ aria-label="What changed"><span class="belldot" id="bellDot" hidden></span></but
 <div id="linkGrid"></div>
 <div class="emptybox" id="linkEmpty" hidden>
 <div class="lead">No dashboard links yet</div>
-<div class="sub">Pin the services you use most &mdash; Home Assistant, your NAS, a router UI &mdash; so they're one click away. Links follow the device by MAC, so they keep working even if its IP changes.</div>
+<div class="sub">Pin the services you use most (Home Assistant, your NAS, a router UI) so they're one click away. Links follow the device by MAC, so they keep working even if its IP changes.</div>
 <button type="button" class="btn" id="linkEmptyAddBtn" style="margin-top:16px"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"/></svg> Add link</button>
 </div>
 <div class="dashtools">
@@ -837,7 +837,7 @@ so it follows you to whichever browser you open it in.</p>
 <div class="settgroup">
 <h3>Dashboard detail</h3>
 <p class="hint" style="margin:0 0 12px">How much each dashboard tile tells you. Nothing is
-lost at the quieter settings &mdash; notes and credentials are still a click away on the tile.</p>
+lost at the quieter settings: notes and credentials are still a click away on the tile.</p>
 <div class="detaillist" id="detailList"></div>
 </div>
 </div>
@@ -920,9 +920,9 @@ background to see which services it offers.</p>
 <div class="field">
 <label for="setPortscanMaxTier">First look</label>
 <select id="setPortscanMaxTier">
-<option value="1">Light &mdash; about 120 common services</option>
-<option value="2">Standard &mdash; every port from 1 to 1024</option>
-<option value="3">Thorough &mdash; all 65,535 ports</option>
+<option value="1">Light: about 120 common services</option>
+<option value="2">Standard: every port from 1 to 1024</option>
+<option value="3">Thorough: all 65,535 ports</option>
 </select>
 <div class="hint">How far to look when a device is first found.</div>
 <div class="hint" id="tier3Warn" style="color:var(--danger)" hidden>Every port on every device takes
@@ -942,9 +942,9 @@ days to finish, and security software on your devices may notice it.</div>
 <div class="field">
 <label for="setRescanTier">How far to look again</label>
 <select id="setRescanTier">
-<option value="1">Light &mdash; about 120 common services</option>
-<option value="2">Standard &mdash; every port from 1 to 1024</option>
-<option value="3">Thorough &mdash; all 65,535 ports</option>
+<option value="1">Light: about 120 common services</option>
+<option value="2">Standard: every port from 1 to 1024</option>
+<option value="3">Thorough: all 65,535 ports</option>
 </select>
 <div class="hint">Never deeper than the first look.</div>
 </div>
@@ -1003,7 +1003,7 @@ day, and a feed that cries wolf is one nobody reads.</p>
 <label for="vaultNewPass">New passphrase</label>
 <input type="password" id="vaultNewPass" autocomplete="new-password" minlength="8">
 <div class="hint">At least 8 characters. The key is derived from this every time and is
-never stored, so losing it means losing the secrets &mdash; there is no reset that keeps them.</div>
+never stored, so losing it means losing the secrets. There is no reset that keeps them.</div>
 </div>
 <div class="formrow-actions" style="margin-top:0">
 <button type="button" class="btn" id="vaultSetBtn">Set passphrase</button>
@@ -1013,7 +1013,7 @@ never stored, so losing it means losing the secrets &mdash; there is no reset th
 <p class="hint" style="margin-top:12px">What this does and does not do: a locked vault
 keeps credentials out of the web UI and out of the device export, and a flash dump yields
 only PBKDF2-hardened ciphertext. It does <strong>not</strong> protect against someone
-watching LAN traffic while the vault is unlocked &mdash; the dashboard is served over plain
+watching LAN traffic while the vault is unlocked: the dashboard is served over plain
 HTTP, so a revealed secret crosses the network in the clear.</p>
 </div>
 </div>
@@ -1053,7 +1053,7 @@ already there rather than replacing it, so it is safe to restore onto a running 
 <h3>Restart and reset</h3>
 <p class="hint" style="margin:0 0 12px">A reboot keeps everything. A factory reset clears the
 Wi-Fi credentials, the device list, the dashboard and the vault, and brings the dongle back
-up as an access point &mdash; uploaded icons included. There is no undo.</p>
+up as an access point (uploaded icons included). There is no undo.</p>
 <div class="formrow-actions" style="margin-top:0">
 <button type="button" class="btn btn-danger-outline" id="rebootBtn">Reboot</button>
 <button type="button" class="btn btn-danger-outline" id="factoryBtn">Factory reset&hellip;</button>
@@ -2717,7 +2717,7 @@ icon("i-plus") + "</button>") + "</div>" +
 "<div class=\"uprow\">" +
 "<input type=\"file\" id=\"iconFile\" accept=\"image/*\" hidden>" +
 "<span class=\"muted\" style=\"font-size:var(--fs-xs)\">" +
-"Any image works &mdash; it is scaled to " + (meta.px||64) + "&times;" + (meta.px||64) +
+"Any image works: it is scaled to " + (meta.px||64) + "&times;" + (meta.px||64) +
 " in your browser before upload. " + mine.length + " of " + (meta.max_icons||48) + " used." +
 "</span>" +
 (mine.length ? "<button type=\"button\" class=\"btn small\" id=\"iconManageBtn\">Manage</button>" : "") +
@@ -2877,7 +2877,7 @@ var html = "<div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=
 "<h3>" + esc(l.label) + "</h3>" +
 "<p class=\"muted\" style=\"margin:0 0 8px;font-size:var(--fs-sm)\">" +
 "Shown on the tile, in plain text. For what you would otherwise have to look " +
-"up &mdash; what it is actually for, what breaks if you restart it, where its " +
+"up: what it is actually for, what breaks if you restart it, where its " +
 "config lives. Logins go in Credentials below, where they are encrypted.</p>" +
 "<textarea class=\"notebox\" id=\"linkNoteBox\" maxlength=\"" + max + "\"></textarea>" +
 "<div class=\"uprow\"><span class=\"muted\" style=\"font-size:var(--fs-xs)\" id=\"linkNoteCount\"></span>" +
@@ -3169,7 +3169,7 @@ presets.innerHTML = ports.length ? ports.map(function(p){
 selectedPorts[p.port] = p.service || "";
 var lbl = p.service ? (p.port+" ("+p.service+")") : String(p.port);
 return "<button type=\"button\" class=\"btn small\" data-port=\""+p.port+"\">"+esc(lbl)+"</button>";
-}).join("") : "<span class=\"muted\" style=\"font-size:.78rem\">No open ports found yet &mdash; enter one manually.</span>";
+}).join("") : "<span class=\"muted\" style=\"font-size:.78rem\">No open ports found yet. Enter one manually.</span>";
 presets.querySelectorAll("button[data-port]").forEach(function(b){
 b.addEventListener("click", function(){ portInput.value = b.dataset.port; refreshLabelHint(); updateSubmitState(); });
 });
@@ -3359,7 +3359,7 @@ function evTitle(who, text){
 if (!who) return text;
 if (!text) return who;
 if (who === text) return text;
-return who + " — " + text;
+return who + ": " + text;
 }
 function renderEvents(){
 var list = state.events;
@@ -3950,7 +3950,7 @@ $("tourAgainBtn").addEventListener("click", startTour);
 var OTA_STATE_TEXT = {
 idle:"Not checked yet since the last restart", checking:"Checking for updates…",
 up_to_date:"Up to date", available:"A newer release is available",
-downloading:"Downloading…", rebooting:"Installed — restarting",
+downloading:"Downloading…", rebooting:"Installed, restarting",
 error:"The last check failed"
 };
 
@@ -4113,7 +4113,7 @@ api("PUT","/api/settings", body).then(function(res){
 $("setWifiPass").value = "";
 toast("Settings saved", "ok");
 if (res.reconnecting){
-toast("Wi-Fi settings changed — the dongle is reconnecting…");
+toast("Wi-Fi settings changed: the dongle is reconnecting…");
 pollUntilBack();
 }
 }).catch(toastErr);
@@ -4126,7 +4126,7 @@ api("GET","/api/status").then(function(s){
 clearInterval(iv); state.status = s; renderStatus(); renderTiles();
 toast("Reconnected", "ok");
 }).catch(function(){
-if (tries >= 20){ clearInterval(iv); toast("Still reconnecting — check the dongle", "err"); }
+if (tries >= 20){ clearInterval(iv); toast("Still reconnecting. Check the dongle.", "err"); }
 });
 }, 3000);
 }
@@ -4204,7 +4204,7 @@ var v = prompt("This erases all Wi-Fi credentials, settings and device nicknames
 if (v === null) return;
 if (v !== "factory-reset"){ toast("Confirmation text did not match", "err"); return; }
 api("POST","/api/system/factory-reset", {confirm:"factory-reset"}).then(function(){
-toast("Factory reset — the dongle will restart into setup mode", "ok");
+toast("Factory reset: the dongle will restart into setup mode", "ok");
 }).catch(toastErr);
 });
 function tick(){
