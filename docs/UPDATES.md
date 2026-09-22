@@ -19,6 +19,19 @@ its own, it downloads that file, checks it, and restarts into it.
 Publishing is therefore a commit and a push. `tools/release.py` makes the
 commit; the push is yours, because that is the moment it goes live.
 
+The same push updates the browser installer. The releases repository is also
+the project's GitHub Pages site: `index.html` is the landing page, and its
+Install button (ESP Web Tools, Chrome and Edge only) flashes a new board from
+`install/manifest.json`. `release.py` rewrites that manifest on every release
+and copies the bootloader, partition table and otadata image beside it in
+`install/vX.Y.Z/`; the app part is the same `firmware/landash-vX.Y.Z.bin` that
+dongles update to. They stay separate parts at their own offsets rather than
+one merged image, because a merged image fills the gaps with 0xFF and would
+wipe the settings partition even when the user chose not to erase.
+`python tools/release.py --installer-only` adds the installer to a release
+published before this existed. The landing page itself is hand-written and
+lives only in the releases repository.
+
 | | |
 |---|---|
 | Source code | `ThePhilStrongProject/landash`, private |

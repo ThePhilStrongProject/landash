@@ -245,8 +245,11 @@ docs/API.md                 the REST contract. Firmware and UI both follow it;
 tools/gen_oui.py            IEEE oui.csv -> oui_table.inc (--curated | --full).
 tools/release.py            checks build/netdash.bin is exactly the tag HEAD is
                             on and newer than what is published, then commits
-                            it and latest.json into ../landash-releases. The
-                            push there is what publishes it.
+                            it, latest.json and the browser installer's
+                            install/manifest.json + boot parts into
+                            ../landash-releases. The push there is what
+                            publishes it. That repo is also the GitHub Pages
+                            landing page (index.html, hand-written).
 partitions.csv              nvs 64K, otadata 8K, phy 4K, ota_0 3M, ota_1 3M,
                             storage 1M. "storage" is a SPIFFS volume mounted
                             at /ic by db/icons.c; it is formatted on first use,
