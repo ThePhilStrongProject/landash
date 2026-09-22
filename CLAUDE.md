@@ -248,6 +248,11 @@ main/
                             backlight dimming.
   ui/button.c/.h            BOOT button: short press = next page, 5 s hold =
                             wipe Wi-Fi credentials and reboot.
+  ui/usb_restore.c/.h       the web installer's restore: a line protocol over
+                            the console's USB Serial/JTAG that feeds the same
+                            backup_restore() as POST /api/restore, with ACKs as
+                            flow control. Installs the USB Serial/JTAG driver
+                            under the console, so all logging goes through it.
 
 docs/API.md                 the REST contract. Firmware and UI both follow it;
                             change this file before changing either side.
@@ -399,6 +404,13 @@ or the running image is still on probation, and an update refuses to start
 while the slot is lent. A refused or failed restore has already erased the
 slot's first sector, so the old image is gone either way; nothing needs it
 once the running image is confirmed.
+
+**Restoring over USB needs its own flow control.** The USB Serial/JTAG
+driver empties the hardware FIFO into its ring buffer on every packet and
+drops what does not fit; USB's own back-pressure never reaches the host. The
+first USB restore lost bytes during the key derivation and timed out. Keep
+the ACK window in `ui/usb_restore.h`, `tools/usb_restore.py` and the releases
+repo's `install/restore.js` in step.
 
 To try a restore end to end, run `tools/smoke_test.py --restore-roundtrip`
 against a dongle whose data you are happy to have replaced by a copy of

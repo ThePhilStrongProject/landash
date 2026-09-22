@@ -1122,6 +1122,21 @@ esp_err_t backup_restore(backup_read_fn read_fn, void *ctx, backup_info_t *out_i
     return e;
 }
 
+const char *backup_restore_status(esp_err_t err)
+{
+    switch (err) {
+    case ESP_OK:                return "200 OK";
+    case ESP_ERR_INVALID_MAC:   return "403 Forbidden";
+    case ESP_ERR_NOT_SUPPORTED:
+    case ESP_ERR_INVALID_STATE: return "409 Conflict";
+    case ESP_ERR_INVALID_SIZE:  return "413 Content Too Large";
+    case ESP_ERR_TIMEOUT:       return "408 Request Timeout";
+    case ESP_FAIL:
+    case ESP_ERR_NO_MEM:        return "500 Internal Server Error";
+    default:                    return "400 Bad Request";
+    }
+}
+
 /* ------------------------------------------------------------------------- */
 /* Restore: apply at boot                                                    */
 /* ------------------------------------------------------------------------- */

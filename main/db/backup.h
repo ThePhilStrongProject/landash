@@ -119,6 +119,13 @@ typedef int (*backup_read_fn)(void *ctx, void *buf, size_t len);
 esp_err_t backup_restore(backup_read_fn read_fn, void *ctx, backup_info_t *out_info, char *err,
                          size_t err_cap);
 
+/*
+ * The HTTP status line POST /api/restore answers a backup_restore() result
+ * with, e.g. "403 Forbidden". The USB restore reports the same number, so the
+ * web installer and the dashboard can treat a failure alike.
+ */
+const char *backup_restore_status(esp_err_t err);
+
 /* When the last backup was made, and what this dongle was restored from. */
 void backup_get_status(backup_status_t *out);
 

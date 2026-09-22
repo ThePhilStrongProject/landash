@@ -38,6 +38,7 @@
 #include "wan.h"
 #include "scanner.h"
 #include "settings.h"
+#include "usb_restore.h"
 #include "wifi_mgr.h"
 
 static const char *TAG = "netdash";
@@ -89,6 +90,11 @@ void app_main(void)
     ESP_ERROR_CHECK(wan_init());
     ESP_ERROR_CHECK(linkcheck_init());
     ESP_ERROR_CHECK(ota_init());
+    /* Last: a restore borrows the update slot. Not fatal - the dashboard can
+       restore just as well. */
+    if (usb_restore_init() != ESP_OK) {
+        ESP_LOGW(TAG, "restore over USB unavailable");
+    }
 
     ESP_LOGI(TAG, "boot complete, free heap %" PRIu32 " bytes", esp_get_free_heap_size());
 

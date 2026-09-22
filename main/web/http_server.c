@@ -1849,20 +1849,9 @@ static esp_err_t restore_post_handler(httpd_req_t *req)
     const esp_err_t err = backup_restore(restore_recv, &ctx, &info, msg, sizeof(msg));
 
     if (err != ESP_OK) {
-        const char *status;
-        switch (err) {
-        case ESP_ERR_INVALID_MAC:   status = "403 Forbidden"; break;
-        case ESP_ERR_NOT_SUPPORTED:
-        case ESP_ERR_INVALID_STATE: status = "409 Conflict"; break;
-        case ESP_ERR_INVALID_SIZE:  status = "413 Content Too Large"; break;
-        case ESP_ERR_TIMEOUT:       status = "408 Request Timeout"; break;
-        case ESP_FAIL:
-        case ESP_ERR_NO_MEM:        status = "500 Internal Server Error"; break;
-        default:                    status = "400 Bad Request"; break;
-        }
         /* httpd drains the unread rest of the body after this reply, so the
            browser finishes its upload and reads the answer instead of a reset. */
-        return send_json_error(req, status, msg);
+        return send_json_error(req, backup_restore_status(err), msg);
     }
 
     cJSON *o = cJSON_CreateObject();

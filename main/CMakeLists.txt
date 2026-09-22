@@ -29,6 +29,8 @@ idf_component_register(
         esp_driver_gpio
         esp_driver_spi
         esp_driver_ledc
+        # The web installer's restore, over the console's USB Serial/JTAG.
+        esp_driver_usb_serial_jtag
         esp_timer
         driver
         # AES-GCM and PBKDF2 for the secret vault in db/notes.c.

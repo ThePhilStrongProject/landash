@@ -553,6 +553,38 @@ uploaded icon (`<id>.png`), then `E`.
 sense of a file it produces. Within one `format`, the firmware version check
 above still applies.
 
+### Restoring over USB
+
+From v0.20.0 a dongle also takes a restore over its USB cable, which is how
+the web installer sets up a replacement without the user ever joining its
+setup network. `tools/usb_restore.py` does the same from a terminal, and
+`install/restore.js` in the releases repository is the browser's side.
+
+It is a conversation of lines over the console's USB Serial/JTAG port at any
+baud rate, with the ordinary log running in between. Every line of the
+dongle's side starts with `LANDASH:`; the host ignores every other line.
+
+| Who | Line | |
+|---|---|---|
+| host | `LANDASH-RESTORE <bytes>` | repeated every second or so until answered: the dongle may still be booting |
+| dongle | `LANDASH:READY` | sent once any copies of the command queued behind the first have been read and discarded |
+| host | *exactly `<bytes>` bytes* | the body of `POST /api/restore`: passphrase, `
+`, the file |
+| dongle | `LANDASH:ACK <n>` | after every 1024 bytes taken in, and at the end; `n` counts from the first byte of the body |
+| dongle | `LANDASH:OK {json}` | the object `POST /api/restore` returns; the dongle restarts a second later |
+| dongle | `LANDASH:ERR <status> <message>` | the status and `error` text `POST /api/restore` would answer with |
+| dongle | `LANDASH:IP <a.b.c.d>` | every time the station gets an address, and once at start-up if it already has one |
+
+**The host must never be more than 3072 bytes ahead of the last `ACK`.** The
+dongle's driver copies each USB packet into a 4 KB buffer and drops whatever
+does not fit, and the dongle stops reading for several seconds while it
+derives the key, so ignoring the window loses bytes and the restore fails with
+`408`.
+
+Opening the port must not toggle DTR or RTS: on USB Serial/JTAG, RTS high with
+DTR low holds the chip in reset. Opening with both left as the operating
+system sets them is safe.
+
 ---
 
 ## POST /api/scan
