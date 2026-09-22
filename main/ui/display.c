@@ -17,9 +17,16 @@
  * gaps 52/40. NetDash wants 240x135 landscape, so MADCTL gets the MV bit
  * (swap_xy) plus MX (mirror_x) - the same MX|MV the Arduino driver writes. MV
  * transposes the controller's CASET/RASET addressing, so the gaps swap too and
- * become x=40 / y=52, which is what Kconfig defaults to.
- * NETDASH_LCD_ROTATE_180 selects MV|MY instead, for a board mounted the other
- * way up.
+ * become x=40 / y=52. NETDASH_LCD_ROTATE_180 selects MV|MY instead, for a
+ * board mounted the other way up.
+ *
+ * The 135 visible columns do not sit centrally in the controller's 240: there
+ * are 52 hidden on one side and 53 on the other. Portrait with no mirroring
+ * starts at 52, and so does MV|MY, but MX mirrors that axis and moves the
+ * window to 53. With y=52 under MV|MX the image sat one row high and the
+ * bottom row of glass showed whatever GRAM held at power-up - a line of
+ * coloured noise. Kconfig therefore defaults y to 53, or 52 with ROTATE_180
+ * (the same split Adafruit's ST7789 driver makes with _colstart/_colstart2).
  *
  * Colour bytes: RGB565 over an 8-bit SPI bus needs the two halves swapped, so
  * esp_lvgl_port runs with swap_bytes = true, exactly as the demo does.
@@ -230,11 +237,14 @@ static esp_err_t backlight_init(void)
  *
  * The ST7789 carries a 240x320 frame buffer while this panel only shows
  * 240x135 of it, positioned by the configured gap. LVGL never writes the rows
- * just outside that window, so whatever the controller powered up with stays
- * there - which showed as a line of coloured noise along the bottom edge.
- * Clearing the margin once at boot fixes it permanently, and it does so
- * whether the exact gap is 52 or 53, which differ by one row between the two
- * landscape rotations.
+ * just outside that window, so if the gap is off by one (see the header) the
+ * edge row keeps whatever the controller powered up with. Clearing the margin
+ * once at boot hides that on a board whose gap is not quite right.
+ *
+ * The gap is in the controller's addressed coordinates, which MADCTL decides,
+ * so this must run after the landscape rotation is set. It used to run before
+ * esp_lvgl_port applied it, painted a portrait-shaped window in the wrong
+ * place, and left the noisy row exactly where it was.
  */
 static void lcd_blank_margins(void)
 {
@@ -311,6 +321,14 @@ static esp_err_t panel_init(void)
     ESP_GOTO_ON_ERROR(esp_lcd_panel_set_gap(s_panel, CONFIG_NETDASH_LCD_X_OFFSET,
                                             CONFIG_NETDASH_LCD_Y_OFFSET),
                       fail, TAG, "gap");
+    /* The same rotation esp_lvgl_port applies again in lvgl_init(); it is set
+     * here too so lcd_blank_margins() addresses the landscape window. */
+    ESP_GOTO_ON_ERROR(esp_lcd_panel_swap_xy(s_panel, true), fail, TAG, "swap_xy");
+#if CONFIG_NETDASH_LCD_ROTATE_180
+    ESP_GOTO_ON_ERROR(esp_lcd_panel_mirror(s_panel, false, true), fail, TAG, "mirror");
+#else
+    ESP_GOTO_ON_ERROR(esp_lcd_panel_mirror(s_panel, true, false), fail, TAG, "mirror");
+#endif
     lcd_blank_margins();
     ESP_GOTO_ON_ERROR(esp_lcd_panel_disp_on_off(s_panel, true), fail, TAG, "disp on");
     return ESP_OK;

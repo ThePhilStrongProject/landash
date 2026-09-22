@@ -29,7 +29,7 @@ Target: ESP-IDF **v5.5**, ESP32-C6, 16 MB flash, no PSRAM.
 | LCD | 1.14" ST7789 IPS 240x135, 4-wire SPI, no MISO, 40 MHz OK |
 | LCD pins (GEEK_V2 default) | SCLK 1, MOSI 2, DC 3, RST 4, CS 5, backlight 6 |
 | Button | BOOT on GPIO 9 |
-| Panel offsets | x 40, y 52; landscape = rotate 270; colours inverted |
+| Panel offsets | x 40, y 53 (52 with `NETDASH_LCD_ROTATE_180`); landscape = rotate 270; colours inverted |
 | Port | "USB Serial Device", console over USB Serial/JTAG. Was COM4, a second board came up as COM5 - check `[System.IO.Ports.SerialPort]::GetPortNames()` |
 
 **Several hardware revisions of this board exist with different LCD wiring.**

@@ -85,9 +85,16 @@ menu "LANDA.SH"
     config NETDASH_LCD_Y_OFFSET
         int "Panel row (y) offset"
         range 0 320
-        default 52
+        default 52 if NETDASH_LCD_ROTATE_180
+        default 53
         help
-            See NETDASH_LCD_X_OFFSET. Landscape value; 52 = (240 - 135) / 2.
+            See NETDASH_LCD_X_OFFSET. Landscape value. The 135 visible rows
+            leave 52 hidden on one side of the controller's 240 and 53 on the
+            other, and the MX mirror that the default rotation uses puts the
+            window after the 53: 53 by default, 52 with NETDASH_LCD_ROTATE_180.
+            One too few shows as a line of noise along the bottom edge.
+            menuconfig keeps a value already saved in sdkconfig, so set this
+            by hand after toggling the rotation.
 
     config NETDASH_LCD_INVERT_COLORS
         bool "Invert panel colors"
