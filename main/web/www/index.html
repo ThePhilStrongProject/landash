@@ -1237,6 +1237,9 @@ filter: "",
 showHidden: false,
 hiddenCols: loadHiddenCols(),
 editingMac: null,
+expandedRows: {},
+uptimeBase: null,
+timeOffset: null,
 statusFailStreak: 0,
 detail: { mac: null, data: null, loading: false, error: null, editingName: false, opener: null }
 };
@@ -1255,6 +1258,160 @@ try { localStorage.setItem("netdash-hidden-cols", JSON.stringify(state.hiddenCol
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){
 return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+
+/* ---- updating the page in place ---------------------------------------- */
+
+/*
+ * Renderers build HTML strings, and used to assign them with innerHTML, which
+ * threw away and rebuilt every element on every five-second poll: the pulsing
+ * dots restarted, a hovered row's controls faded out and back in, uploaded
+ * icons flashed, and a text selection vanished. morph() lays the new HTML over
+ * what is already there instead, touching only the attributes and text that
+ * differ, so an unchanged element is never replaced at all.
+ *
+ * Children carrying data-key are matched by key, so a row that moves when the
+ * table re-sorts is moved rather than rebuilt; the rest are matched by
+ * position and tag. An element with data-keep keeps its children: something
+ * other than its renderer fills it, as renderSpark() does.
+ *
+ * Because elements survive, event handlers belong on a container through
+ * delegation, never on the rendered elements themselves - those would be
+ * attached again on every render.
+ */
+function morph(el, html){
+if (!el) return;
+var tpl = document.createElement("template");
+tpl.innerHTML = html;
+morphChildren(el, tpl.content);
+}
+function morphKey(n){ return n.nodeType === 1 ? n.getAttribute("data-key") : null; }
+function morphChildren(oldParent, newParent){
+var keyed = {};
+for (var c = oldParent.firstChild; c; c = c.nextSibling){
+var k0 = morphKey(c);
+if (k0 != null) keyed[k0] = c;
+}
+var cur = oldParent.firstChild;
+var n = newParent.firstChild;
+while (n){
+var next = n.nextSibling, k = morphKey(n), match = null;
+if (k != null){
+if (keyed[k] && keyed[k].nodeName === n.nodeName) match = keyed[k];
+delete keyed[k];
+} else if (cur && morphKey(cur) == null && cur.nodeType === n.nodeType &&
+cur.nodeName === n.nodeName){
+match = cur;
+}
+if (match){
+if (match === cur) cur = cur.nextSibling;
+else oldParent.insertBefore(match, cur);
+morphNode(match, n);
+} else {
+oldParent.insertBefore(n, cur);
+}
+n = next;
+}
+while (cur){
+var after = cur.nextSibling;
+oldParent.removeChild(cur);
+cur = after;
+}
+}
+function morphNode(a, b){
+if (a.nodeType !== 1){
+if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue;
+return;
+}
+var i, attr;
+for (i = a.attributes.length - 1; i >= 0; i--){
+attr = a.attributes[i];
+if (!b.hasAttribute(attr.name)) a.removeAttribute(attr.name);
+}
+for (i = 0; i < b.attributes.length; i++){
+attr = b.attributes[i];
+if (a.getAttribute(attr.name) !== attr.value) a.setAttribute(attr.name, attr.value);
+}
+if (a.nodeName === "INPUT" || a.nodeName === "TEXTAREA" || a.nodeName === "SELECT"){
+/* Never overwrite what someone is typing. */
+if (a !== document.activeElement && a.value !== b.value) a.value = b.value;
+if (a.checked !== b.checked) a.checked = b.checked;
+return;
+}
+if (a.hasAttribute("data-keep")) return;
+morphChildren(a, b);
+}
+
+/* ---- times that count on their own ------------------------------------- */
+
+/*
+ * "37s ago" and the uptime used to move only when a poll re-rendered them, in
+ * five-second jumps. They are now spans carrying the moment they count from,
+ * and tickLiveTimes() rewrites their text once a second from the browser's
+ * clock - no request involved. Only spans whose text actually changes are
+ * touched.
+ */
+function relSpan(ts){ return "<span data-rel=\"" + (ts || 0) + "\">" + esc(relTime(ts)) + "</span>"; }
+/*
+ * The dongle's uptime and clock, counted forward in the browser. They are
+ * anchored once and moved only on real drift - a reboot, or the clock syncing:
+ * a status reply lands a variable delay after the dongle measured it, and
+ * re-anchoring on every reply made the count stutter by a second.
+ */
+function syncLiveClocks(s){
+var now = Date.now() / 1000;
+var up = now - (s.uptime_s || 0);
+if (state.uptimeBase == null || Math.abs(state.uptimeBase - up) > 2) state.uptimeBase = up;
+if (s.time){
+var off = s.time - now;
+if (state.timeOffset == null || Math.abs(state.timeOffset - off) > 2) state.timeOffset = off;
+}
+}
+function liveUptime(){ return state.uptimeBase == null ? 0 : Math.floor(Date.now() / 1000 - state.uptimeBase); }
+function liveDongleTime(){ return state.timeOffset == null ? 0 : Math.floor(Date.now() / 1000 + state.timeOffset); }
+function uptimeSpan(){ return "<span data-live=\"uptime\">" + esc(fmtUptime(liveUptime())) + "</span>"; }
+function dongleTimeSpan(){ return "<span data-live=\"time\">" + esc(absTime(liveDongleTime())) + "</span>"; }
+function tickLiveTimes(){
+if (document.hidden) return;
+document.querySelectorAll("[data-rel]").forEach(function(el){
+var t = relTime(Number(el.getAttribute("data-rel")));
+if (el.textContent !== t) el.textContent = t;
+});
+document.querySelectorAll("[data-live]").forEach(function(el){
+var kind = el.getAttribute("data-live");
+var t = kind === "uptime" ? fmtUptime(liveUptime()) : absTime(liveDongleTime());
+if (el.textContent !== t) el.textContent = t;
+});
+}
+
+/* ---- one paint per poll ------------------------------------------------ */
+
+/*
+ * A poll is several requests that come back tens of milliseconds apart. Painting
+ * each as it landed made the page ripple as the sections caught up one by one.
+ * While a poll is in flight, paint() queues each section's renderer instead, and
+ * the poll runs them all together once every request has answered. Renderers
+ * read state when they run, so a queued one always paints the newest data.
+ */
+var paintQueue = null;
+function paint(key, fn){
+if (paintQueue) paintQueue[key] = fn;
+else fn();
+}
+function paintTogether(jobs){
+paintQueue = paintQueue || {};
+var done = false;
+function flush(){
+if (done) return;
+done = true;
+var q = paintQueue;
+paintQueue = null;
+for (var k in q) q[k]();
+}
+Promise.all(jobs.map(function(p){ return Promise.resolve(p).catch(function(){}); })).then(flush);
+/* A request the dongle drops must not hold the whole page back. */
+setTimeout(flush, 2500);
+}
+
 function api(method, path, body, extraHeaders){
 var opts = { method: method, headers: {} };
 if (body !== undefined){ opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
@@ -1279,7 +1436,11 @@ $("toasts").appendChild(el);
 setTimeout(function(){ el.remove(); }, 4500);
 }
 function toastErr(err){ toast(err && err.message ? err.message : String(err), "err"); }
-function markPollOk(){ state.statusFailStreak = 0; $("offlineBanner").hidden = true; }
+function markPollOk(){
+state.statusFailStreak = 0;
+/* Only when it changes: every poll's answers land as a single paint. */
+if (!$("offlineBanner").hidden) $("offlineBanner").hidden = true;
+}
 function markPollFail(){
 state.statusFailStreak++;
 if (state.statusFailStreak >= 2) $("offlineBanner").hidden = false;
@@ -1342,7 +1503,8 @@ if (state.status && state.status.fw && s.fw && s.fw !== state.status.fw){
 location.reload();
 return;
 }
-state.status = s; markPollOk(); renderStatus(); renderTiles(); renderSystem(); renderSweepEstimate();
+state.status = s; syncLiveClocks(s); markPollOk();
+paint("status", function(){ renderStatus(); renderTiles(); renderSystem(); renderSweepEstimate(); });
 }).catch(function(e){ markPollFail(); });
 }
 function renderStatus(){
@@ -1399,7 +1561,7 @@ parts.push("<span class=\"sb\">" + icon("i-search") + "Port scan: " + esc(word) 
 parts.push("<span class=\"sb bad\" title=\"" + esc(s.scan_skipped) + "\">" + icon("i-radar") +
 "Not sweeping</span>");
 } else if (s.last_sweep){
-parts.push("<span class=\"sb\">" + icon("i-radar") + "Swept " + esc(relTime(s.last_sweep)) +
+parts.push("<span class=\"sb\">" + icon("i-radar") + "Swept " + relSpan(s.last_sweep) +
 "</span>");
 }
 
@@ -1420,11 +1582,11 @@ parts.push("<span class=\"sb\">" + icon("i-gauge") + esc(fmtBytes(s.heap_free)) 
 " free</span>");
 }
 if (s.uptime_s){
-parts.push("<span class=\"sb\">" + icon("i-refresh") + esc(fmtUptime(s.uptime_s)) + "</span>");
+parts.push("<span class=\"sb\">" + icon("i-refresh") + uptimeSpan() + "</span>");
 }
 }
 
-bar.innerHTML = parts.join("");
+morph(bar, parts.join(""));
 }
 var WAN_TEXT = {up:"Internet up", degraded:"Internet degraded", down:"Internet down",
 unknown:"Internet unchecked"};
@@ -1506,15 +1668,16 @@ var tiles = [
 {label:"Online", value:(s.devices_online!=null?s.devices_online:"—"), sub:"of " + (s.devices_total!=null?s.devices_total:"—")},
 {label:"Total devices", value:(s.devices_total!=null?s.devices_total:"—")},
 {label:"New in 24h", value:(s.devices_new_24h!=null?s.devices_new_24h:"—"), accent:true},
-{label:"Last sweep", value:relTime(s.last_sweep), title:absTime(s.last_sweep)}
+{label:"Last sweep", html:relSpan(s.last_sweep), title:absTime(s.last_sweep)}
 ];
-$("tiles").innerHTML = tiles.map(function(t){
+morph($("tiles"), tiles.map(function(t){
 return "<div class=\"stat\">" +
-"<span class=\"value\"" + (t.title?(" title=\""+esc(t.title)+"\""):"") + ">" + esc(t.value) +
+"<span class=\"value\"" + (t.title?(" title=\""+esc(t.title)+"\""):"") + ">" +
+(t.html != null ? t.html : esc(t.value)) +
 (t.sub ? " <span class=\"muted\" style=\"font-weight:400;font-size:var(--fs-xs)\">" + esc(t.sub) + "</span>" : "") + "</span>" +
 "<span class=\"label\">" + esc(t.label) + "</span>" +
 "</div>";
-}).join("");
+}).join(""));
 }
 /* "192.168.16.0/20 · 4,093 addresses, swept in about 4 min", or why not. */
 function sweepDuration(hosts, rate){
@@ -1558,7 +1721,7 @@ return "<span class=\"muted\">checking&hellip;</span>";
 if (o.available) return "<span class=\"mono\">" + esc(o.latest) + "</span> is available " +
 "<span class=\"muted\">(Settings &rsaquo; Maintenance)</span>";
 if (o.state === "up_to_date") return "Up to date <span class=\"muted\">&middot; checked " +
-esc(relTime(o.last_check)) + "</span>";
+relSpan(o.last_check) + "</span>";
 if (o.state === "error") return "<span class=\"muted\">" + esc(o.error || "Last check failed") + "</span>";
 return esc(OTA_STATE_TEXT[o.state] || o.state);
 }
@@ -1580,23 +1743,23 @@ var rows = [
 ["Firmware", esc(s.fw) + (s.idf?(" <span class=\"muted\">("+esc(s.idf)+")</span>"):"")],
 ["Project", extLink("https://landa.sh", "landa.sh") + " · " + extLink(changelogUrl(), "Changelog") +
 " · " + extLink("https://github.com/ThePhilStrongProject/landash", "Source code")],
-["Uptime", fmtUptime(s.uptime_s)],
+["Uptime", uptimeSpan()],
 ["Free heap", fmtBytes(s.heap_free) + " <span class=\"muted\">(min " + fmtBytes(s.heap_min_free) + ")</span>"],
 ["Mode", esc((s.mode||"").toUpperCase())],
 ["IP address", esc(s.ip)],
 ["Network", subnetSummary(s)],
 ["MAC address", "<span class=\"mono\">" + esc(s.mac) + "</span>"],
 ["Signal", (s.mode==="sta"||s.mode==="apsta") ? (rssiBars(s.rssi)+" "+s.rssi+" dBm") : "—"],
-["Time", s.time_synced ? esc(absTime(s.time)) : "not synced"],
+["Time", s.time_synced ? dongleTimeSpan() : "not synced"],
 ["Updates", otaSummary()]
 ];
-$("sysInfo").innerHTML = rows.map(function(r){
+morph($("sysInfo"), rows.map(function(r){
 return "<dt>" + esc(r[0]) + "</dt><dd>" + r[1] + "</dd>";
-}).join("");
+}).join(""));
 }
 function loadPortscanStatus(){
 return api("GET","/api/portscan").then(function(p){
-state.portscan = p; renderPortscanBar();
+state.portscan = p; paint("statusbar", renderPortscanBar);
 }).catch(function(){ /* non-critical; leave last known state */ });
 }
 /* The port scan shares the status bar with the sweep rather than owning a
@@ -1643,7 +1806,7 @@ var map = {}; list.forEach(function(d){ map[d.mac]=d; });
 /* Keep the remembered ones addressable while they are on show. */
 if (state.showArchived) (state.archived || []).forEach(function(d){ if (!map[d.mac]) map[d.mac] = d; });
 state.devicesByMac = map;
-renderDevices();
+paint("devices", renderDevices);
 }).catch(function(e){ markPollFail(); });
 }
 function displayType(d){ return d.type_override || d.type || "unknown"; }
@@ -1693,7 +1856,7 @@ list = sortDevices(list);
    example, so the cards about rows have a row to point at. */
 if (!list.length && state.tourDemo) list = [tourDemoDevice()];
 $("devEmpty").hidden = list.length !== 0;
-$("devBody").innerHTML = list.map(rowHtml).join("");
+morph($("devBody"), list.map(rowHtml).join(""));
 }
 function portsCellHtml(d){
 var count = d.open_port_count || 0;
@@ -1709,7 +1872,8 @@ var isNew = d.is_new ? "<span class=\"badge\">NEW</span>" : "";
 var links = "";
 if ((d.services||[]).indexOf("https") !== -1) links += "https";
 else if ((d.services||[]).indexOf("http") !== -1) links += "http";
-return "<tr data-mac=\"" + esc(d.mac) + "\" class=\"devrow" + (d.archived ? " archived" : "") +
+return "<tr data-key=\"" + esc(d.mac) + "\" data-mac=\"" + esc(d.mac) + "\" class=\"devrow" +
+(d.archived ? " archived" : "") + (state.expandedRows[d.mac] ? " expanded" : "") +
 "\" tabindex=\"0\">" +
 "<td data-col=\"status\"><span class=\"statuscell\"><span class=\"dot" + (d.online?" on":"") + "\"></span>" +
 "<span class=\"sr-only\">" + (d.online?"Online":"Offline") + "</span></span></td>" +
@@ -1725,8 +1889,8 @@ icon(TYPE_ICON[type]||"i-unknown") + esc(TYPE_LABEL[type]||type) + "</button></t
 "<td data-col=\"vendor\" data-label=\"Vendor\" class=\"mobilehidden\">" + esc(d.vendor||"—") + "</td>" +
 "<td data-col=\"hostname\" data-label=\"Hostname\" class=\"mobilehidden\" title=\"sources: " + esc((d.sources||[]).join(", ")||"none") + "\">" + esc(d.hostname||"—") + "</td>" +
 "<td data-col=\"ports\" data-label=\"Open ports\" class=\"mobilehidden\">" + portsCellHtml(d) + "</td>" +
-"<td data-col=\"lastseen\" data-label=\"Last seen\" title=\"" + esc(absTime(d.last_seen)) + "\">" + esc(relTime(d.last_seen)) + "</td>" +
-"<td data-col=\"firstseen\" data-label=\"First seen\" class=\"mobilehidden\" title=\"" + esc(absTime(d.first_seen)) + "\">" + esc(relTime(d.first_seen)) + "</td>" +
+"<td data-col=\"lastseen\" data-label=\"Last seen\" title=\"" + esc(absTime(d.last_seen)) + "\">" + relSpan(d.last_seen) + "</td>" +
+"<td data-col=\"firstseen\" data-label=\"First seen\" class=\"mobilehidden\" title=\"" + esc(absTime(d.first_seen)) + "\">" + relSpan(d.first_seen) + "</td>" +
 "<td data-col=\"actions\" data-label=\"Actions\" class=\"mobilehidden\">" +
 "<button type=\"button\" class=\"iconbtn\" data-act=\"menu\" data-links=\"" + esc(links) + "\" aria-label=\"Actions for " + esc(d.display_name) + "\">⋮</button></td>" +
 "</tr>";
@@ -1814,7 +1978,12 @@ openDetail(mac, row);
 return;
 }
 var act = actBtn.dataset.act;
-if (act === "expand"){ row.classList.toggle("expanded"); return; }
+if (act === "expand"){
+/* Kept in state, or the next render would fold the row up again. */
+state.expandedRows[mac] = !state.expandedRows[mac];
+row.classList.toggle("expanded", !!state.expandedRows[mac]);
+return;
+}
 if (act === "edit"){ startEditName(row, d); return; }
 if (act === "type"){ openTypePopover(actBtn, d); return; }
 if (act === "menu"){ openRowMenu(actBtn, d); return; }
@@ -1982,7 +2151,7 @@ portsHtml = "<p class=\"muted\" style=\"margin:6px 0\">Not scanned yet.</p>";
 portsHtml = "<p class=\"muted\" style=\"margin:6px 0\">No open ports found so far.</p>";
 }
 var tierLabel = PORTSCAN_TIER_LABEL[d.portscan_tier||0] || ("tier " + d.portscan_tier);
-var lastLabel = d.portscan_last ? (esc(relTime(d.portscan_last)) + " &middot; " + esc(absTime(d.portscan_last))) : "never";
+var lastLabel = d.portscan_last ? (relSpan(d.portscan_last) + " &middot; " + esc(absTime(d.portscan_last))) : "never";
 var meterHtml = "";
 if (d.portscan_active && d.portscan_total){
 var pct = Math.round(100 * (d.portscan_done||0) / d.portscan_total);
@@ -2009,12 +2178,12 @@ return "" +
 icon(TYPE_ICON[type]||"i-unknown") + esc(TYPE_LABEL[type]||type) + "</button></dd>" +
 "<dt>Nickname</dt><dd>" + esc(d.nickname||"—") + "</dd>" +
 "</dl></div>" +
-"<div class=\"detailsection\"><h4>Seen over the last 24 hours</h4><div id=\"sparkHost\"></div></div>" +
+"<div class=\"detailsection\"><h4>Seen over the last 24 hours</h4><div id=\"sparkHost\" data-keep></div></div>" +
 "<div class=\"detailsection\"><h4>Discovery</h4><dl class=\"kv\">" +
 "<dt>Sources</dt><dd><div class=\"chiprow\">" + sources + "</div></dd>" +
 "<dt>Services</dt><dd><div class=\"chiprow\">" + services + "</div></dd>" +
-"<dt>First seen</dt><dd>" + esc(relTime(d.first_seen)) + " &middot; " + esc(absTime(d.first_seen)) + "</dd>" +
-"<dt>Last seen</dt><dd>" + esc(relTime(d.last_seen)) + " &middot; " + esc(absTime(d.last_seen)) + "</dd>" +
+"<dt>First seen</dt><dd>" + relSpan(d.first_seen) + " &middot; " + esc(absTime(d.first_seen)) + "</dd>" +
+"<dt>Last seen</dt><dd>" + relSpan(d.last_seen) + " &middot; " + esc(absTime(d.last_seen)) + "</dd>" +
 "<dt>RTT</dt><dd>" + esc(rtt) + "</dd>" +
 "<dt>Miss count</dt><dd>" + esc(d.miss_count) + "</dd>" +
 "</dl></div>" +
@@ -2031,21 +2200,32 @@ icon(TYPE_ICON[type]||"i-unknown") + esc(TYPE_LABEL[type]||type) + "</button></d
 "<button type=\"button\" class=\"btn btn-danger-outline\" id=\"detailDeleteBtn\">Delete&hellip;</button>" +
 "</div></div>";
 }
-function wireDetailBody(d){
-var editBtn = $("detailEditBtn");
-if (editBtn) editBtn.addEventListener("click", function(){ startDetailEditName(d); });
-var typeBtn = $("detailTypeBtn");
-if (typeBtn) typeBtn.addEventListener("click", function(){ openTypePopover(typeBtn, d); });
-var rescanBtn = $("detailRescanBtn");
-if (rescanBtn) rescanBtn.addEventListener("click", function(){ doRescan(d); });
-var hideBtn = $("detailHideBtn");
-if (hideBtn) hideBtn.addEventListener("click", function(){
+/*
+ * One listener for the drawer's body, attached when the drawer opens. The body
+ * is updated in place every poll (see morph), so handlers bound to its buttons
+ * would pile up, and would act on the device as it was when they were bound.
+ * This one reads the current device from state on every click.
+ */
+function wireDetailPanel(body){
+body.addEventListener("click", function(ev){
+var btn = ev.target.closest("button");
+if (!btn || !body.contains(btn)) return;
+if (btn.id === "detailRetryBtn"){
+state.detail.loading = true; renderDetailBody(); fetchDetail();
+return;
+}
+var d = state.detail.data;
+if (!d) return;
+if (btn.id === "detailEditBtn"){ startDetailEditName(d); return; }
+if (btn.id === "detailTypeBtn"){ openTypePopover(btn, d); return; }
+if (btn.id === "detailRescanBtn"){ doRescan(d); return; }
+if (btn.id === "detailHideBtn"){
 api("PATCH","/api/devices/"+d.mac, {hidden: !d.hidden}).then(function(updated){
 applyDeviceUpdate(updated); toast(updated.hidden?"Hidden":"Unhidden", "ok");
 }).catch(toastErr);
-});
-var delBtn = $("detailDeleteBtn");
-if (delBtn) delBtn.addEventListener("click", function(){
+return;
+}
+if (btn.id === "detailDeleteBtn"){
 if (!confirm("Delete " + d.display_name + "? It will reappear as new if seen again.")) return;
 api("DELETE","/api/devices/"+d.mac).then(function(){
 state.devices = state.devices.filter(function(x){ return x.mac !== d.mac; });
@@ -2054,17 +2234,16 @@ renderDevices();
 toast("Deleted", "ok");
 closeDetail();
 }).catch(toastErr);
-});
-var detailBody = $("detailBody");
-if (detailBody) detailBody.querySelectorAll("[data-add-port]").forEach(function(btn){
-btn.addEventListener("click", function(){
+return;
+}
+if (btn.hasAttribute("data-add-port")){
 var port = Number(btn.dataset.addPort);
 btn.disabled = true;
 api("POST","/api/links", {mac: btn.dataset.mac, port: port}).then(function(){
 toast("Added to Dashboard", "ok");
 if (state.tab === "dashboard") loadLinks();
 }).catch(function(err){ toastErr(err); btn.disabled = false; });
-});
+}
 });
 }
 function doRescan(d){
@@ -2104,22 +2283,25 @@ var root = $("detailBody");
 if (!root) return;
 var st = state.detail;
 if (st.loading && !st.data){
-root.innerHTML = "<p class=\"empty\">Loading device&hellip;</p>";
+morph(root, "<p class=\"empty\">Loading device&hellip;</p>");
 return;
 }
 if (st.error && !st.data){
-root.innerHTML = "<p class=\"empty\">Couldn't load this device: " + esc(st.error) + "</p>" +
-"<div class=\"detailactions\"><button type=\"button\" class=\"btn\" id=\"detailRetryBtn\">Retry</button></div>";
-var rb = $("detailRetryBtn");
-if (rb) rb.addEventListener("click", function(){ state.detail.loading = true; renderDetailBody(); fetchDetail(); });
+morph(root, "<p class=\"empty\">Couldn't load this device: " + esc(st.error) + "</p>" +
+"<div class=\"detailactions\"><button type=\"button\" class=\"btn\" id=\"detailRetryBtn\">Retry</button></div>");
 return;
 }
 var d = st.data;
-if (!d){ root.innerHTML = "<p class=\"empty\">Device not found.</p>"; return; }
-root.innerHTML = detailHtml(d) +
-(st.error ? ("<p class=\"empty\" style=\"color:var(--danger)\">" + esc(st.error) + "</p>") : "");
-wireDetailBody(d);
+if (!d){ morph(root, "<p class=\"empty\">Device not found.</p>"); return; }
+morph(root, detailHtml(d) +
+(st.error ? ("<p class=\"empty\" style=\"color:var(--danger)\">" + esc(st.error) + "</p>") : ""));
+/* The strip changes once per five-minute slot: fetch it when the drawer opens
+   and once a minute after, not on every poll. */
+var host = $("sparkHost");
+if (host && (!host.firstChild || !st.sparkAt || Date.now() - st.sparkAt > 60000)){
+st.sparkAt = Date.now();
 renderSpark(d);
+}
 }
 /* ---- vault ---------------------------------------------------------- */
 
@@ -2178,7 +2360,7 @@ $("vaultPass").addEventListener("keydown", function(ev){ if (ev.key === "Enter")
 function renderSpark(d){
 var host = $("sparkHost");
 if (!host) return;
-host.innerHTML = "<p class=\"muted\" style=\"margin:0;font-size:var(--fs-sm)\">Loading…</p>";
+if (!host.firstChild) host.innerHTML = "<p class=\"muted\" style=\"margin:0;font-size:var(--fs-sm)\">Loading…</p>";
 api("GET","/api/devices/"+d.mac+"/history").then(function(h){
 if (!state.detail.mac || state.detail.mac !== d.mac) return;
 var valid = h.valid || 0;
@@ -2223,15 +2405,15 @@ host.innerHTML = "<p class=\"muted\" style=\"margin:0;font-size:var(--fs-sm)\">H
 
 function fetchDetail(){
 var mac = state.detail.mac;
-if (!mac) return;
-api("GET","/api/devices/"+mac).then(function(d){
+if (!mac) return Promise.resolve();
+return api("GET","/api/devices/"+mac).then(function(d){
 if (state.detail.mac !== mac) return;
 state.detail.data = d; state.detail.loading = false; state.detail.error = null;
 state.devicesByMac[d.mac] = d;
 var idx = state.devices.findIndex(function(x){ return x.mac === d.mac; });
 if (idx !== -1) state.devices[idx] = d;
-if (state.tab === "devices") renderDevices();
-if (!state.detail.editingName) renderDetailBody();
+if (state.tab === "devices") paint("devices", renderDevices);
+paint("detail", function(){ if (!state.detail.editingName) renderDetailBody(); });
 }).catch(function(err){
 if (state.detail.mac !== mac) return;
 state.detail.loading = false;
@@ -2264,6 +2446,7 @@ back.innerHTML = "<div class=\"drawer\" role=\"dialog\" aria-modal=\"true\" aria
 back.addEventListener("click", function(e){ if (e.target === back) closeDetail(); });
 $("detailRoot").appendChild(back);
 $("detailCloseBtn").addEventListener("click", closeDetail);
+wireDetailPanel($("detailBody"));
 detailKeyHandler = function(ev){
 if (ev.key === "Escape"){
 if (!$("popover").hidden) return;
@@ -2299,7 +2482,9 @@ state.links = links;
 state.groups = groups;
 state.maxGroups = res.max_groups || 8;
 state.linksMeta = res;
-if (state.linksRenamingId == null && (!same || !state.linksRendered)) renderDashboard();
+if (state.linksRenamingId == null && (!same || !state.linksRendered)) {
+paint("links", function(){ if (state.linksRenamingId == null) renderDashboard(); });
+}
 }).catch(function(e){ markPollFail(); });
 }
 function linkCardHtml(l, i, total){
@@ -2348,8 +2533,8 @@ icon("i-note") + esc(l.note) + "</div>") : "") +
    at the other levels. */
 (state.detailLevel === "hacker"
 ? ("<div class=\"lc-meta\">" +
-esc((l.service ? l.service : "port " + l.port) +
-(l.service_checked ? " \u00b7 " + relTime(l.service_checked) : "")) +
+esc(l.service ? l.service : "port " + l.port) +
+(l.service_checked ? " \u00b7 " + relSpan(l.service_checked) : "") +
 "</div><div class=\"lc-meta\">" + esc(hwMacOf(l.mac)) + "</div>")
 : "");
 var cardTag;
@@ -2392,13 +2577,16 @@ var credRow = (l.has_secret && !editing)
 "\" title=\"Show the credentials for " + esc(l.label) + "\">" +
 icon("i-key") + "<span>Credentials</span></button>")
 : "";
-return "<div class=\"linkcard-wrap\">" + cardTag + infoBtn + credRow + editControls + "</div>";
+return "<div class=\"linkcard-wrap\" data-key=\"l" + l.id + "\">" + cardTag + infoBtn + credRow +
+editControls + "</div>";
 }
 function groupHeadHtml(g){
 if (!state.linksEditMode) {
-return "<div class=\"grouphead\"><h3>" + esc(g.name) + "</h3><div class=\"rule\"></div></div>";
+return "<div class=\"grouphead\" data-key=\"g" + g.id + "\"><h3>" + esc(g.name) + "</h3>" +
+"<div class=\"rule\"></div></div>";
 }
-return "<div class=\"grouphead\"><h3>" + esc(g.name) + "</h3><div class=\"rule\"></div>" +
+return "<div class=\"grouphead\" data-key=\"g" + g.id + "\"><h3>" + esc(g.name) + "</h3>" +
+"<div class=\"rule\"></div>" +
 "<div class=\"gbtns\">" +
 "<button type=\"button\" data-groupact=\"up\" data-gid=\"" + g.id + "\" aria-label=\"Move " + esc(g.name) + " up\">" + icon("i-up") + "</button>" +
 "<button type=\"button\" data-groupact=\"down\" data-gid=\"" + g.id + "\" aria-label=\"Move " + esc(g.name) + " down\">" + icon("i-down") + "</button>" +
@@ -2446,14 +2634,21 @@ html += "<div class=\"linkgrid\">" + loose.map(function(l,i){
 return linkCardHtml(l, i, loose.length); }).join("") + "</div>";
 }
 
-$("linkGrid").innerHTML = html;
-wireLinkGrid();
+morph($("linkGrid"), html);
 }
-function wireLinkGrid(){
+/*
+ * One listener each on the grid, attached once. The grid is updated in place
+ * (see morph), so listeners on the cards themselves would pile up a copy per
+ * render; these read the ids off whatever was clicked instead.
+ */
+(function wireLinkGrid(){
 var grid = $("linkGrid");
-grid.querySelectorAll("[data-linkact]").forEach(function(btn){
-btn.addEventListener("click", function(ev){
+grid.addEventListener("click", function(ev){
+var btn = ev.target.closest("[data-linkact],[data-linkcred],[data-linkinfo],[data-groupact]");
+if (!btn || !grid.contains(btn)) return;
+/* These sit on top of the card: keep the click from reaching the link. */
 ev.preventDefault(); ev.stopPropagation();
+if (btn.hasAttribute("data-linkact")){
 var id = Number(btn.dataset.id), act = btn.dataset.linkact;
 if (act === "remove") removeLink(id);
 else if (act === "up") moveLink(id, -1);
@@ -2462,37 +2657,23 @@ else if (act === "rename") renameLink(id, btn);
 else if (act === "icon") openIconPicker(id);
 else if (act === "note") openLinkNote(id);
 else if (act === "group") openGroupPicker(id, btn);
-});
-});
-grid.querySelectorAll("[data-linkcred]").forEach(function(btn){
-btn.addEventListener("click", function(ev){
-ev.preventDefault(); ev.stopPropagation();
+} else if (btn.hasAttribute("data-linkcred")){
 openLinkCredentials(Number(btn.dataset.linkcred));
-});
-});
-grid.querySelectorAll("[data-linkinfo]").forEach(function(btn){
-btn.addEventListener("click", function(ev){
-/* The button sits on top of the card, so stop the click reaching the link. */
-ev.preventDefault(); ev.stopPropagation();
+} else if (btn.hasAttribute("data-linkinfo")){
 openLinkNote(Number(btn.dataset.linkinfo));
+} else {
+var gid = Number(btn.dataset.gid), gact = btn.dataset.groupact;
+if (gact === "remove") removeGroup(gid);
+else if (gact === "rename") renameGroup(gid);
+else if (gact === "up") moveGroup(gid, -1);
+else if (gact === "down") moveGroup(gid, 1);
+}
 });
-});
-grid.querySelectorAll("[data-groupact]").forEach(function(btn){
-btn.addEventListener("click", function(ev){
-ev.preventDefault(); ev.stopPropagation();
-var gid = Number(btn.dataset.gid), act = btn.dataset.groupact;
-if (act === "remove") removeGroup(gid);
-else if (act === "rename") renameGroup(gid);
-else if (act === "up") moveGroup(gid, -1);
-else if (act === "down") moveGroup(gid, 1);
-});
-});
-grid.querySelectorAll(".linkcard.unknown").forEach(function(el){
-el.addEventListener("keydown", function(ev){
+grid.addEventListener("keydown", function(ev){
+if (!ev.target.closest(".linkcard.unknown")) return;
 if (ev.key === "Enter" || ev.key === " ") ev.preventDefault();
 });
-});
-}
+})();
 function addGroup(){
 var name = prompt("Name this group", "");
 if (name == null) return;
@@ -3163,8 +3344,10 @@ var items = res.items || [];
 var same = JSON.stringify(items) === JSON.stringify(state.notifs);
 state.notifs = items;
 state.notifUnread = res.unread || 0;
+paint("feed", function(){
 if (!same || !state.notifRendered) renderFeed();
 updateFeedBadge();
+});
 }).catch(function(){});
 }
 
@@ -3213,7 +3396,7 @@ state.notifRendered = true;
 $("feedEmpty").hidden = items.length !== 0;
 if (!items.length){ $("feedList").innerHTML = ""; return; }
 
-$("feedList").innerHTML = items.map(function(n){
+morph($("feedList"), items.map(function(n){
 var what = NOTIF_WHAT[n.type] || n.type;
 /* The device name leads when there is one - that is what the reader is
    scanning for - with the category carried by the icon and the detail line. */
@@ -3221,40 +3404,41 @@ var title = n.device ? esc(n.device) : what;
 var detail = n.device ? (what + (n.text ? (" · " + n.text) : ""))
 : (n.text || "");
 if (n.ip) detail += " · " + n.ip;
-return "<li" + (n.read ? "" : " class=\"unread\"") + " data-nid=\"" + n.id + "\">" +
+/* Clicking a row opens the device it is about; say so with the cursor. */
+return "<li data-key=\"" + n.id + "\"" + (n.read ? "" : " class=\"unread\"") +
+" data-nid=\"" + n.id + "\"" + (n.mac ? " style=\"cursor:pointer\"" : "") + ">" +
 icon(NOTIF_ICON[n.type] || "i-info", "fd-ico " + (NOTIF_TONE[n.type] || "")) +
 "<span class=\"fd-body\">" +
 "<div class=\"fd-title\">" + title + "</div>" +
-"<div class=\"fd-meta\">" + esc(detail) + (n.ts ? (" · " + esc(relTime(n.ts))) : "") + "</div>" +
+"<div class=\"fd-meta\">" + esc(detail) + (n.ts ? (" · " + relSpan(n.ts)) : "") + "</div>" +
 "</span>" +
 "<button type=\"button\" class=\"fd-x\" data-nid=\"" + n.id + "\" aria-label=\"Dismiss\">" +
 icon("i-close") + "</button></li>";
-}).join("");
-
-$("feedList").querySelectorAll(".fd-x").forEach(function(b){
-b.addEventListener("click", function(ev){
+}).join(""));
+}
+/* Wired once: the list is updated in place, so rows keep their elements. */
+$("feedList").addEventListener("click", function(ev){
+var x = ev.target.closest(".fd-x");
+if (x){
 ev.stopPropagation();
-api("DELETE","/api/notifications/"+b.dataset.nid)
+api("DELETE","/api/notifications/"+x.dataset.nid)
 .then(function(){ state.notifRendered = false; loadNotifs(); }).catch(toastErr);
-});
-});
+return;
+}
 /* Clicking the row opens the device it is about, which is almost always the
    next thing you want after reading it. */
-$("feedList").querySelectorAll("li[data-nid]").forEach(function(li){
-var n = state.notifs.find(function(x){ return String(x.id) === li.dataset.nid; });
+var li = ev.target.closest("li[data-nid]");
+if (!li) return;
+var n = (state.notifs || []).find(function(x){ return String(x.id) === li.dataset.nid; });
 if (!n || !n.mac) return;
-li.style.cursor = "pointer";
-li.addEventListener("click", function(){
 closeFeed();
 selectTab("devices");
 openDetail(n.mac, null);
 });
-});
-}
 
 function loadEvents(){
 return api("GET","/api/events").then(function(list){
-state.events = list; markPollOk(); renderEvents();
+state.events = list; markPollOk(); paint("events", renderEvents);
 }).catch(function(e){ markPollFail(); });
 }
 /* "Liteon 7c4c - Liteon 7c4c" helps nobody: only name the device when the
@@ -3268,13 +3452,13 @@ return who + ": " + text;
 function renderEvents(){
 var list = state.events;
 $("evEmpty").hidden = list.length !== 0;
-$("eventsList").innerHTML = list.map(function(ev){
+morph($("eventsList"), list.map(function(ev){
 var d = ev.mac ? state.devicesByMac[ev.mac] : null;
 var who = d ? d.display_name : (ev.ip || (ev.mac || ""));
 return "<li>" + icon(EV_ICON[ev.type]||EV_ICON.info, "ev-ico ev-" + esc(ev.type||"info")) +
 "<span class=\"ev-body\"><div class=\"ev-title\">" + esc(evTitle(who, ev.text||ev.type)) + "</div>" +
-"<div class=\"ev-meta\">" + esc(ev.ip||"") + (ev.ip?" · ":"") + "<span title=\"" + esc(absTime(ev.ts)) + "\">" + esc(relTime(ev.ts)) + "</span></div></span></li>";
-}).join("");
+"<div class=\"ev-meta\">" + esc(ev.ip||"") + (ev.ip?" · ":"") + "<span title=\"" + esc(absTime(ev.ts)) + "\">" + relSpan(ev.ts) + "</span></div></span></li>";
+}).join(""));
 }
 var TZ_POSIX = {"Africa/Abidjan":"GMT0","Africa/Accra":"GMT0","Africa/Addis_Ababa":"EAT-3","Africa/Algiers":"CET-1","Africa/Asmara":"EAT-3","Africa/Bamako":"GMT0","Africa/Bangui":"WAT-1","Africa/Banjul":"GMT0","Africa/Bissau":"GMT0","Africa/Blantyre":"CAT-2","Africa/Brazzaville":"WAT-1","Africa/Bujumbura":"CAT-2","Africa/Cairo":"EET-2EEST,M4.5.5/0,M10.5.4/24","Africa/Casablanca":"LTA-1","Africa/Ceuta":"CET-1CEST,M3.5.0,M10.5.0/3","Africa/Conakry":"GMT0","Africa/Dakar":"GMT0","Africa/Dar_es_Salaam":"EAT-3","Africa/Djibouti":"EAT-3","Africa/Douala":"WAT-1","Africa/El_Aaiun":"LTA-1","Africa/Freetown":"GMT0","Africa/Gaborone":"CAT-2","Africa/Harare":"CAT-2","Africa/Johannesburg":"SAST-2","Africa/Juba":"CAT-2","Africa/Kampala":"EAT-3","Africa/Khartoum":"CAT-2","Africa/Kigali":"CAT-2","Africa/Kinshasa":"WAT-1","Africa/Lagos":"WAT-1","Africa/Libreville":"WAT-1","Africa/Lome":"GMT0","Africa/Luanda":"WAT-1","Africa/Lubumbashi":"CAT-2","Africa/Lusaka":"CAT-2","Africa/Malabo":"WAT-1","Africa/Maputo":"CAT-2","Africa/Maseru":"SAST-2","Africa/Mbabane":"SAST-2","Africa/Mogadishu":"EAT-3","Africa/Monrovia":"GMT0","Africa/Nairobi":"EAT-3","Africa/Ndjamena":"WAT-1","Africa/Niamey":"WAT-1","Africa/Nouakchott":"GMT0","Africa/Ouagadougou":"GMT0","Africa/Porto-Novo":"WAT-1","Africa/Sao_Tome":"GMT0","Africa/Tripoli":"EET-2","Africa/Tunis":"CET-1","Africa/Windhoek":"CAT-2","America/Adak":"HST10HDT,M3.2.0,M11.1.0","America/Anchorage":"AKST9AKDT,M3.2.0,M11.1.0","America/Anguilla":"AST4","America/Antigua":"AST4","America/Araguaina":"LTA3","America/Argentina/Buenos_Aires":"LTA3","America/Argentina/Catamarca":"LTA3","America/Argentina/Cordoba":"LTA3","America/Argentina/Jujuy":"LTA3","America/Argentina/La_Rioja":"LTA3","America/Argentina/Mendoza":"LTA3","America/Argentina/Rio_Gallegos":"LTA3","America/Argentina/Salta":"LTA3","America/Argentina/San_Juan":"LTA3","America/Argentina/San_Luis":"LTA3","America/Argentina/Tucuman":"LTA3","America/Argentina/Ushuaia":"LTA3","America/Aruba":"AST4","America/Asuncion":"LTA3","America/Atikokan":"EST5","America/Bahia":"LTA3","America/Bahia_Banderas":"CST6","America/Barbados":"AST4","America/Belem":"LTA3","America/Belize":"CST6","America/Blanc-Sablon":"AST4","America/Boa_Vista":"LTA4","America/Bogota":"LTA5","America/Boise":"MST7MDT,M3.2.0,M11.1.0","America/Cambridge_Bay":"MST7MDT,M3.2.0,M11.1.0","America/Campo_Grande":"LTA4","America/Cancun":"EST5","America/Caracas":"LTA4","America/Cayenne":"LTA3","America/Cayman":"EST5","America/Chicago":"CST6CDT,M3.2.0,M11.1.0","America/Chihuahua":"CST6","America/Costa_Rica":"CST6","America/Creston":"MST7","America/Cuiaba":"LTA4","America/Curacao":"AST4","America/Danmarkshavn":"GMT0","America/Dawson":"MST7","America/Dawson_Creek":"MST7","America/Denver":"MST7MDT,M3.2.0,M11.1.0","America/Detroit":"EST5EDT,M3.2.0,M11.1.0","America/Dominica":"AST4","America/Edmonton":"MST7MDT,M3.2.0,M11.1.0","America/Eirunepe":"LTA5","America/El_Salvador":"CST6","America/Fort_Nelson":"MST7","America/Fortaleza":"LTA3","America/Glace_Bay":"AST4ADT,M3.2.0,M11.1.0","America/Godthab":"LTA2LTB,M3.5.0/-1,M10.5.0/0","America/Goose_Bay":"AST4ADT,M3.2.0,M11.1.0","America/Grand_Turk":"EST5EDT,M3.2.0,M11.1.0","America/Grenada":"AST4","America/Guadeloupe":"AST4","America/Guatemala":"CST6","America/Guayaquil":"LTA5","America/Guyana":"LTA4","America/Halifax":"AST4ADT,M3.2.0,M11.1.0","America/Havana":"CST5CDT,M3.2.0/0,M11.1.0/1","America/Hermosillo":"MST7","America/Indiana/Indianapolis":"EST5EDT,M3.2.0,M11.1.0","America/Indiana/Knox":"CST6CDT,M3.2.0,M11.1.0","America/Indiana/Marengo":"EST5EDT,M3.2.0,M11.1.0","America/Indiana/Petersburg":"EST5EDT,M3.2.0,M11.1.0","America/Indiana/Tell_City":"CST6CDT,M3.2.0,M11.1.0","America/Indiana/Vevay":"EST5EDT,M3.2.0,M11.1.0","America/Indiana/Vincennes":"EST5EDT,M3.2.0,M11.1.0","America/Indiana/Winamac":"EST5EDT,M3.2.0,M11.1.0","America/Inuvik":"MST7MDT,M3.2.0,M11.1.0","America/Iqaluit":"EST5EDT,M3.2.0,M11.1.0","America/Jamaica":"EST5","America/Juneau":"AKST9AKDT,M3.2.0,M11.1.0","America/Kentucky/Louisville":"EST5EDT,M3.2.0,M11.1.0","America/Kentucky/Monticello":"EST5EDT,M3.2.0,M11.1.0","America/Kralendijk":"AST4","America/La_Paz":"LTA4","America/Lima":"LTA5","America/Los_Angeles":"PST8PDT,M3.2.0,M11.1.0","America/Lower_Princes":"AST4","America/Maceio":"LTA3","America/Managua":"CST6","America/Manaus":"LTA4","America/Marigot":"AST4","America/Martinique":"AST4","America/Matamoros":"CST6CDT,M3.2.0,M11.1.0","America/Mazatlan":"MST7","America/Menominee":"CST6CDT,M3.2.0,M11.1.0","America/Merida":"CST6","America/Metlakatla":"AKST9AKDT,M3.2.0,M11.1.0","America/Mexico_City":"CST6","America/Miquelon":"LTA3LTB,M3.2.0,M11.1.0","America/Moncton":"AST4ADT,M3.2.0,M11.1.0","America/Monterrey":"CST6","America/Montevideo":"LTA3","America/Montreal":"EST5EDT,M3.2.0,M11.1.0","America/Montserrat":"AST4","America/Nassau":"EST5EDT,M3.2.0,M11.1.0","America/New_York":"EST5EDT,M3.2.0,M11.1.0","America/Nipigon":"EST5EDT,M3.2.0,M11.1.0","America/Nome":"AKST9AKDT,M3.2.0,M11.1.0","America/Noronha":"LTA2","America/North_Dakota/Beulah":"CST6CDT,M3.2.0,M11.1.0","America/North_Dakota/Center":"CST6CDT,M3.2.0,M11.1.0","America/North_Dakota/New_Salem":"CST6CDT,M3.2.0,M11.1.0","America/Nuuk":"LTA2LTB,M3.5.0/-1,M10.5.0/0","America/Ojinaga":"CST6CDT,M3.2.0,M11.1.0","America/Panama":"EST5","America/Pangnirtung":"EST5EDT,M3.2.0,M11.1.0","America/Paramaribo":"LTA3","America/Phoenix":"MST7","America/Port-au-Prince":"EST5EDT,M3.2.0,M11.1.0","America/Port_of_Spain":"AST4","America/Porto_Velho":"LTA4","America/Puerto_Rico":"AST4","America/Punta_Arenas":"LTA3","America/Rainy_River":"CST6CDT,M3.2.0,M11.1.0","America/Rankin_Inlet":"CST6CDT,M3.2.0,M11.1.0","America/Recife":"LTA3","America/Regina":"CST6","America/Resolute":"CST6CDT,M3.2.0,M11.1.0","America/Rio_Branco":"LTA5","America/Santarem":"LTA3","America/Santiago":"LTA4LTB,M9.1.6/24,M4.1.6/24","America/Santo_Domingo":"AST4","America/Sao_Paulo":"LTA3","America/Scoresbysund":"LTA2LTB,M3.5.0/-1,M10.5.0/0","America/Sitka":"AKST9AKDT,M3.2.0,M11.1.0","America/St_Barthelemy":"AST4","America/St_Johns":"NST3:30NDT,M3.2.0,M11.1.0","America/St_Kitts":"AST4","America/St_Lucia":"AST4","America/St_Thomas":"AST4","America/St_Vincent":"AST4","America/Swift_Current":"CST6","America/Tegucigalpa":"CST6","America/Thule":"AST4ADT,M3.2.0,M11.1.0","America/Thunder_Bay":"EST5EDT,M3.2.0,M11.1.0","America/Tijuana":"PST8PDT,M3.2.0,M11.1.0","America/Toronto":"EST5EDT,M3.2.0,M11.1.0","America/Tortola":"AST4","America/Vancouver":"PST8PDT,M3.2.0,M11.1.0","America/Whitehorse":"MST7","America/Winnipeg":"CST6CDT,M3.2.0,M11.1.0","America/Yakutat":"AKST9AKDT,M3.2.0,M11.1.0","America/Yellowknife":"MST7MDT,M3.2.0,M11.1.0","Antarctica/Casey":"LTA-8","Antarctica/Davis":"LTA-7","Antarctica/DumontDUrville":"LTA-10","Antarctica/Macquarie":"AEST-10AEDT,M10.1.0,M4.1.0/3","Antarctica/Mawson":"LTA-5","Antarctica/McMurdo":"NZST-12NZDT,M9.5.0,M4.1.0/3","Antarctica/Palmer":"LTA3","Antarctica/Rothera":"LTA3","Antarctica/Syowa":"LTA-3","Antarctica/Troll":"LTA0LTB-2,M3.5.0/1,M10.5.0/3","Antarctica/Vostok":"LTA-5","Arctic/Longyearbyen":"CET-1CEST,M3.5.0,M10.5.0/3","Asia/Aden":"LTA-3","Asia/Almaty":"LTA-5","Asia/Amman":"LTA-3","Asia/Anadyr":"LTA-12","Asia/Aqtau":"LTA-5","Asia/Aqtobe":"LTA-5","Asia/Ashgabat":"LTA-5","Asia/Atyrau":"LTA-5","Asia/Baghdad":"LTA-3","Asia/Bahrain":"LTA-3","Asia/Baku":"LTA-4","Asia/Bangkok":"LTA-7","Asia/Barnaul":"LTA-7","Asia/Beirut":"EET-2EEST,M3.5.0/0,M10.5.0/0","Asia/Bishkek":"LTA-6","Asia/Brunei":"LTA-8","Asia/Chita":"LTA-9","Asia/Choibalsan":"LTA-8","Asia/Colombo":"LTA-5:30","Asia/Damascus":"LTA-3","Asia/Dhaka":"LTA-6","Asia/Dili":"LTA-9","Asia/Dubai":"LTA-4","Asia/Dushanbe":"LTA-5","Asia/Famagusta":"EET-2EEST,M3.5.0/3,M10.5.0/4","Asia/Gaza":"EET-2EEST,M3.4.4/50,M10.4.4/50","Asia/Hebron":"EET-2EEST,M3.4.4/50,M10.4.4/50","Asia/Ho_Chi_Minh":"LTA-7","Asia/Hong_Kong":"HKT-8","Asia/Hovd":"LTA-7","Asia/Irkutsk":"LTA-8","Asia/Jakarta":"WIB-7","Asia/Jayapura":"WIT-9","Asia/Jerusalem":"IST-2IDT,M3.4.4/26,M10.5.0","Asia/Kabul":"LTA-4:30","Asia/Kamchatka":"LTA-12","Asia/Karachi":"PKT-5","Asia/Kathmandu":"LTA-5:45","Asia/Khandyga":"LTA-9","Asia/Kolkata":"IST-5:30","Asia/Krasnoyarsk":"LTA-7","Asia/Kuala_Lumpur":"LTA-8","Asia/Kuching":"LTA-8","Asia/Kuwait":"LTA-3","Asia/Macau":"CST-8","Asia/Magadan":"LTA-11","Asia/Makassar":"WITA-8","Asia/Manila":"PST-8","Asia/Muscat":"LTA-4","Asia/Nicosia":"EET-2EEST,M3.5.0/3,M10.5.0/4","Asia/Novokuznetsk":"LTA-7","Asia/Novosibirsk":"LTA-7","Asia/Omsk":"LTA-6","Asia/Oral":"LTA-5","Asia/Phnom_Penh":"LTA-7","Asia/Pontianak":"WIB-7","Asia/Pyongyang":"KST-9","Asia/Qatar":"LTA-3","Asia/Qyzylorda":"LTA-5","Asia/Riyadh":"LTA-3","Asia/Sakhalin":"LTA-11","Asia/Samarkand":"LTA-5","Asia/Seoul":"KST-9","Asia/Shanghai":"CST-8","Asia/Singapore":"LTA-8","Asia/Srednekolymsk":"LTA-11","Asia/Taipei":"CST-8","Asia/Tashkent":"LTA-5","Asia/Tbilisi":"LTA-4","Asia/Tehran":"LTA-3:30","Asia/Thimphu":"LTA-6","Asia/Tokyo":"JST-9","Asia/Tomsk":"LTA-7","Asia/Ulaanbaatar":"LTA-8","Asia/Urumqi":"LTA-6","Asia/Ust-Nera":"LTA-10","Asia/Vientiane":"LTA-7","Asia/Vladivostok":"LTA-10","Asia/Yakutsk":"LTA-9","Asia/Yangon":"LTA-6:30","Asia/Yekaterinburg":"LTA-5","Asia/Yerevan":"LTA-4","Atlantic/Azores":"LTA1LTB,M3.5.0/0,M10.5.0/1","Atlantic/Bermuda":"AST4ADT,M3.2.0,M11.1.0","Atlantic/Canary":"WET0WEST,M3.5.0/1,M10.5.0","Atlantic/Cape_Verde":"LTA1","Atlantic/Faroe":"WET0WEST,M3.5.0/1,M10.5.0","Atlantic/Madeira":"WET0WEST,M3.5.0/1,M10.5.0","Atlantic/Reykjavik":"GMT0","Atlantic/South_Georgia":"LTA2","Atlantic/St_Helena":"GMT0","Atlantic/Stanley":"LTA3","Australia/Adelaide":"ACST-9:30ACDT,M10.1.0,M4.1.0/3","Australia/Brisbane":"AEST-10","Australia/Broken_Hill":"ACST-9:30ACDT,M10.1.0,M4.1.0/3","Australia/Currie":"AEST-10AEDT,M10.1.0,M4.1.0/3","Australia/Darwin":"ACST-9:30","Australia/Eucla":"LTA-8:45","Australia/Hobart":"AEST-10AEDT,M10.1.0,M4.1.0/3","Australia/Lindeman":"AEST-10","Australia/Lord_Howe":"LTA-10:30LTB-11,M10.1.0,M4.1.0","Australia/Melbourne":"AEST-10AEDT,M10.1.0,M4.1.0/3","Australia/Perth":"AWST-8","Australia/Sydney":"AEST-10AEDT,M10.1.0,M4.1.0/3","Etc/GMT":"GMT0","Etc/GMT+0":"GMT0","Etc/GMT+1":"LTA1","Etc/GMT+10":"LTA10","Etc/GMT+11":"LTA11","Etc/GMT+12":"LTA12","Etc/GMT+2":"LTA2","Etc/GMT+3":"LTA3","Etc/GMT+4":"LTA4","Etc/GMT+5":"LTA5","Etc/GMT+6":"LTA6","Etc/GMT+7":"LTA7","Etc/GMT+8":"LTA8","Etc/GMT+9":"LTA9","Etc/GMT-0":"GMT0","Etc/GMT-1":"LTA-1","Etc/GMT-10":"LTA-10","Etc/GMT-11":"LTA-11","Etc/GMT-12":"LTA-12","Etc/GMT-13":"LTA-13","Etc/GMT-14":"LTA-14","Etc/GMT-2":"LTA-2","Etc/GMT-3":"LTA-3","Etc/GMT-4":"LTA-4","Etc/GMT-5":"LTA-5","Etc/GMT-6":"LTA-6","Etc/GMT-7":"LTA-7","Etc/GMT-8":"LTA-8","Etc/GMT-9":"LTA-9","Etc/GMT0":"GMT0","Etc/Greenwich":"GMT0","Etc/UCT":"UTC0","Etc/UTC":"UTC0","Etc/Universal":"UTC0","Etc/Zulu":"UTC0","Europe/Amsterdam":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Andorra":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Astrakhan":"LTA-4","Europe/Athens":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Belgrade":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Berlin":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Bratislava":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Brussels":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Bucharest":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Budapest":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Busingen":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Chisinau":"EET-2EEST,M3.5.0,M10.5.0/3","Europe/Copenhagen":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Dublin":"IST-1GMT0,M10.5.0,M3.5.0/1","Europe/Gibraltar":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Guernsey":"GMT0BST,M3.5.0/1,M10.5.0","Europe/Helsinki":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Isle_of_Man":"GMT0BST,M3.5.0/1,M10.5.0","Europe/Istanbul":"LTA-3","Europe/Jersey":"GMT0BST,M3.5.0/1,M10.5.0","Europe/Kaliningrad":"EET-2","Europe/Kiev":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Kirov":"MSK-3","Europe/Lisbon":"WET0WEST,M3.5.0/1,M10.5.0","Europe/Ljubljana":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/London":"GMT0BST,M3.5.0/1,M10.5.0","Europe/Luxembourg":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Madrid":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Malta":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Mariehamn":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Minsk":"LTA-3","Europe/Monaco":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Moscow":"MSK-3","Europe/Oslo":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Paris":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Podgorica":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Prague":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Riga":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Rome":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Samara":"LTA-4","Europe/San_Marino":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Sarajevo":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Saratov":"LTA-4","Europe/Simferopol":"MSK-3","Europe/Skopje":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Sofia":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Stockholm":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Tallinn":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Tirane":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Ulyanovsk":"LTA-4","Europe/Uzhgorod":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Vaduz":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Vatican":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Vienna":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Vilnius":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Volgograd":"MSK-3","Europe/Warsaw":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Zagreb":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Zaporozhye":"EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Zurich":"CET-1CEST,M3.5.0,M10.5.0/3","Indian/Antananarivo":"EAT-3","Indian/Chagos":"LTA-6","Indian/Christmas":"LTA-7","Indian/Cocos":"LTA-6:30","Indian/Comoro":"EAT-3","Indian/Kerguelen":"LTA-5","Indian/Mahe":"LTA-4","Indian/Maldives":"LTA-5","Indian/Mauritius":"LTA-4","Indian/Mayotte":"EAT-3","Indian/Reunion":"LTA-4","Pacific/Apia":"LTA-13","Pacific/Auckland":"NZST-12NZDT,M9.5.0,M4.1.0/3","Pacific/Bougainville":"LTA-11","Pacific/Chatham":"LTA-12:45LTB,M9.5.0/2:45,M4.1.0/3:45","Pacific/Chuuk":"LTA-10","Pacific/Easter":"LTA6LTB,M9.1.6/22,M4.1.6/22","Pacific/Efate":"LTA-11","Pacific/Enderbury":"LTA-13","Pacific/Fakaofo":"LTA-13","Pacific/Fiji":"LTA-12","Pacific/Funafuti":"LTA-12","Pacific/Galapagos":"LTA6","Pacific/Gambier":"LTA9","Pacific/Guadalcanal":"LTA-11","Pacific/Guam":"ChST-10","Pacific/Honolulu":"HST10","Pacific/Kiritimati":"LTA-14","Pacific/Kosrae":"LTA-11","Pacific/Kwajalein":"LTA-12","Pacific/Majuro":"LTA-12","Pacific/Marquesas":"LTA9:30","Pacific/Midway":"SST11","Pacific/Nauru":"LTA-12","Pacific/Niue":"LTA11","Pacific/Norfolk":"LTA-11LTB,M10.1.0,M4.1.0/3","Pacific/Noumea":"LTA-11","Pacific/Pago_Pago":"SST11","Pacific/Palau":"LTA-9","Pacific/Pitcairn":"LTA8","Pacific/Pohnpei":"LTA-11","Pacific/Port_Moresby":"LTA-10","Pacific/Rarotonga":"LTA10","Pacific/Saipan":"ChST-10","Pacific/Tahiti":"LTA10","Pacific/Tarawa":"LTA-12","Pacific/Tongatapu":"LTA-13","Pacific/Wake":"LTA-12","Pacific/Wallis":"LTA-12"};
 
@@ -3881,11 +4065,11 @@ $("otaSource").textContent = o.repo
 var rows = [["Running", "<span class=\"mono\">" + esc(o.current) + "</span>"]];
 if (o.latest) rows.push(["Latest release", "<span class=\"mono\">" + esc(o.latest) + "</span>" +
 (o.available && o.repo ? " · " + extLink(changelogUrl(), "What's new") : "")]);
-var st = (o.state === "error" && o.error) ? o.error : (OTA_STATE_TEXT[o.state] || o.state);
+var st = esc((o.state === "error" && o.error) ? o.error : (OTA_STATE_TEXT[o.state] || o.state));
 if (o.last_check && o.state !== "checking" && o.state !== "downloading") {
-st += " · checked " + relTime(o.last_check);
+st += " · checked " + relSpan(o.last_check);
 }
-rows.push(["Status", esc(st)]);
+rows.push(["Status", st]);
 var html = rows.map(function(r){ return "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>"; }).join("");
 if (o.available && o.auto_blocked){
 html += "<p class=\"otanote\">Not installed automatically: " +
@@ -3897,7 +4081,7 @@ html += "<p class=\"otanote\">Not installed automatically: " +
 html += "<p class=\"otanote\"><span class=\"mono\">" + esc(o.rolled_back) + "</span> failed to " +
 "start and the dongle went back to the version before it.</p>";
 }
-$("otaStatus").innerHTML = "<dl class=\"otastatus\" style=\"margin:0\">" + html + "</dl>";
+morph($("otaStatus"), "<dl class=\"otastatus\" style=\"margin:0\">" + html + "</dl>");
 
 var dl = o.state === "downloading";
 $("otaMeter").hidden = !dl;
@@ -4044,7 +4228,7 @@ var tries = 0;
 var iv = setInterval(function(){
 tries++;
 api("GET","/api/status").then(function(s){
-clearInterval(iv); state.status = s; renderStatus(); renderTiles();
+clearInterval(iv); state.status = s; syncLiveClocks(s); renderStatus(); renderTiles();
 toast("Reconnected", "ok");
 }).catch(function(){
 if (tries >= 20){ clearInterval(iv); toast("Still reconnecting. Check the dongle.", "err"); }
@@ -4248,16 +4432,23 @@ api("POST","/api/system/factory-reset", {confirm:"factory-reset"}).then(function
 toast("Factory reset: the dongle will restart into setup mode", "ok");
 }).catch(toastErr);
 });
+/*
+ * Every five seconds, ask the dongle for what is on screen. It serves one
+ * request at a time, and a Devices-tab poll keeps it busy for about 270 ms,
+ * so this stays at five seconds; the times on the page count by themselves
+ * every second in between (tickLiveTimes). The answers are painted together
+ * once they are all in, rather than section by section as they land.
+ */
 function tick(){
 if (document.hidden) return;
-loadStatus();
-loadPortscanStatus();
 renderClock();
-if (state.tab === "dashboard") loadLinks();
-if (state.tab === "devices") loadDevices();
-if (state.tab === "system") loadEvents();
-if (feedOpen()) loadNotifs();
-if (state.detail.mac && !state.detail.editingName) fetchDetail();
+var jobs = [loadStatus(), loadPortscanStatus()];
+if (state.tab === "dashboard") jobs.push(loadLinks());
+if (state.tab === "devices") jobs.push(loadDevices());
+if (state.tab === "system") jobs.push(loadEvents());
+if (feedOpen()) jobs.push(loadNotifs());
+if (state.detail.mac && !state.detail.editingName) jobs.push(fetchDetail());
+paintTogether(jobs);
 }
 setInterval(tick, 5000);
 var savedTab = "dashboard";
@@ -4282,9 +4473,10 @@ if (tries > 1) setTimeout(function(){ firstSettings(tries - 1); }, 2000);
 });
 })(8);
 renderClock();
-/* The display has minute resolution, but ticking every second keeps it from
-   lagging the real minute by up to a whole interval. It is two DOM writes. */
-setInterval(renderClock, 1000);
+/* The clock has minute resolution, but ticking every second keeps it from
+   lagging the real minute by up to a whole interval. The relative times and
+   the uptime count on the same beat; neither asks the dongle anything. */
+setInterval(function(){ renderClock(); tickLiveTimes(); }, 1000);
 setBellIcon();
 loadStatus();
 loadDevices();

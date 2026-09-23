@@ -303,6 +303,20 @@ partitions.csv              nvs 64K, otadata 8K, phy 4K, ota_0 3M, ota_1 3M,
   holding it. Do no I/O (HTTP send, SPI, NVS) while holding the lock — build
   the response into a buffer first, then release it.
 - JSON via **cJSON** (`json` component). Never build JSON with `sprintf`.
+- **The web UI updates in place.** A renderer that runs on the 5 s poll builds
+  an HTML string and hands it to `morph(container, html)`, never
+  `innerHTML`: rebuilding every element restarted animations, flickered
+  hover controls and icons, and dropped text selections. Consequences: give
+  list items a `data-key` so a re-sort moves them rather than rebuilding
+  them; mark an element another function fills with `data-keep`; attach
+  event handlers to the container by delegation, never to rendered elements
+  (they would be attached again on every render, and would see stale data);
+  and keep client-only state such as an expanded row in `state`, or the next
+  render undoes it. Poll results are painted through `paint(key, fn)` so a
+  tick lands as one repaint. A relative time or the uptime goes out as
+  `relSpan(ts)` or `uptimeSpan()`, which count every second on their own;
+  do not poll faster to make them move - a Devices-tab poll keeps the
+  dongle's web server busy for about 270 ms.
 - Events go on the default event loop with base `NETDASH_EVENT`; device event
   data is a `netdash_device_t` **copied by value**, never a pointer into the
   table.
@@ -585,5 +599,8 @@ stream if the device table ever gets close to its 128-device capacity.
 
 Not verified:
 
-- The dashboard rendered in a browser. The API behind it is fully exercised.
+- The dashboard across browsers. It has been driven in headless Edge against
+  live data (v0.21.2): elements survive polls, times tick every second, a
+  poll lands as one DOM update, no page errors. Firefox and Safari have not
+  been tried.
 - Long-term stability beyond a few minutes of uptime.
