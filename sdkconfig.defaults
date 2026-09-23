@@ -37,8 +37,9 @@ CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
 
 # LVGL's built-in allocator keeps a static pool in DIRAM. The default 64 KB is
-# far more than three label-only pages need on a board with no PSRAM.
-CONFIG_LV_MEM_SIZE=24576
+# far more than three label-only pages need on a board with no PSRAM. They
+# peaked at 14.8 KB of it (lv_mem_monitor, v0.21), so 20 KB leaves room.
+CONFIG_LV_MEM_SIZE=20480
 
 # The port scanner runs a small batch of concurrent TCP connects, which the
 # default budget of 10 cannot cover once the web server has taken its share.
@@ -55,5 +56,7 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # buffers. Dynamic buffers allocate records to size and free the config and CA
 # chain once the handshake is over.
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+# The TLS read buffer gets a block of its own: see main/net/tls_mem.h.
+CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC=y
 CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
 CONFIG_MBEDTLS_DYNAMIC_FREE_CA_CERT=y

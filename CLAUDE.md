@@ -122,10 +122,12 @@ docs/UPDATES.md has the whole publishing procedure.
 
 ```
 main/
-  main.c                    app_main: nvs -> event loop -> netif -> settings ->
-                            display -> button -> wifi_mgr -> device_db ->
-                            http_server -> scanner, then a 30 s heap heartbeat.
-                            Defines the NETDASH_EVENT base.
+  main.c                    app_main: tls_mem -> nvs -> event loop -> netif ->
+                            settings -> display -> button -> wifi_mgr ->
+                            device_db -> http_server -> scanner, starts a 30 s
+                            heap heartbeat on an esp_timer, and returns, which
+                            frees the main task's 8 KB stack. Defines the
+                            NETDASH_EVENT base.
   app_events.h              NETDASH_EVENT ids and their data structs.
   Kconfig.projbuild         board pin variant, backlight polarity, panel
                             offsets, scan defaults, hostname.
@@ -218,6 +220,12 @@ main/
                             rather than whether the box pings. Links whose
                             device is already offline are skipped rather than
                             waited out.
+
+  net/tls_mem.c/.h          the mbedTLS allocator (CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC):
+                            one 17 KB static block kept for the TLS read
+                            buffer, everything else from the heap. Without it
+                            a fragmented heap stops updates downloading - see
+                            Traps in OTA.
 
   net/wan.c/.h              WAN health: an ICMP echo and a name lookup on an
                             interval, reported separately so "no internet" and
@@ -370,9 +378,28 @@ free heap to ~23 KB, and the first real update died a megabyte in with
 esp_https_ota cannot carry on from an offset, so `ota.c` writes with
 `esp_ota_*` itself and reopens a stream that stops short with a `Range`
 request at the byte it had reached, up to six times. The verified run needed
-one resume, at 1,272,832 of 1,980,640 bytes. If updates start failing
-outright, look at what else holds heap during a download before touching
-this.
+one resume, at 1,272,832 of 1,980,640 bytes.
+
+**An update needs 16.7 KB of contiguous heap per TLS record.** With the
+dynamic buffers above, mbedTLS allocates a fresh read buffer for every 16 KB
+record and frees it after, so a 2 MB image makes about 125 of those
+allocations, each needing one unbroken 16,749-byte block. By v0.20 the heap had
+~70 KB free but its largest block sat at 20-30 KB and fell below 16 KB at
+times; every download died within 400 KB with `Dynamic Impl: alloc(16749
+bytes) failed` and ran out of resumes. v0.21.0 was published, could not be
+installed by anyone, and was withdrawn. The failure is in the *running*
+firmware, so the fix (v0.21.1) had to go onto dongles by USB.
+
+`net/tls_mem.c` now serves that buffer from a static block of its own, and
+v0.21.1 paid for the block by freeing more than it costs: `app_main` returns
+(8 KB of main-task stack), the LCD draws 10 lines at a time rather than 20
+(9.6 KB), and LVGL's pool is 20 KB rather than 24 (it peaked at 14.8 KB).
+With that, the same 2 MB downloaded in 14 s with no resumes and free heap
+never under 42 KB. The heartbeat prints the largest free block and the
+reserve's counters (`tls reserve uses/busy`); `busy` or `failed` above zero
+means a second big TLS buffer wanted the block at the same time. Never trim
+the heap back below this without repeating the download test below from a
+cold boot with the full device table.
 
 To try an update without publishing one, build into a separate directory with
 a fake low version, so the real release looks new, and watch the console:
@@ -534,7 +561,12 @@ Verified on a live /24 home network (23 devices):
 - The browser half of the icon upload - decode, resize, re-encode, POST, and
   the tile repainting with the result - was driven end to end in headless Edge
   against the live dongle. A 300x120 JPEG became a 1,930-byte 64x64 PNG.
-- Free heap about 112 KB with a low-water mark of 88 KB in normal polling.
+- Free heap: about 112 KB with a low-water mark of 88 KB in normal polling,
+  early on. By v0.20 it was ~50-70 KB with 33 devices and the low-water mark
+  under 15 KB, which is what broke updates (see Traps in OTA). Startup costs,
+  measured in v0.21: Wi-Fi 48 KB, LCD and LVGL task 19 KB (28.5 KB before the
+  draw buffers were halved), web server 14 KB, USB restore 12 KB, the update
+  task 8.6 KB, every other task 4-7 KB of stack.
 - The LCD's orientation, colour order and panel window (v0.18.1): upright,
   correct colours, and no noise along any edge with the y gap at 53. On a
   board mounted the other way up, `NETDASH_LCD_ROTATE_180` wants y 52.

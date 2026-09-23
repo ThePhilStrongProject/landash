@@ -11,8 +11,10 @@
 #include "esp_app_desc.h"
 #include "esp_err.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -38,6 +40,7 @@
 #include "wan.h"
 #include "scanner.h"
 #include "settings.h"
+#include "tls_mem.h"
 #include "usb_restore.h"
 #include "wifi_mgr.h"
 
@@ -45,7 +48,22 @@ static const char *TAG = "netdash";
 
 ESP_EVENT_DEFINE_BASE(NETDASH_EVENT);
 
-#define HEARTBEAT_PERIOD_MS 30000
+#define HEARTBEAT_PERIOD_US (30LL * 1000 * 1000)
+
+/* Runs on the esp_timer task, so app_main can return and give back its stack. */
+static void heartbeat(void *arg)
+{
+    (void)arg;
+    tls_mem_stats_t tls;
+    tls_mem_get_stats(&tls);
+    ESP_LOGI(TAG, "heap free %" PRIu32 " min %" PRIu32 " largest %u devices %u "
+                  "tls reserve %" PRIu32 "/%" PRIu32 " busy, %" PRIu32 " failed",
+             esp_get_free_heap_size(),
+             esp_get_minimum_free_heap_size(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)device_db_count(), tls.reserve_uses, tls.reserve_busy,
+             tls.failures);
+}
 
 static void init_nvs(void)
 {
@@ -62,6 +80,7 @@ void app_main(void)
 {
     const esp_app_desc_t *app = esp_app_get_description();
     ESP_LOGI(TAG, "NetDash %s (IDF %s) starting", app->version, app->idf_ver);
+    ESP_ERROR_CHECK(tls_mem_init());
 
     init_nvs();
     /* Before anything reads NVS or mounts storage: see backup.h. */
@@ -96,13 +115,15 @@ void app_main(void)
         ESP_LOGW(TAG, "restore over USB unavailable");
     }
 
-    ESP_LOGI(TAG, "boot complete, free heap %" PRIu32 " bytes", esp_get_free_heap_size());
+    const esp_timer_create_args_t hb = {.callback = heartbeat, .name = "heartbeat"};
+    esp_timer_handle_t             hb_timer;
+    ESP_ERROR_CHECK(esp_timer_create(&hb, &hb_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(hb_timer, HEARTBEAT_PERIOD_US));
 
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_PERIOD_MS));
-        ESP_LOGI(TAG, "heap free %" PRIu32 " min %" PRIu32 " devices %u",
-                 esp_get_free_heap_size(),
-                 esp_get_minimum_free_heap_size(),
-                 (unsigned)device_db_count());
-    }
+    /*
+     * Returning ends the main task and frees its 8 KB stack, which startup
+     * needs (the backup restore runs here) and nothing after it does. Memory
+     * is tight enough that 8 KB decides whether an update can download.
+     */
+    ESP_LOGI(TAG, "boot complete, free heap %" PRIu32 " bytes", esp_get_free_heap_size());
 }

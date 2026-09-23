@@ -78,7 +78,15 @@ static const char *TAG = "display";
 
 #define LCD_H_RES            240        /* landscape width  */
 #define LCD_V_RES            135        /* landscape height */
-#define LCD_DRAW_LINES       20         /* partial buffer height, in lines */
+/*
+ * LVGL's two partial draw buffers, in lines. Each line is 480 bytes of heap
+ * for as long as the dongle runs, and these pages redraw a few labels, so 10
+ * costs nothing visible; it was 20 until memory ran too short for a firmware
+ * update to download (see net/tls_mem.h).
+ */
+#define LCD_DRAW_LINES       10
+/* The SPI bus takes larger transfers: lcd_blank_margins() sends 242 x 16. */
+#define LCD_SPI_MAX_LINES    20
 #define LCD_PIXEL_CLOCK_HZ   (40 * 1000 * 1000)
 #define LCD_CMD_BITS         8
 #define LCD_PARAM_BITS       8
@@ -290,7 +298,7 @@ static esp_err_t panel_init(void)
         .miso_io_num     = GPIO_NUM_NC,
         .quadwp_io_num   = GPIO_NUM_NC,
         .quadhd_io_num   = GPIO_NUM_NC,
-        .max_transfer_sz = LCD_H_RES * LCD_DRAW_LINES * (int)sizeof(uint16_t),
+        .max_transfer_sz = LCD_H_RES * LCD_SPI_MAX_LINES * (int)sizeof(uint16_t),
     };
     ESP_RETURN_ON_ERROR(spi_bus_initialize(LCD_SPI_HOST, &bus, SPI_DMA_CH_AUTO), TAG, "spi bus");
 
