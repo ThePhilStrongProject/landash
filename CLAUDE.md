@@ -253,6 +253,9 @@ main/
   web/http_server.c/.h      esp_http_server: gzipped index.html + the REST API.
   web/www/index.html        the whole dashboard, gzipped at build time by CMake
                             and embedded as _binary_index_html_gz_start.
+  web/www/fonts/            the Cyberpunk theme's two OFL typefaces (licence
+                            beside them), embedded as they are and served at
+                            /fonts/ as immutable. Only that theme loads them.
 
   ui/display.c/.h           esp_lcd ST7789 + esp_lvgl_port, three pages, LEDC
                             backlight dimming.

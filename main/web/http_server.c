@@ -57,6 +57,11 @@ static httpd_handle_t s_server;
 extern const uint8_t index_html_gz_start[] asm("_binary_index_html_gz_start");
 extern const uint8_t index_html_gz_end[]   asm("_binary_index_html_gz_end");
 
+extern const uint8_t font_stm_start[]  asm("_binary_share_tech_mono_woff2_start");
+extern const uint8_t font_stm_end[]    asm("_binary_share_tech_mono_woff2_end");
+extern const uint8_t font_orb7_start[] asm("_binary_orbitron_700_woff2_start");
+extern const uint8_t font_orb7_end[]   asm("_binary_orbitron_700_woff2_end");
+
 /* Request body limit. docs/API.md defines one global rule - "413 | request
  * body over 8 KB" - with no smaller ceiling for any particular endpoint, so
  * every read_body() call below shares this one limit. */
@@ -293,6 +298,38 @@ static esp_err_t err_404_handler(httpd_req_t *req, httpd_err_code_t err)
 static esp_err_t index_get_handler(httpd_req_t *req)
 {
     return send_index_html(req);
+}
+
+/*
+ * GET /fonts/{name} - the Cyberpunk theme's typefaces, embedded from
+ * web/www/fonts so the theme works with no internet. A browser fetches a font
+ * only when the page uses it, so no other theme downloads these. Served as
+ * immutable: a changed font must get a new name.
+ */
+typedef struct {
+    const char    *name;
+    const uint8_t *start;
+    const uint8_t *end;
+} font_file_t;
+
+static esp_err_t fonts_get_handler(httpd_req_t *req)
+{
+    static const font_file_t fonts[] = {
+        {"share-tech-mono.woff2", font_stm_start, font_stm_end},
+        {"orbitron-700.woff2", font_orb7_start, font_orb7_end},
+    };
+    const char  *name = req->uri + strlen("/fonts/");
+    const size_t len  = strcspn(name, "?#");
+
+    for (size_t i = 0; i < sizeof(fonts) / sizeof(fonts[0]); i++) {
+        if (strlen(fonts[i].name) == len && strncmp(fonts[i].name, name, len) == 0) {
+            httpd_resp_set_type(req, "font/woff2");
+            httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000, immutable");
+            return httpd_resp_send(req, (const char *)fonts[i].start,
+                                   (ssize_t)(fonts[i].end - fonts[i].start));
+        }
+    }
+    return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "no such font");
 }
 
 static esp_err_t err_405_handler(httpd_req_t *req, httpd_err_code_t err)
@@ -3245,6 +3282,7 @@ static esp_err_t links_put_router(httpd_req_t *req)
 
 static const httpd_uri_t s_uri_handlers[] = {
     {.uri = "/",                         .method = HTTP_GET,    .handler = index_get_handler},
+    {.uri = "/fonts/*",                  .method = HTTP_GET,    .handler = fonts_get_handler},
     {.uri = "/api/status",               .method = HTTP_GET,    .handler = status_handler},
     {.uri = "/api/devices",              .method = HTTP_GET,    .handler = devices_list_handler},
     {.uri = "/api/devices/export",       .method = HTTP_GET,    .handler = devices_export_handler},

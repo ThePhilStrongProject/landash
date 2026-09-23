@@ -501,15 +501,23 @@ color-scheme:light;
 color-scheme:light;
 }
 
+/* Neon on pitch black: cyan acts, magenta alerts and highlights, gold marks,
+   green says it works. The rest of the theme - type, texture, cut corners,
+   glow - is its own section after the Matrix block. */
 [data-theme="cyberpunk"]{
---bg:#0a0417; --surface:#160b2e; --surface2:#211043; --border:#402070;
---accent:#ff2bd6; --accent-rgb:255,43,214; --accent-2:#2bf5ff;
---text:#f6e9ff; --muted:#ab90d6;
---online:#39ff88; --online-rgb:57,255,136;
---new:#2bf5ff; --new-rgb:43,245,255;
---danger:#ff3b6b; --danger-rgb:255,59,107;
---warn:#ffd12b; --warn-rgb:255,209,43;
---on-accent:#12001a; --shadow:rgba(255,43,214,.25);
+--bg:#050508; --surface:#0a0a10; --surface2:#12121c; --border:#1b2c3a;
+--accent:#00f0ff; --accent-rgb:0,240,255; --accent-2:#ff007f;
+--text:#e6fbff; --muted:#7c93a6;
+--online:#00ff66; --online-rgb:0,255,102;
+--new:#ffe600; --new-rgb:255,230,0;
+--danger:#ff0055; --danger-rgb:255,0,85;
+--warn:#ffe600; --warn-rgb:255,230,0;
+--hot:#ff007f; --hot-rgb:255,0,127;
+--on-accent:#00161a; --shadow:rgba(0,240,255,.16);
+--ui-font:"Share Tech Mono",ui-monospace,Consolas,monospace;
+--mono:"Share Tech Mono",ui-monospace,Consolas,monospace;
+--head-font:"Orbitron","Share Tech Mono",sans-serif;
+--r-sm:0; --r-md:0;
 color-scheme:dark;
 }
 
@@ -526,6 +534,206 @@ color-scheme:dark;
    UI typeface. */
 --ui-font:ui-monospace,Consolas,"SF Mono",Menlo,monospace;
 color-scheme:dark;
+}
+
+/* ======================================================================
+   Cyberpunk, beyond colour.
+
+   Typefaces: Share Tech Mono for everything, Orbitron for headings, both
+   served by the dongle from /fonts/ (docs/API.md). A browser fetches a font
+   only when something uses it, so no other theme downloads them.
+
+   Corners: panels are chamfered with clip-path - cut top-right and
+   bottom-left. clip-path also cuts away anything painted outside the box,
+   which is two things here: the border along the cut, redrawn as a hairline
+   by the two background gradients (--cut-line is its colour), and outer
+   glows, which is why the glow on a hovered tile is a drop-shadow on its
+   wrapper - a filter on the parent follows the child's clipped shape.
+
+   Global effects are keyed to :root so the Cyberpunk card in Settings >
+   Appearance, which carries data-theme to show its own colours, does not
+   paint a grid and scanlines over another theme.
+   ====================================================================== */
+@font-face{font-family:"Share Tech Mono";font-style:normal;font-weight:400;font-display:swap;
+src:url("/fonts/share-tech-mono.woff2") format("woff2")}
+@font-face{font-family:"Orbitron";font-style:normal;font-weight:700;font-display:swap;
+src:url("/fonts/orbitron-700.woff2") format("woff2")}
+
+/* Pitch black under a faint tactical grid, a cyan haze from the top and a
+   magenta one from the far corner. */
+:root[data-theme="cyberpunk"] body{
+background-color:var(--bg);
+background-image:
+linear-gradient(rgba(0,240,255,.045) 1px,transparent 1px),
+linear-gradient(90deg,rgba(0,240,255,.045) 1px,transparent 1px),
+radial-gradient(ellipse 80% 50% at 50% -10%,rgba(0,240,255,.09),transparent 70%),
+radial-gradient(ellipse 60% 50% at 110% 110%,rgba(255,0,127,.08),transparent 70%);
+background-size:30px 30px,30px 30px,100% 100%,100% 100%;
+background-attachment:fixed}
+/* CRT scanlines over the whole screen, modals included. They never take a click. */
+:root[data-theme="cyberpunk"] body::after{content:"";position:fixed;inset:0;z-index:200;pointer-events:none;
+background:repeating-linear-gradient(to bottom,rgba(0,0,0,.9) 0 1px,transparent 1px 3px);opacity:.18}
+:root[data-theme="cyberpunk"] .mono{font-family:var(--mono)}
+/* Share Tech Mono comes in one weight, and a browser's faked bold of it
+   smears. Emphasis in this theme is colour and glow instead. */
+:root[data-theme="cyberpunk"]{font-synthesis-weight:none}
+[data-theme="cyberpunk"] input[type=checkbox]{accent-color:var(--accent)}
+
+/* --- chamfered panels --------------------------------------------------- */
+[data-theme="cyberpunk"] :is(.linkcard,.lc-cred,.btn,.settgroup,.tablewrap,.events,.modal,.themecard,
+.toast,.feedpanel,.popover,.statstrip .stat,.toolbar input[type=search]){
+--cut:10px; --cut-line:var(--border);
+clip-path:polygon(0 0,calc(100% - var(--cut)) 0,100% var(--cut),100% 100%,var(--cut) 100%,
+0 calc(100% - var(--cut)));
+background-image:
+linear-gradient(to top right,transparent calc(50% - 1px),var(--cut-line) calc(50% - 1px) 50%,transparent 50%),
+linear-gradient(to top right,transparent calc(50% - 1px),var(--cut-line) calc(50% - 1px) 50%,transparent 50%);
+background-size:var(--cut) var(--cut);background-position:top right,bottom left;
+background-repeat:no-repeat;background-origin:border-box}
+[data-theme="cyberpunk"] :is(.btn,.lc-cred,.toast,.toolbar input[type=search]){--cut:7px}
+[data-theme="cyberpunk"] :is(.linkcard,.tablewrap,.events,.modal){--cut:12px}
+/* The table would paint over the wrapper's cut line. */
+[data-theme="cyberpunk"] :is(.tablewrap,.events){background-color:var(--surface)}
+[data-theme="cyberpunk"] table{background:transparent}
+
+/* --- type and headings ------------------------------------------------- */
+[data-theme="cyberpunk"] :is(.grouphead h3,.settgroup h3,.detailsection h4,.modal h3,.feedhead h3,
+.tourcard h2,.syssub){font-family:var(--head-font);font-weight:700;text-transform:uppercase;
+letter-spacing:.16em;color:var(--accent);text-shadow:0 0 8px rgba(0,240,255,.55)}
+[data-theme="cyberpunk"] :is(.detailsection h4,.grouphead h3,.feedhead h3,.syssub){font-size:.68rem}
+[data-theme="cyberpunk"] .detailsection h4::before{content:"// ";color:var(--hot);text-shadow:none}
+[data-theme="cyberpunk"] :is(.btn,.tabbtn,.setnavbtn,.stat .label,thead th,.field label,.sb,.badge,.chip,
+.lc-cred,.detailsection dt,.kv dt,.sysinfo dt){text-transform:uppercase;letter-spacing:.09em}
+/* Browsers give buttons text-transform:none, so the sortable headers need telling. */
+[data-theme="cyberpunk"] .th-btn{text-transform:inherit;letter-spacing:inherit}
+[data-theme="cyberpunk"] .sysinfo dd{color:var(--text)}
+[data-theme="cyberpunk"] .rssi i.on{background:var(--accent);box-shadow:0 0 4px var(--accent)}
+[data-theme="cyberpunk"] :is(.clock,.stat .value){font-family:var(--head-font);font-weight:700;
+color:var(--accent);text-shadow:0 0 10px rgba(0,240,255,.6),0 0 28px rgba(0,240,255,.25)}
+[data-theme="cyberpunk"] .clock{letter-spacing:.06em}
+[data-theme="cyberpunk"] .clockdate{text-transform:uppercase;letter-spacing:.3em;color:var(--hot);
+text-shadow:0 0 8px rgba(255,0,127,.5)}
+
+/* --- header, logo and tabs --------------------------------------------- */
+[data-theme="cyberpunk"] .topbar{background:rgba(5,5,8,.88);border-bottom-color:rgba(0,240,255,.45);
+box-shadow:0 1px 0 rgba(0,240,255,.25),0 0 22px rgba(0,240,255,.12)}
+[data-theme="cyberpunk"] .logo{font-family:var(--head-font);font-weight:700;letter-spacing:.18em;
+color:var(--accent);text-shadow:0 0 8px rgba(0,240,255,.8),0 0 22px rgba(0,240,255,.35)}
+[data-theme="cyberpunk"] .mark .ring{stroke:var(--accent);opacity:1;filter:drop-shadow(0 0 3px var(--accent))}
+[data-theme="cyberpunk"] .mark .dot{fill:var(--hot)}
+[data-theme="cyberpunk"] .mark rect{stroke:rgba(0,240,255,.4)}
+[data-theme="cyberpunk"] .tabbtn[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent);
+text-shadow:0 0 8px rgba(0,240,255,.8);box-shadow:0 8px 12px -8px rgba(0,240,255,.8)}
+[data-theme="cyberpunk"] .tabbtn:hover{color:var(--hot)}
+
+/* --- dashboard ---------------------------------------------------------- */
+[data-theme="cyberpunk"] .grouphead .rule{height:1px;border:0;
+background:linear-gradient(90deg,rgba(0,240,255,.8),rgba(0,240,255,.15) 60%,transparent);
+box-shadow:0 0 6px rgba(0,240,255,.5)}
+[data-theme="cyberpunk"] .grouphead::after{content:"+";color:var(--hot);font-size:.9rem;line-height:1;
+text-shadow:0 0 6px rgba(255,0,127,.8)}
+[data-theme="cyberpunk"] .statstrip{gap:10px}
+[data-theme="cyberpunk"] .statstrip .stat{--cut:8px;border:1px solid var(--border);background-color:var(--surface);
+padding:8px 14px}
+[data-theme="cyberpunk"] .statstrip .stat:first-child{padding-left:14px}
+[data-theme="cyberpunk"] .linkcard{border-color:var(--border);background-color:var(--surface)}
+[data-theme="cyberpunk"] a.linkcard:hover{--cut-line:var(--accent);border-color:var(--accent);
+box-shadow:inset 0 0 18px rgba(0,240,255,.12)}
+[data-theme="cyberpunk"] .linkcard-wrap:hover{filter:drop-shadow(0 0 7px rgba(0,240,255,.55))}
+[data-theme="cyberpunk"] .lc-label{letter-spacing:.03em}
+[data-theme="cyberpunk"] .lc-host .mono{color:var(--accent);opacity:.8}
+[data-theme="cyberpunk"] .lc-cred{background-color:var(--surface2);color:var(--muted)}
+[data-theme="cyberpunk"] .lc-cred:hover{--cut-line:var(--hot);border-color:var(--hot);color:var(--hot)}
+[data-theme="cyberpunk"] :is(.lc-dot.on,.dot.on){box-shadow:0 0 6px var(--online),0 0 12px rgba(0,255,102,.5);opacity:1}
+[data-theme="cyberpunk"] .lc-dot.off{box-shadow:0 0 6px var(--danger)}
+[data-theme="cyberpunk"] .livedot{box-shadow:0 0 6px var(--accent)}
+
+/* --- buttons and fields ------------------------------------------------- */
+[data-theme="cyberpunk"] .btn{background-color:var(--surface);border-color:rgba(0,240,255,.35);
+--cut-line:rgba(0,240,255,.35);color:var(--accent)}
+[data-theme="cyberpunk"] .btn:hover:not(:disabled){--cut-line:var(--accent);border-color:var(--accent);
+background-color:rgba(0,240,255,.08);box-shadow:inset 0 0 14px rgba(0,240,255,.25);
+text-shadow:0 0 6px rgba(0,240,255,.8)}
+[data-theme="cyberpunk"] .btn-accent{background-color:var(--accent);border-color:var(--accent);
+--cut-line:var(--accent);color:var(--on-accent);box-shadow:inset 0 0 12px rgba(255,255,255,.35)}
+[data-theme="cyberpunk"] .btn-accent:hover:not(:disabled){background-color:#6ff7ff;color:var(--on-accent);
+text-shadow:none;animation:cp-rgbsplit .32s steps(2) 1}
+[data-theme="cyberpunk"] :is(.btn-danger-outline,.btn-danger){border-color:var(--hot);--cut-line:var(--hot);
+color:var(--hot);background-color:rgba(255,0,127,.06)}
+[data-theme="cyberpunk"] :is(.btn-danger-outline,.btn-danger):hover:not(:disabled){background-color:var(--hot);
+--cut-line:var(--hot);border-color:var(--hot);color:#12000a;box-shadow:inset 0 0 14px rgba(255,255,255,.3);
+text-shadow:none}
+[data-theme="cyberpunk"] :is(.field input,.field select,.toolbar input[type=search],.notebox,.nameinput){
+background-color:var(--bg);border-color:var(--border);caret-color:var(--accent)}
+[data-theme="cyberpunk"] :is(.field input,.field select,.toolbar input[type=search],.notebox,.nameinput):focus{
+outline:none;border-color:var(--accent);--cut-line:var(--accent);box-shadow:inset 0 0 12px rgba(0,240,255,.2)}
+[data-theme="cyberpunk"] :focus-visible{outline-color:var(--accent)}
+
+/* --- tables, chips, badges ---------------------------------------------- */
+[data-theme="cyberpunk"] thead th{color:var(--accent);border-bottom-color:rgba(0,240,255,.4);
+text-shadow:0 0 6px rgba(0,240,255,.4)}
+[data-theme="cyberpunk"] tbody tr:hover{background:rgba(0,240,255,.06)}
+[data-theme="cyberpunk"] tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
+[data-theme="cyberpunk"] .badge{border-color:var(--new);color:var(--new);background:rgba(255,230,0,.07);
+text-shadow:0 0 6px rgba(255,230,0,.6);clip-path:polygon(0 0,calc(100% - 4px) 0,100% 4px,100% 100%,4px 100%,0 calc(100% - 4px))}
+[data-theme="cyberpunk"] :is(.chip,.portchip){background:var(--bg)}
+[data-theme="cyberpunk"] .portchip.link{color:var(--accent);border-color:rgba(0,240,255,.45)}
+[data-theme="cyberpunk"] .portchip.link:hover{border-color:var(--accent);box-shadow:inset 0 0 8px rgba(0,240,255,.3)}
+
+/* --- panels: HUD crosshairs on the uncut corners ------------------------ */
+[data-theme="cyberpunk"] :is(.settgroup,.modal,.drawer){position:relative}
+[data-theme="cyberpunk"] :is(.settgroup,.modal,.drawer)::before,
+[data-theme="cyberpunk"] :is(.settgroup,.modal,.drawer)::after{content:"+";position:absolute;font-size:12px;
+line-height:1;color:var(--accent);text-shadow:0 0 6px rgba(0,240,255,.8);pointer-events:none}
+[data-theme="cyberpunk"] :is(.settgroup,.modal,.drawer)::before{top:3px;left:5px}
+[data-theme="cyberpunk"] :is(.settgroup,.modal,.drawer)::after{bottom:3px;right:5px}
+[data-theme="cyberpunk"] .settgroup h3{border-bottom-color:rgba(0,240,255,.3)}
+[data-theme="cyberpunk"] .modal{box-shadow:inset 0 0 0 1px rgba(0,240,255,.35),inset 0 0 30px rgba(0,240,255,.07)}
+[data-theme="cyberpunk"] .drawer{border-left-color:rgba(0,240,255,.5);
+box-shadow:-1px 0 0 rgba(0,240,255,.25),-14px 0 40px rgba(0,240,255,.1)}
+/* A device's name is its own text - hex ids included - so it stays in the mono. */
+[data-theme="cyberpunk"] .detailtitle .nm{color:var(--text);text-shadow:0 0 8px rgba(0,240,255,.45)}
+[data-theme="cyberpunk"] .setnavbtn[aria-selected="true"]{color:var(--accent);border-color:rgba(0,240,255,.4);
+box-shadow:inset 3px 0 0 var(--accent)}
+
+/* --- status bar and meters ---------------------------------------------- */
+[data-theme="cyberpunk"] .statusbar{border-top-color:rgba(0,240,255,.4);background:rgba(5,5,8,.92);
+box-shadow:0 -1px 0 rgba(0,240,255,.2),0 0 18px rgba(0,240,255,.08)}
+[data-theme="cyberpunk"] .sb + .sb::before{background:var(--hot);box-shadow:0 0 4px var(--hot)}
+[data-theme="cyberpunk"] .sb.up{text-shadow:0 0 6px rgba(0,255,102,.6)}
+[data-theme="cyberpunk"] :is(.sb-bar i,.meterfill){box-shadow:0 0 8px var(--accent)}
+
+/* --- glitch -------------------------------------------------------------
+   Hovering the logo tears it: two copies, magenta and cyan, slide through
+   horizontal slices. A filled button splits its colour channels for a beat. */
+[data-theme="cyberpunk"] .logotext{position:relative;display:inline-block}
+[data-theme="cyberpunk"] .logotext::before,
+[data-theme="cyberpunk"] .logotext::after{content:attr(data-text);position:absolute;left:0;top:0;
+opacity:0;pointer-events:none}
+[data-theme="cyberpunk"] .logo:hover .logotext::before{opacity:1;color:var(--hot);
+text-shadow:0 0 6px var(--hot);animation:cp-tear-a .45s steps(3) 1}
+[data-theme="cyberpunk"] .logo:hover .logotext::after{opacity:1;color:var(--accent);animation:cp-tear-b .45s steps(3) 1}
+[data-theme="cyberpunk"] .logo:hover .logotext{animation:cp-jitter .45s steps(3) 1}
+@keyframes cp-tear-a{
+0%{clip-path:inset(10% 0 70% 0);transform:translate(-4px,0)}
+33%{clip-path:inset(55% 0 20% 0);transform:translate(3px,0)}
+66%{clip-path:inset(30% 0 45% 0);transform:translate(-2px,0)}
+100%{clip-path:inset(100% 0 0 0);transform:none}}
+@keyframes cp-tear-b{
+0%{clip-path:inset(65% 0 10% 0);transform:translate(4px,0)}
+33%{clip-path:inset(15% 0 60% 0);transform:translate(-3px,0)}
+66%{clip-path:inset(80% 0 5% 0);transform:translate(2px,0)}
+100%{clip-path:inset(100% 0 0 0);transform:none}}
+@keyframes cp-jitter{0%{transform:translate(1px,0)}50%{transform:translate(-1px,0)}100%{transform:none}}
+@keyframes cp-rgbsplit{
+0%{text-shadow:-2px 0 var(--hot),2px 0 #fff;transform:translate(1px,0)}
+50%{text-shadow:2px 0 var(--hot),-2px 0 #fff;transform:translate(-1px,0)}
+100%{text-shadow:none;transform:none}}
+@media (prefers-reduced-motion: reduce){
+[data-theme="cyberpunk"] :is(.logo:hover .logotext,.logo:hover .logotext::before,.logo:hover .logotext::after,
+.btn-accent:hover){animation:none}
+[data-theme="cyberpunk"] .logo:hover .logotext::before,
+[data-theme="cyberpunk"] .logo:hover .logotext::after{opacity:0}
 }
 
 /* Shadows come from the theme so the light ones are not wearing a dark halo. */
@@ -750,7 +958,7 @@ border:1px solid var(--border);display:grid;place-items:center;color:var(--on-ac
 </defs></svg>
 <div id="offlineBanner" class="banner" role="status" hidden>Connection to the dongle was lost, retrying&hellip;</div>
 <header class="topbar">
-<span class="logo"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7"/><circle class="ring" cx="16" cy="16" r="10"/><circle class="dot" cx="16" cy="16" r="4"/></svg>LANDA.SH</span>
+<span class="logo"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7"/><circle class="ring" cx="16" cy="16" r="10"/><circle class="dot" cx="16" cy="16" r="4"/></svg><span class="logotext" data-text="LANDA.SH">LANDA.SH</span></span>
 <nav class="tabs" role="tablist" aria-label="Sections">
 <button role="tab" type="button" id="tab-dashboard" class="tabbtn" aria-selected="true" aria-controls="panel-dashboard">Dashboard</button>
 <button role="tab" type="button" id="tab-devices" class="tabbtn" aria-selected="false" aria-controls="panel-devices">Devices</button>
@@ -1600,7 +1808,7 @@ unknown:"Internet unchecked"};
 var THEMES = [
 {id:"dark",      name:"Dark",      note:"The original. Blue on near-black."},
 {id:"light",     name:"Light",     note:"For a bright room or a bright screen."},
-{id:"cyberpunk", name:"Cyberpunk", note:"Magenta and cyan, turned up."},
+{id:"cyberpunk", name:"Cyberpunk", note:"Neon on pitch black: cut corners, scanlines and the odd glitch."},
 {id:"matrix",    name:"Matrix",    note:"Green on black, and monospace throughout."},
 {id:"desert",    name:"Desert",    note:"Warm sand and terracotta."}
 ];

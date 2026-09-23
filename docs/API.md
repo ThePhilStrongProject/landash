@@ -57,6 +57,20 @@ Returns the embedded single-page UI.
 Any unknown path that is not under `/api/` also returns this document, so the
 UI can use client-side routing.
 
+## GET /fonts/{name}
+
+The typefaces the Cyberpunk theme uses, embedded in the firmware so the theme
+looks the same with no internet: `share-tech-mono.woff2` and
+`orbitron-700.woff2`, both under the SIL Open Font License
+(`main/web/www/fonts/LICENSE-OFL.txt`). A browser fetches a font only when the
+page uses it, so other themes never download them.
+
+- `Content-Type: font/woff2`
+- `Cache-Control: public, max-age=31536000, immutable`
+
+A file is never changed under the same name; a new version gets a new one.
+404 for any other name.
+
 ---
 
 ## GET /api/status

@@ -73,3 +73,8 @@ add_custom_target(netdash_www_gz_target DEPENDS "${netdash_www_gz}")
 add_dependencies(${COMPONENT_LIB} netdash_www_gz_target)
 
 target_add_binary_data(${COMPONENT_LIB} "${netdash_www_gz}" BINARY DEPENDS "${netdash_www_gz}")
+
+# The Cyberpunk theme's typefaces, served as they are at /fonts/ (woff2 is
+# already compressed). Symbols: _binary_<name with - and . as _>_start / _end.
+target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_SOURCE_DIR}/web/www/fonts/share-tech-mono.woff2" BINARY)
+target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_SOURCE_DIR}/web/www/fonts/orbitron-700.woff2" BINARY)
