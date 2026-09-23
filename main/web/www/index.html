@@ -521,18 +521,25 @@ color-scheme:light;
 color-scheme:dark;
 }
 
+/* Phosphor green on black. The film's #00ff41 is kept for headings and for
+   what you can press; body text is a calmer green so a page of it does not
+   sting. One muted red stays, for offline and failed. The rest - rain,
+   scanlines, the cursor - is its own section after this block. */
 [data-theme="matrix"]{
---bg:#000300; --surface:#04150b; --surface2:#07230f; --border:#0f3d1e;
---accent:#22c55e; --accent-rgb:34,197,94; --accent-2:#4ade80;
---text:#86f5a8; --muted:#3f9e5c;
---online:#22ff77; --online-rgb:34,255,119;
---new:#39ff14; --new-rgb:57,255,20;
---danger:#ff5555; --danger-rgb:255,85,85;
+--bg:#000000; --surface:#020b05; --surface2:#05170b; --border:#0e3a1b;
+--accent:#00ff41; --accent-rgb:0,255,65; --accent-2:#7dffa1;
+--text:#63d98a; --muted:#2e8a4e;
+--online:#00ff41; --online-rgb:0,255,65;
+--new:#b5ff5a; --new-rgb:181,255,90;
+--danger:#d9534f; --danger-rgb:217,83,79;
 --warn:#d4ff3f; --warn-rgb:212,255,63;
---on-accent:#00140a; --shadow:rgba(0,255,100,.18);
-/* The one theme that changes more than colour: it would not be Matrix in a
-   UI typeface. */
---ui-font:ui-monospace,Consolas,"SF Mono",Menlo,monospace;
+--on-accent:#001a07; --shadow:rgba(0,255,65,.12);
+/* Inverse video uses a deeper green than --accent: a full #00ff41 block is
+   the loudest thing on the screen. */
+--inverse:#00b837;
+--ui-font:"Share Tech Mono",ui-monospace,Consolas,"SF Mono",Menlo,monospace;
+--mono:"Share Tech Mono",ui-monospace,Consolas,"SF Mono",Menlo,monospace;
+--r-sm:0; --r-md:0;
 color-scheme:dark;
 }
 
@@ -734,6 +741,76 @@ text-shadow:0 0 6px var(--hot);animation:cp-tear-a .45s steps(3) 1}
 .btn-accent:hover){animation:none}
 [data-theme="cyberpunk"] .logo:hover .logotext::before,
 [data-theme="cyberpunk"] .logo:hover .logotext::after{opacity:0}
+}
+
+/* ======================================================================
+   Matrix, beyond colour - and quieter than Cyberpunk on purpose: a
+   terminal, not a costume.
+
+   The digital rain is a <canvas> (see startRain) under the page: the body
+   goes transparent so the canvas shows between panels, and every panel stays
+   opaque so it never runs behind text. Scanlines at half Cyberpunk's
+   strength and a faint vignette sit over everything; bloom is kept to the
+   logo, headings and the clock so body text stays crisp. Hovering a
+   button, row or tile flips it to inverse video.
+
+   Share Tech Mono is the one the firmware already serves for Cyberpunk, so
+   this theme adds nothing to the dongle.
+   ====================================================================== */
+:root[data-theme="matrix"]{font-synthesis-weight:none}
+:root[data-theme="matrix"] body{background:transparent}
+:root[data-theme="matrix"] .mono{font-family:var(--mono)}
+.rain{position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none;opacity:.2}
+:root[data-theme="matrix"] body::after{content:"";position:fixed;inset:0;z-index:200;pointer-events:none;
+background:radial-gradient(ellipse at center,transparent 58%,rgba(0,0,0,.4) 100%),
+repeating-linear-gradient(to bottom,rgba(0,0,0,.26) 0 1px,transparent 1px 3px)}
+
+/* Headings: uppercase, tracked out, a prompt in front. */
+[data-theme="matrix"] :is(.grouphead h3,.settgroup h3,.detailsection h4,.modal h3,.feedhead h3,.syssub,
+.tourcard h2){text-transform:uppercase;letter-spacing:.14em;color:var(--accent);font-weight:400;
+text-shadow:0 0 6px rgba(0,255,65,.4)}
+[data-theme="matrix"] :is(.grouphead h3,.settgroup h3,.detailsection h4,.modal h3,.feedhead h3,
+.syssub)::before{content:"> ";opacity:.6}
+[data-theme="matrix"] .grouphead .rule{background:var(--border);height:1px;border:0}
+
+/* The logo, with the one blinking cursor. */
+[data-theme="matrix"] .logo{color:var(--accent);font-weight:400;letter-spacing:.14em;
+text-shadow:0 0 8px rgba(0,255,65,.5)}
+[data-theme="matrix"] .logo::after{content:"";display:inline-block;width:.5em;height:.95em;margin-left:-4px;
+background:var(--accent);box-shadow:0 0 6px rgba(0,255,65,.6);animation:mx-blink 1.1s steps(1) infinite}
+@keyframes mx-blink{50%{opacity:0}}
+[data-theme="matrix"] .mark .ring{stroke:var(--accent);opacity:.8}
+[data-theme="matrix"] .mark .dot{fill:var(--accent)}
+[data-theme="matrix"] :is(.clock,.stat .value){color:var(--accent);font-weight:400;
+text-shadow:0 0 10px rgba(0,255,65,.45)}
+[data-theme="matrix"] .tabbtn[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* A $ prompt at the start of the status line. */
+[data-theme="matrix"] .statusbar::before{content:"$";color:var(--accent);text-shadow:0 0 6px rgba(0,255,65,.5)}
+
+/* Inverse video on hover. */
+[data-theme="matrix"] .btn-accent{background:var(--inverse);border-color:var(--inverse)}
+[data-theme="matrix"] .btn:hover:not(:disabled){background:var(--inverse);border-color:var(--inverse);
+color:var(--on-accent)}
+[data-theme="matrix"] :is(.btn-danger-outline,.btn-danger):hover:not(:disabled){background:var(--danger);
+border-color:var(--danger);color:#000}
+[data-theme="matrix"] tbody tr:hover{background:var(--inverse)}
+[data-theme="matrix"] tbody tr:hover :is(td,td *){color:var(--on-accent)}
+[data-theme="matrix"] tbody tr:hover .dot{background:var(--on-accent)}
+[data-theme="matrix"] tbody tr:hover .typebtn{border-color:rgba(0,26,7,.4)}
+[data-theme="matrix"] a.linkcard:hover{background:var(--inverse);border-color:var(--inverse);transform:none}
+[data-theme="matrix"] a.linkcard:hover :is(*){color:var(--on-accent)}
+[data-theme="matrix"] a.linkcard:hover .lc-dot{background:var(--on-accent)}
+[data-theme="matrix"] .linkcard-wrap:has(a.linkcard:hover) .lc-info{color:var(--on-accent);opacity:1}
+
+[data-theme="matrix"] :is(.chip,.portchip){border-radius:0}
+[data-theme="matrix"] ::placeholder{color:var(--muted);opacity:1}
+[data-theme="matrix"] input[type=checkbox]{accent-color:var(--inverse)}
+
+/* Uploaded icons keep their colours, a little dimmed so they sit in the scheme. */
+[data-theme="matrix"] .upic{filter:brightness(.85)}
+@media (prefers-reduced-motion: reduce){
+[data-theme="matrix"] .logo::after{animation:none}
 }
 
 /* Shadows come from the theme so the light ones are not wearing a dark halo. */
@@ -1046,6 +1123,8 @@ aria-label="What changed"><span class="belldot" id="bellDot" hidden></span></but
 <p class="hint" style="margin:0 0 12px">Applies straight away and is stored on the dongle,
 so it follows you to whichever browser you open it in.</p>
 <div class="themegrid" id="themeGrid"></div>
+<label class="switch" id="rainRow" style="margin-top:14px" hidden><input type="checkbox" id="rainToggle">
+Digital rain behind the page <span class="muted">(this browser only)</span></label>
 </div>
 <div class="settgroup">
 <h3>Dashboard detail</h3>
@@ -1809,7 +1888,7 @@ var THEMES = [
 {id:"dark",      name:"Dark",      note:"The original. Blue on near-black."},
 {id:"light",     name:"Light",     note:"For a bright room or a bright screen."},
 {id:"cyberpunk", name:"Cyberpunk", note:"Neon on pitch black: cut corners, scanlines and the odd glitch."},
-{id:"matrix",    name:"Matrix",    note:"Green on black, and monospace throughout."},
+{id:"matrix",    name:"Matrix",    note:"Green phosphor on black, with a quiet digital rain."},
 {id:"desert",    name:"Desert",    note:"Warm sand and terracotta."}
 ];
 var DETAILS = [
@@ -1849,7 +1928,122 @@ renderClock();
 state.linksRendered = false;
 if (state.tab === "dashboard") renderDashboard();
 renderStatusBar();
+var rr = $("rainRow");
+if (rr){ rr.hidden = state.theme !== "matrix"; $("rainToggle").checked = rainEnabled(); }
+updateRain();
 }
+
+/* ---- Matrix digital rain ------------------------------------------------ */
+
+/*
+ * Mirrored half-width katakana and digits falling behind the page, in the
+ * Matrix theme only. Deliberately faint and cheap: the canvas is a fifth
+ * opaque, only about half the columns run at once, frames come about fifteen
+ * times a second and not at all while the tab is hidden, and anyone who asks
+ * for reduced motion gets a single still frame. It all happens in the
+ * browser; the dongle does nothing extra. On or off per browser, from
+ * Settings > Appearance.
+ */
+var RAIN_KEY = "netdash-matrix-rain";
+var rain = null;
+function rainEnabled(){
+try { return localStorage.getItem(RAIN_KEY) !== "off"; } catch(e){ return true; }
+}
+function updateRain(){
+var want = state.theme === "matrix" && rainEnabled();
+if (want && !rain) rain = startRain();
+else if (!want && rain){ rain.stop(); rain = null; }
+}
+function startRain(){
+var GLYPHS = "ｦｱｳｴｵｶｷｹｺｻｼｽｾｿ" +
+"ﾀﾂﾃﾅﾆﾇﾈﾊﾋﾎﾏﾐﾑﾒﾓ" +
+"ﾔﾕﾗﾘﾜ0123456789";
+var SIZE = 16;
+var canvas = document.createElement("canvas");
+canvas.className = "rain";
+canvas.setAttribute("aria-hidden", "true");
+document.body.insertBefore(canvas, document.body.firstChild);
+var ctx = canvas.getContext("2d");
+var cols = [], w = 0, h = 0, timer = null;
+var still = !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+function column(x, anywhere){
+return {x: x, row: anywhere ? Math.floor(Math.random() * h / SIZE) : -Math.floor(Math.random() * 30),
+every: 2 + Math.floor(Math.random() * 3), tick: 0, on: Math.random() < 0.5};
+}
+function resize(ev){
+/* A phone resizes the window every time its address bar slides in or out,
+   and resizing a canvas wipes it: only start over for a real change. */
+if (ev && window.innerWidth === w && Math.abs(window.innerHeight - h) < 160) return;
+var dpr = window.devicePixelRatio || 1;
+w = window.innerWidth; h = window.innerHeight;
+canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+ctx.fillStyle = "#000"; ctx.fillRect(0, 0, w, h);
+cols = [];
+for (var x = 0; x < w; x += SIZE * 1.3) cols.push(column(x, true));
+if (still) for (var i = 0; i < 120; i++) frame();
+}
+function frame(){
+/* Fade what is there, so each column leaves a trail. */
+ctx.fillStyle = "rgba(0,0,0,.07)"; ctx.fillRect(0, 0, w, h);
+ctx.fillStyle = "#00ff41";
+ctx.font = SIZE + "px monospace";
+ctx.textBaseline = "top";
+for (var i = 0; i < cols.length; i++){
+var c = cols[i];
+if (!c.on){ if (Math.random() < 0.003) c.on = true; continue; }
+if (++c.tick < c.every) continue;
+c.tick = 0;
+var ch = GLYPHS.charAt(Math.floor(Math.random() * GLYPHS.length));
+ctx.save();
+ctx.translate(c.x + SIZE, c.row * SIZE);
+ctx.scale(-1, 1);
+ctx.fillText(ch, 0, 0);
+ctx.restore();
+if (++c.row * SIZE > h){ cols[i] = column(c.x, false); }
+}
+}
+resize();
+window.addEventListener("resize", resize);
+if (!still) timer = setInterval(function(){ if (!document.hidden) frame(); }, 66);
+return {stop: function(){
+if (timer) clearInterval(timer);
+window.removeEventListener("resize", resize);
+canvas.remove();
+}};
+}
+$("rainToggle").addEventListener("change", function(){
+try { localStorage.setItem(RAIN_KEY, this.checked ? "on" : "off"); } catch(e){}
+updateRain();
+});
+
+/*
+ * In Matrix, hovering the logo decodes it: the letters run through random
+ * characters and settle left to right. Same font, same widths, so the header
+ * does not shift while it happens.
+ */
+(function(){
+var logo = document.querySelector(".logo"), txt = document.querySelector(".logotext");
+if (!logo || !txt) return;
+var running = false, POOL = "0123456789ABCDEF#$%&*+=";
+logo.addEventListener("mouseenter", function(){
+if (running || state.theme !== "matrix") return;
+if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+var target = txt.getAttribute("data-text"), step = 0, steps = 10;
+running = true;
+var iv = setInterval(function(){
+step++;
+var out = "";
+for (var i = 0; i < target.length; i++){
+var settled = i < target.length * step / steps || target.charAt(i) === ".";
+out += settled ? target.charAt(i) : POOL.charAt(Math.floor(Math.random() * POOL.length));
+}
+txt.textContent = out;
+if (step >= steps){ clearInterval(iv); txt.textContent = target; running = false; }
+}, 30);
+});
+})();
 
 function renderClock(){
 var t = $("clockTime"), d = $("clockDate");
